@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.utils.content import description_to_markdown
 
 from ouro_mcp.errors import format_asset_summary, handle_ouro_errors
 
@@ -43,40 +44,73 @@ def register(mcp: FastMCP) -> None:
         query: str,
         ctx: Context,
         asset_type: Optional[str] = None,
+        scope: Optional[str] = None,
+        org_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        metadata_filters: Optional[dict[str, Any]] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> str:
         """Search for assets on Ouro (datasets, posts, files, services, routes).
 
-        Use asset_type to filter results (e.g. "dataset", "service", "post").
-        To browse all available API services, use: search_assets(query="", asset_type="service")
+        Filters (all optional):
+        - asset_type: "dataset", "post", "file", "service", "route"
+        - scope: "personal", "org", "global", "all"
+        - org_id: scope to an organization (UUID)
+        - team_id: scope to a team within an org (UUID)
+        - user_id: filter by asset owner (UUID)
+        - visibility: "public", "private", "organization", "monetized"
+        - metadata_filters: metadata key/values (e.g. {"file_type": "image"})
+
+        To browse all available API services: search_assets(query="", asset_type="service")
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        kwargs = {"limit": limit, "offset": offset}
+        kwargs: dict = {"limit": limit, "offset": offset}
         if asset_type:
             kwargs["asset_type"] = asset_type
+        if scope:
+            kwargs["scope"] = scope
+        if org_id:
+            kwargs["org_id"] = org_id
+        if team_id:
+            kwargs["team_id"] = team_id
+        if user_id:
+            kwargs["user_id"] = user_id
+        if visibility:
+            kwargs["visibility"] = visibility
+        if metadata_filters:
+            kwargs["metadata_filters"] = metadata_filters
 
         results = ouro.assets.search(query, **kwargs)
 
         assets = []
         for item in results:
-            assets.append({
-                "id": str(item.get("id", "")),
-                "name": item.get("name"),
-                "asset_type": item.get("asset_type"),
-                "description": _truncate_str(item.get("description"), 200),
-                "visibility": item.get("visibility"),
-                "owner": item.get("username") or item.get("user", {}).get("username"),
-            })
+            assets.append(
+                {
+                    "id": str(item.get("id", "")),
+                    "name": item.get("name"),
+                    "asset_type": item.get("asset_type"),
+                    "description": description_to_markdown(
+                        item.get("description"), max_length=200
+                    ),
+                    "visibility": item.get("visibility"),
+                    "user": item.get("username")
+                    or item.get("user", {}).get("username"),
+                }
+            )
 
-        return json.dumps({
-            "results": assets,
-            "returned": len(assets),
-            "offset": offset,
-            "limit": limit,
-            "has_more": len(assets) == limit,
-        })
+        return json.dumps(
+            {
+                "results": assets,
+                "returned": len(assets),
+                "offset": offset,
+                "limit": limit,
+                "has_more": len(assets) == limit,
+            }
+        )
 
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -89,11 +123,13 @@ def register(mcp: FastMCP) -> None:
 
         users = []
         for u in results:
-            users.append({
-                "id": str(u.get("user_id", u.get("id", ""))),
-                "username": u.get("username"),
-                "display_name": u.get("display_name") or u.get("username"),
-            })
+            users.append(
+                {
+                    "id": str(u.get("user_id", u.get("id", ""))),
+                    "username": u.get("username"),
+                    "display_name": u.get("display_name"),
+                }
+            )
 
         return json.dumps({"results": users, "returned": len(users)})
 
@@ -116,17 +152,21 @@ def register(mcp: FastMCP) -> None:
         elif asset_type == "file":
             ouro.files.delete(id)
         else:
-            return json.dumps({
-                "error": "unsupported_type",
-                "message": f"Cannot delete asset of type '{asset_type}' via this tool.",
-            })
+            return json.dumps(
+                {
+                    "error": "unsupported_type",
+                    "message": f"Cannot delete asset of type '{asset_type}' via this tool.",
+                }
+            )
 
-        return json.dumps({
-            "deleted": True,
-            "id": id,
-            "name": name,
-            "asset_type": asset_type,
-        })
+        return json.dumps(
+            {
+                "deleted": True,
+                "id": id,
+                "name": name,
+                "asset_type": asset_type,
+            }
+        )
 
 
 def _format_asset_detail(asset, ouro) -> dict:
@@ -200,16 +240,10 @@ def _format_asset_detail(asset, ouro) -> dict:
 def _is_uuid(s: str) -> bool:
     """Quick check if a string looks like a UUID."""
     import re
-    return bool(re.match(
-        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-        s.lower(),
-    ))
 
-
-def _truncate_str(s, max_len: int) -> str | None:
-    if s is None:
-        return None
-    s = str(s)
-    if isinstance(s, str) and len(s) > max_len:
-        return s[:max_len] + "..."
-    return s
+    return bool(
+        re.match(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            s.lower(),
+        )
+    )

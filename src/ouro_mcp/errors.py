@@ -91,6 +91,8 @@ def truncate_response(data: str, context: str = "") -> str:
 
 def format_asset_summary(asset: Any) -> dict:
     """Extract a consistent summary dict from any ouro-py asset model."""
+    from ouro.utils.content import description_to_markdown
+
     summary = {
         "id": str(asset.id),
         "name": asset.name,
@@ -100,10 +102,7 @@ def format_asset_summary(asset: Any) -> dict:
         "last_updated": asset.last_updated.isoformat() if asset.last_updated else None,
     }
     if asset.description:
-        desc = asset.description
-        if isinstance(desc, dict):
-            desc = desc.get("text", str(desc))
-        summary["description"] = str(desc)[:500]
+        summary["description"] = description_to_markdown(asset.description, max_length=500)
     if asset.user:
         summary["owner"] = asset.user.username
     return summary

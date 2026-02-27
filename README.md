@@ -10,7 +10,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 - **Discover and execute API routes** — call any user-published API on the platform
 - **Delete assets** they own
 
-## Tools (11)
+## Tools (12)
 
 | Tool | Description |
 |---|---|
@@ -24,6 +24,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `create_post` | Create a post from markdown |
 | `update_post` | Update a post's content or metadata |
 | `create_file` | Upload a file from a local path |
+| `update_file` | Update a file's content or metadata |
 | `execute_route` | Execute any API route on Ouro |
 
 ## Setup
@@ -97,6 +98,17 @@ Once connected, agents can interact with Ouro naturally:
 > "Create a post summarizing my analysis"
 
 > "Find services that can generate embeddings, then execute one"
+
+### Search with scope and metadata filters
+
+`search_assets` supports discover scopes (`personal`, `org`, `global`, `all`) and metadata filters.
+
+Examples:
+
+- Find public files outside your orgs:
+  `search_assets(query="", asset_type="file", scope="global")`
+- Find image files in your current org context:
+  `search_assets(query="", asset_type="file", scope="org", metadata_filters={"file_type":"image"})`
 
 ### Service discovery flow
 

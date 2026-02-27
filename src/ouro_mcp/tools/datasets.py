@@ -65,21 +65,32 @@ def register(mcp: FastMCP) -> None:
         data: Optional[list[dict]] = None,
         visibility: str = "private",
         description: Optional[str] = None,
+        org_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> str:
         """Create a new dataset on Ouro from JSON records.
 
         data should be a list of dicts where each dict is a row.
         Example: [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
+        Use org_id and team_id to control where the dataset is created.
+        Call get_organizations() and get_teams() first to find the right location.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
         df = pd.DataFrame(data) if data else None
+
+        kwargs = {}
+        if org_id is not None:
+            kwargs["org_id"] = org_id
+        if team_id is not None:
+            kwargs["team_id"] = team_id
 
         dataset = ouro.datasets.create(
             name=name,
             visibility=visibility,
             data=df,
             description=description,
+            **kwargs,
         )
 
         result = format_asset_summary(dataset)

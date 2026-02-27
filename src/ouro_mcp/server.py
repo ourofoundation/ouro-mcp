@@ -44,8 +44,35 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[OuroContext]:
     yield OuroContext(ouro=ouro)
 
 
+INSTRUCTIONS = """
+Ouro is a platform for creating, sharing, and discovering data assets (posts, datasets, files, services).
+
+Content is organized into **organizations** and **teams**:
+- An organization is a workspace (like a company or research group).
+- Teams are channels within an organization where assets are published.
+- Every asset belongs to one organization and one team within that organization.
+
+**Before creating any asset**, you should determine the correct location:
+1. Call get_organizations() to see which orgs the user belongs to.
+2. Call get_teams(org_id=...) to see teams within that org.
+3. If the user hasn't specified where to publish, ask them to pick an org and team.
+4. Pass org_id and team_id to create_post, create_dataset, or create_file.
+
+Omitting org_id/team_id defaults to the user's global organization and "All" team,
+which is a low-visibility catch-all. Always prefer a specific team when possible.
+
+**Writing Ouro posts** — use extended markdown in create_post and update_post:
+- **Mention users**: `{@username}` — call search_users(query=...) first to find usernames
+- **Embed assets**: ```assetComponent
+  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "chart"|"default"}
+  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "chart" for files/datasets
+- **Standard markdown**: headings, **bold**, *italic*, lists, code blocks, tables, links
+- **Math**: \\(inline\\) and \\[display\\] LaTeX
+""".strip()
+
 mcp = FastMCP(
     "Ouro",
+    instructions=INSTRUCTIONS,
     lifespan=app_lifespan,
     json_response=True,
 )
