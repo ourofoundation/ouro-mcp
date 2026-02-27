@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ouro-mcp"
+version = "0.1.0"
+description = "MCP server for the Ouro platform"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Matt Moderwell", email = "matt@ouro.foundation" }]
+keywords = ["ouro", "mcp", "model-context-protocol"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "mcp",
+    "ouro-py",
+    "python-dotenv",
+]
+
+[project.urls]
+Homepage = "https://github.com/ourofoundation/ouro-mcp"
+Repository = "https://github.com/ourofoundation/ouro-mcp"
+
+[project.scripts]
+ouro-mcp = "ouro_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ouro_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/ouro_mcp"]

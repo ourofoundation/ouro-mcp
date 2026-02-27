@@ -1,0 +1,118 @@
+"""Dataset tools — query, create, update."""
+
+from __future__ import annotations
+
+import json
+from typing import Optional
+
+import pandas as pd
+from mcp.server.fastmcp import Context, FastMCP
+
+from ouro_mcp.errors import format_asset_summary, handle_ouro_errors, truncate_response
+
+
+def register(mcp: FastMCP) -> None:
+    @mcp.tool(
+        annotations={"readOnlyHint": True},
+    )
+    @handle_ouro_errors
+    def query_dataset(
+        dataset_id: str,
+        ctx: Context,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> str:
+        """Query a dataset's contents as JSON records. Returns rows with pagination metadata.
+
+        Use get_asset(id) first to see the dataset's schema before querying.
+        Use limit and offset to paginate through large datasets.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+
+        df = ouro.datasets.query(dataset_id)
+        total_rows = len(df)
+
+        page = df.iloc[offset : offset + limit]
+        rows = page.to_dict(orient="records")
+
+        # Serialize any non-JSON-friendly types
+        for row in rows:
+            for k, v in row.items():
+                if pd.isna(v):
+                    row[k] = None
+                elif hasattr(v, "isoformat"):
+                    row[k] = v.isoformat()
+
+        result = json.dumps({
+            "rows": rows,
+            "total_rows": total_rows,
+            "returned": len(rows),
+            "truncated": (offset + limit) < total_rows,
+            "offset": offset,
+            "limit": limit,
+        })
+
+        return truncate_response(
+            result,
+            context="Use offset parameter to load more rows.",
+        )
+
+    @mcp.tool()
+    @handle_ouro_errors
+    def create_dataset(
+        name: str,
+        ctx: Context,
+        data: Optional[list[dict]] = None,
+        visibility: str = "private",
+        description: Optional[str] = None,
+    ) -> str:
+        """Create a new dataset on Ouro from JSON records.
+
+        data should be a list of dicts where each dict is a row.
+        Example: [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+
+        df = pd.DataFrame(data) if data else None
+
+        dataset = ouro.datasets.create(
+            name=name,
+            visibility=visibility,
+            data=df,
+            description=description,
+        )
+
+        result = format_asset_summary(dataset)
+        result["table_name"] = dataset.metadata.get("table_name") if dataset.metadata else None
+        return json.dumps(result)
+
+    @mcp.tool()
+    @handle_ouro_errors
+    def update_dataset(
+        id: str,
+        ctx: Context,
+        name: Optional[str] = None,
+        visibility: Optional[str] = None,
+        data: Optional[list[dict]] = None,
+        description: Optional[str] = None,
+    ) -> str:
+        """Update a dataset's data or metadata.
+
+        Pass data as a list of dicts to append new rows.
+        Pass name, visibility, or description to update metadata.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+
+        df = pd.DataFrame(data) if data else None
+
+        kwargs = {}
+        if name is not None:
+            kwargs["name"] = name
+        if visibility is not None:
+            kwargs["visibility"] = visibility
+        if description is not None:
+            kwargs["description"] = description
+
+        dataset = ouro.datasets.update(id, data=df, **kwargs)
+
+        return json.dumps(format_asset_summary(dataset))
