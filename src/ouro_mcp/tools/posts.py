@@ -7,26 +7,8 @@ from typing import Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from ouro_mcp.errors import format_asset_summary, handle_ouro_errors
-
-# Extended markdown guide for the MCP — used in tool docstrings and server instructions.
-POST_CONTENT_GUIDE = """
-Write post content in **extended markdown** with Ouro-specific syntax:
-
-**User mentions** — use inline code with @username:
-  `{@username}`  (e.g. `{@mmoderwell}`)
-  Call search_users(query=...) first to find the correct username.
-
-**Embed Ouro assets** — use a fenced code block with language assetComponent:
-  ```assetComponent
-  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "chart"|"default"}
-  ```
-  Use search_assets() or get_asset() to find asset IDs. For files and datasets, prefer viewMode "chart"; otherwise "default".
-
-**Standard markdown** — headings (# ## ###), **bold**, *italic*, lists, code blocks, tables, blockquotes, links, images.
-
-**Math** — LaTeX: \\(inline\\) and \\[display\\].
-""".strip()
+from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.utils import content_from_markdown, format_asset_summary, optional_kwargs
 
 
 def register(mcp: FastMCP) -> None:
@@ -45,7 +27,7 @@ def register(mcp: FastMCP) -> None:
 
         content_markdown is converted via Ouro's from-markdown API, which supports:
         - User mentions: `{@username}` — call search_users() first to get usernames
-        - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"file"|"dataset"|"post"|"route"|"service","viewMode":"chart"|"default"}``` — use search_assets() or get_asset() for IDs
+        - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"file"|"dataset"|"post"|"route"|"service","viewMode":"preview"|"card"}``` — use search_assets() or get_asset() for IDs
         - Standard markdown: headings, bold, italic, lists, code blocks, tables, links
         - Math: \\(inline\\) and \\[display\\] LaTeX
 
@@ -54,21 +36,14 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        content = ouro.posts.Content()
-        content.from_markdown(content_markdown)
-
-        kwargs = {}
-        if org_id is not None:
-            kwargs["org_id"] = org_id
-        if team_id is not None:
-            kwargs["team_id"] = team_id
+        content = content_from_markdown(ouro, content_markdown)
 
         post = ouro.posts.create(
             content=content,
             name=name,
             visibility=visibility,
             description=description,
-            **kwargs,
+            **optional_kwargs(org_id=org_id, team_id=team_id),
         )
 
         return json.dumps(format_asset_summary(post))
@@ -87,26 +62,23 @@ def register(mcp: FastMCP) -> None:
 
         Pass content_markdown to replace the post body. Supports extended markdown:
         - User mentions: `{@username}` — call search_users() for usernames
-        - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"chart"|"default"}```
+        - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
         - Standard markdown and LaTeX math
 
         Pass name, visibility, or description to update metadata.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        content = None
-        if content_markdown is not None:
-            content = ouro.posts.Content()
-            content.from_markdown(content_markdown)
+        content = (
+            content_from_markdown(ouro, content_markdown)
+            if content_markdown is not None
+            else None
+        )
 
-        kwargs = {}
-        if name is not None:
-            kwargs["name"] = name
-        if visibility is not None:
-            kwargs["visibility"] = visibility
-        if description is not None:
-            kwargs["description"] = description
-
-        post = ouro.posts.update(id, content=content, **kwargs)
+        post = ouro.posts.update(
+            id,
+            content=content,
+            **optional_kwargs(name=name, visibility=visibility, description=description),
+        )
 
         return json.dumps(format_asset_summary(post))

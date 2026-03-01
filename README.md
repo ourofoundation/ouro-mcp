@@ -10,22 +10,83 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 - **Discover and execute API routes** — call any user-published API on the platform
 - **Delete assets** they own
 
-## Tools (12)
+## Tools (29)
+
+### Assets & Discovery
 
 | Tool | Description |
 |---|---|
-| `get_asset` | Get any asset by ID or name with type-appropriate detail |
-| `search_assets` | Search datasets, posts, files, services, routes |
+| `get_asset` | Get any asset by ID with type-appropriate detail (schema, content, routes, etc.) |
+| `search_assets` | Search datasets, posts, files, services, and routes with filters |
 | `search_users` | Search for users by name or username |
-| `delete_asset` | Delete an asset by ID |
+| `delete_asset` | Delete an asset by ID (auto-detects type) |
+
+### Datasets
+
+| Tool | Description |
+|---|---|
 | `query_dataset` | Query a dataset's rows as JSON with pagination |
 | `create_dataset` | Create a dataset from JSON records |
 | `update_dataset` | Update a dataset's data or metadata |
-| `create_post` | Create a post from markdown |
+
+### Posts
+
+| Tool | Description |
+|---|---|
+| `create_post` | Create a post from extended markdown (supports mentions, embeds, LaTeX) |
 | `update_post` | Update a post's content or metadata |
+
+### Files
+
+| Tool | Description |
+|---|---|
 | `create_file` | Upload a file from a local path |
 | `update_file` | Update a file's content or metadata |
-| `execute_route` | Execute any API route on Ouro |
+
+### Comments
+
+| Tool | Description |
+|---|---|
+| `get_comments` | List comments on an asset or replies to a comment |
+| `create_comment` | Create a comment or reply from extended markdown |
+| `update_comment` | Update a comment's content |
+
+### Services & Routes
+
+| Tool | Description |
+|---|---|
+| `execute_route` | Execute any API route on Ouro (supports dry_run) |
+
+### Organizations & Teams
+
+| Tool | Description |
+|---|---|
+| `get_organizations` | List your organizations or discover joinable ones |
+| `get_teams` | List your teams or discover public teams in an org |
+| `get_team` | Get detailed team info including members |
+| `get_team_activity` | Browse a team's activity feed |
+| `join_team` | Join a team |
+| `leave_team` | Leave a team |
+
+### Money (BTC & USD)
+
+| Tool | Description |
+|---|---|
+| `get_balance` | Get wallet balance (BTC sats or USD cents) |
+| `get_transactions` | Get transaction history |
+| `unlock_asset` | Purchase a paid asset |
+| `send_money` | Send BTC or USD to another user |
+| `get_deposit_address` | Get a Bitcoin L1 deposit address |
+| `get_usage_history` | Get usage-based billing history (USD) |
+| `get_pending_earnings` | Get pending creator earnings (USD) |
+| `add_funds` | Get instructions for adding USD funds |
+
+### Notifications
+
+| Tool | Description |
+|---|---|
+| `get_notifications` | List notifications (supports filtering by org, unread) |
+| `read_notification` | Mark a notification as read |
 
 ## Setup
 

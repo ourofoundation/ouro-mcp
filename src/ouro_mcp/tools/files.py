@@ -7,7 +7,8 @@ from typing import Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from ouro_mcp.errors import format_asset_summary, handle_ouro_errors
+from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.utils import file_result, optional_kwargs
 
 
 def register(mcp: FastMCP) -> None:
@@ -30,29 +31,15 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        kwargs = {}
-        if org_id is not None:
-            kwargs["org_id"] = org_id
-        if team_id is not None:
-            kwargs["team_id"] = team_id
-
         file = ouro.files.create(
             name=name,
             visibility=visibility,
             file_path=file_path,
             description=description,
-            **kwargs,
+            **optional_kwargs(org_id=org_id, team_id=team_id),
         )
 
-        result = format_asset_summary(file)
-        if file.data:
-            result["url"] = file.data.url
-        if file.metadata and hasattr(file.metadata, "type"):
-            result["mime_type"] = file.metadata.type
-        if file.metadata and hasattr(file.metadata, "size"):
-            result["size"] = file.metadata.size
-
-        return json.dumps(result)
+        return json.dumps(file_result(file))
 
     @mcp.tool()
     @handle_ouro_errors
@@ -72,22 +59,10 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        kwargs = {}
-        if name is not None:
-            kwargs["name"] = name
-        if description is not None:
-            kwargs["description"] = description
-        if visibility is not None:
-            kwargs["visibility"] = visibility
+        file = ouro.files.update(
+            id,
+            file_path=file_path,
+            **optional_kwargs(name=name, description=description, visibility=visibility),
+        )
 
-        file = ouro.files.update(id, file_path=file_path, **kwargs)
-
-        result = format_asset_summary(file)
-        if file.data:
-            result["url"] = file.data.url
-        if file.metadata and hasattr(file.metadata, "type"):
-            result["mime_type"] = file.metadata.type
-        if file.metadata and hasattr(file.metadata, "size"):
-            result["size"] = file.metadata.size
-
-        return json.dumps(result)
+        return json.dumps(file_result(file))

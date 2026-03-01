@@ -7,7 +7,8 @@ from typing import Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from ouro_mcp.errors import handle_ouro_errors, truncate_response
+from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.utils import truncate_response
 
 
 def register(mcp: FastMCP) -> None:
@@ -60,7 +61,7 @@ def register(mcp: FastMCP) -> None:
             results.append(entry)
 
         return json.dumps({
-            "teams": results,
+            "results": results,
             "count": len(results),
             "mode": "discover" if discover else "mine",
         })
@@ -112,8 +113,8 @@ def register(mcp: FastMCP) -> None:
     def get_team_activity(
         id: str,
         ctx: Context,
-        page: int = 1,
-        page_size: int = 20,
+        offset: int = 0,
+        limit: int = 20,
         asset_type: Optional[str] = None,
     ) -> str:
         """Browse a team's activity feed. Returns recent assets created in the team.
@@ -124,13 +125,13 @@ def register(mcp: FastMCP) -> None:
 
         response = ouro.teams.activity(
             id,
-            page=page,
-            page_size=page_size,
+            offset=offset,
+            limit=limit,
             asset_type=asset_type,
         )
 
         items = response.get("data", [])
-        metadata = response.get("metadata", {})
+        pagination = response.get("pagination", {})
 
         results = []
         for item in items:
@@ -150,10 +151,14 @@ def register(mcp: FastMCP) -> None:
             results.append(entry)
 
         result = json.dumps({
-            "activity": results,
+            "results": results,
             "count": len(results),
-            "page": metadata.get("page", page),
-            "page_size": metadata.get("pageSize", page_size),
+            "pagination": {
+                "offset": pagination.get("offset", offset),
+                "limit": pagination.get("limit", limit),
+                "hasMore": pagination.get("hasMore", len(results) == limit),
+                "total": pagination.get("total"),
+            },
         })
 
         return truncate_response(result)

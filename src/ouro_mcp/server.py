@@ -12,6 +12,15 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from ouro import Ouro
 
+from ouro_mcp import __version__
+from ouro_mcp.constants import (
+    DEFAULT_HTTP_PORT,
+    ENV_OURO_API_KEY,
+    ENV_OURO_BASE_URL,
+    ENV_OURO_DATABASE_ANON_KEY,
+    ENV_OURO_DATABASE_URL,
+)
+
 load_dotenv(override=True)
 
 log = logging.getLogger(__name__)
@@ -29,16 +38,23 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[OuroContext]:
     """Initialize the Ouro client once at startup and share it across all tools."""
     log.info("Initializing Ouro client...")
 
-    api_key = os.environ.get("OURO_API_KEY", "").strip()
+    api_key = os.environ.get(ENV_OURO_API_KEY, "").strip()
+    if not api_key:
+        raise RuntimeError(
+            f"{ENV_OURO_API_KEY} environment variable is required but not set. "
+            "Get your API key from https://ouro.foundation/settings/api."
+        )
+
     kwargs = {"api_key": api_key}
-    if os.environ.get("OURO_BASE_URL"):
-        kwargs["base_url"] = os.environ["OURO_BASE_URL"].strip()
-    if os.environ.get("OURO_DATABASE_URL"):
-        kwargs["database_url"] = os.environ["OURO_DATABASE_URL"].strip()
-    if os.environ.get("OURO_DATABASE_ANON_KEY"):
-        kwargs["database_anon_key"] = os.environ["OURO_DATABASE_ANON_KEY"].strip()
+    if os.environ.get(ENV_OURO_BASE_URL):
+        kwargs["base_url"] = os.environ[ENV_OURO_BASE_URL].strip()
+    if os.environ.get(ENV_OURO_DATABASE_URL):
+        kwargs["database_url"] = os.environ[ENV_OURO_DATABASE_URL].strip()
+    if os.environ.get(ENV_OURO_DATABASE_ANON_KEY):
+        kwargs["database_anon_key"] = os.environ[ENV_OURO_DATABASE_ANON_KEY].strip()
 
     ouro = Ouro(**kwargs)
+    ouro._raw_client.headers["X-Ouro-Client"] = f"ouro-mcp/{__version__}"
     log.info(f"Authenticated as {ouro.user.email}")
     log.info(f"Backend: {ouro.base_url}")
     yield OuroContext(ouro=ouro)
@@ -64,8 +80,8 @@ which is a low-visibility catch-all. Always prefer a specific team when possible
 **Writing Ouro posts** — use extended markdown in create_post and update_post:
 - **Mention users**: `{@username}` — call search_users(query=...) first to find usernames
 - **Embed assets**: ```assetComponent
-  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "chart"|"default"}
-  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "chart" for files/datasets
+  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card"}
+  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets
 - **Standard markdown**: headings, **bold**, *italic*, lists, code blocks, tables, links
 - **Math**: \\(inline\\) and \\[display\\] LaTeX
 """.strip()
@@ -94,7 +110,7 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
+        default=DEFAULT_HTTP_PORT,
         help="Port for HTTP transports (default: 8000)",
     )
     args = parser.parse_args()

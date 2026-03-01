@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.utils.content import description_to_markdown
 
-from ouro_mcp.errors import format_asset_summary, handle_ouro_errors
+from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.utils import format_asset_summary, optional_kwargs
+
+log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:
@@ -17,7 +21,7 @@ def register(mcp: FastMCP) -> None:
     )
     @handle_ouro_errors
     def get_asset(id: str, ctx: Context) -> str:
-        """Get any asset by ID or name. Returns metadata and type-appropriate detail.
+        """Get any asset by ID. Returns metadata and type-appropriate detail.
 
         For datasets: includes schema and stats.
         For posts: includes text content.
@@ -25,15 +29,10 @@ def register(mcp: FastMCP) -> None:
         For services: includes list of routes.
         For routes: includes parameter schema, method, and path.
 
-        Accepts a UUID for any asset type, or "entity/route_name" format for routes.
+        Accepts a UUID for any asset type.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-
-        if "/" in id and not _is_uuid(id):
-            asset = ouro.routes.retrieve(id)
-        else:
-            asset = ouro.assets.retrieve(id)
-
+        asset = ouro.assets.retrieve(id)
         return json.dumps(_format_asset_detail(asset, ouro))
 
     @mcp.tool(
@@ -41,19 +40,25 @@ def register(mcp: FastMCP) -> None:
     )
     @handle_ouro_errors
     def search_assets(
-        query: str,
         ctx: Context,
+        query: str = "",
         asset_type: Optional[str] = None,
         scope: Optional[str] = None,
         org_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        file_type: Optional[str] = None,
+        extension: Optional[str] = None,
         metadata_filters: Optional[dict[str, Any]] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> str:
-        """Search for assets on Ouro (datasets, posts, files, services, routes).
+        """Search or browse assets on Ouro (datasets, posts, files, services, routes).
+
+        With a query: performs hybrid semantic + full-text search.
+        Without a query: returns recent assets sorted by creation date.
+        With a UUID as query: looks up that single asset directly.
 
         Filters (all optional):
         - asset_type: "dataset", "post", "file", "service", "route"
@@ -62,32 +67,41 @@ def register(mcp: FastMCP) -> None:
         - team_id: scope to a team within an org (UUID)
         - user_id: filter by asset owner (UUID)
         - visibility: "public", "private", "organization", "monetized"
-        - metadata_filters: metadata key/values (e.g. {"file_type": "image"})
+        - file_type: filter files by category: "image", "video", "audio", "pdf"
+        - extension: filter files by extension, e.g. "csv", "json", "png"
+        - metadata_filters: other metadata key/values (e.g. {"custom_key": "value"})
 
-        To browse all available API services: search_assets(query="", asset_type="service")
+        Examples:
+          Browse recent datasets: search_assets(asset_type="dataset")
+          Find CSV files: search_assets(query="sales data", file_type="image", extension="csv")
+          Browse all services: search_assets(asset_type="service")
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        kwargs: dict = {"limit": limit, "offset": offset}
-        if asset_type:
-            kwargs["asset_type"] = asset_type
-        if scope:
-            kwargs["scope"] = scope
-        if org_id:
-            kwargs["org_id"] = org_id
-        if team_id:
-            kwargs["team_id"] = team_id
-        if user_id:
-            kwargs["user_id"] = user_id
-        if visibility:
-            kwargs["visibility"] = visibility
-        if metadata_filters:
-            kwargs["metadata_filters"] = metadata_filters
+        merged_metadata = dict(metadata_filters or {})
+        if file_type:
+            merged_metadata["file_type"] = file_type
+        if extension:
+            merged_metadata["extension"] = extension
 
-        results = ouro.assets.search(query, **kwargs)
+        response = ouro.assets.search(
+            query,
+            limit=limit,
+            offset=offset,
+            with_pagination=True,
+            **optional_kwargs(
+                asset_type=asset_type,
+                scope=scope,
+                org_id=org_id,
+                team_id=team_id,
+                user_id=user_id,
+                visibility=visibility,
+                metadata_filters=merged_metadata if merged_metadata else None,
+            ),
+        )
 
         assets = []
-        for item in results:
+        for item in response.get("data", []):
             assets.append(
                 {
                     "id": str(item.get("id", "")),
@@ -105,10 +119,13 @@ def register(mcp: FastMCP) -> None:
         return json.dumps(
             {
                 "results": assets,
-                "returned": len(assets),
-                "offset": offset,
-                "limit": limit,
-                "has_more": len(assets) == limit,
+                "count": len(assets),
+                "pagination": {
+                    "offset": response.get("pagination", {}).get("offset", offset),
+                    "limit": response.get("pagination", {}).get("limit", limit),
+                    "hasMore": response.get("pagination", {}).get("hasMore", len(assets) == limit),
+                    "total": response.get("pagination", {}).get("total"),
+                },
             }
         )
 
@@ -131,7 +148,7 @@ def register(mcp: FastMCP) -> None:
                 }
             )
 
-        return json.dumps({"results": users, "returned": len(users)})
+        return json.dumps({"results": users, "count": len(users)})
 
     @mcp.tool(
         annotations={"destructiveHint": True},
@@ -180,11 +197,13 @@ def _format_asset_detail(asset, ouro) -> dict:
             schema = ouro.datasets.schema(str(asset.id))
             base["schema"] = schema
         except Exception:
+            log.debug("Failed to fetch schema for dataset %s", asset.id, exc_info=True)
             base["schema"] = None
         try:
             stats = ouro.datasets.stats(str(asset.id))
             base["stats"] = stats
         except Exception:
+            log.debug("Failed to fetch stats for dataset %s", asset.id, exc_info=True)
             base["stats"] = None
         if asset.preview:
             base["preview"] = asset.preview[:5]
@@ -219,6 +238,7 @@ def _format_asset_detail(asset, ouro) -> dict:
                 for r in routes
             ]
         except Exception:
+            log.debug("Failed to fetch routes for service %s", asset.id, exc_info=True)
             base["routes"] = []
 
     elif asset_type == "route":
@@ -235,15 +255,3 @@ def _format_asset_detail(asset, ouro) -> dict:
             base["price"] = asset.price
 
     return base
-
-
-def _is_uuid(s: str) -> bool:
-    """Quick check if a string looks like a UUID."""
-    import re
-
-    return bool(
-        re.match(
-            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-            s.lower(),
-        )
-    )

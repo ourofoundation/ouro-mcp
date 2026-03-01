@@ -8,7 +8,8 @@ from typing import Optional
 import pandas as pd
 from mcp.server.fastmcp import Context, FastMCP
 
-from ouro_mcp.errors import format_asset_summary, handle_ouro_errors, truncate_response
+from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.utils import format_asset_summary, optional_kwargs, truncate_response
 
 
 def register(mcp: FastMCP) -> None:
@@ -35,7 +36,6 @@ def register(mcp: FastMCP) -> None:
         page = df.iloc[offset : offset + limit]
         rows = page.to_dict(orient="records")
 
-        # Serialize any non-JSON-friendly types
         for row in rows:
             for k, v in row.items():
                 if pd.isna(v):
@@ -46,10 +46,14 @@ def register(mcp: FastMCP) -> None:
         result = json.dumps({
             "rows": rows,
             "total_rows": total_rows,
-            "returned": len(rows),
+            "count": len(rows),
             "truncated": (offset + limit) < total_rows,
-            "offset": offset,
-            "limit": limit,
+            "pagination": {
+                "offset": offset,
+                "limit": limit,
+                "hasMore": (offset + limit) < total_rows,
+                "total": total_rows,
+            },
         })
 
         return truncate_response(
@@ -79,18 +83,12 @@ def register(mcp: FastMCP) -> None:
 
         df = pd.DataFrame(data) if data else None
 
-        kwargs = {}
-        if org_id is not None:
-            kwargs["org_id"] = org_id
-        if team_id is not None:
-            kwargs["team_id"] = team_id
-
         dataset = ouro.datasets.create(
             name=name,
             visibility=visibility,
             data=df,
             description=description,
-            **kwargs,
+            **optional_kwargs(org_id=org_id, team_id=team_id),
         )
 
         result = format_asset_summary(dataset)
@@ -116,14 +114,10 @@ def register(mcp: FastMCP) -> None:
 
         df = pd.DataFrame(data) if data else None
 
-        kwargs = {}
-        if name is not None:
-            kwargs["name"] = name
-        if visibility is not None:
-            kwargs["visibility"] = visibility
-        if description is not None:
-            kwargs["description"] = description
-
-        dataset = ouro.datasets.update(id, data=df, **kwargs)
+        dataset = ouro.datasets.update(
+            id,
+            data=df,
+            **optional_kwargs(name=name, visibility=visibility, description=description),
+        )
 
         return json.dumps(format_asset_summary(dataset))

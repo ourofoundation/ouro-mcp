@@ -45,7 +45,7 @@ def register(mcp: FastMCP) -> None:
             results.append(entry)
 
         return json.dumps({
-            "organizations": results,
+            "results": results,
             "count": len(results),
             "mode": "discover" if discover else "mine",
         })

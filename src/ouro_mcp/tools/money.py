@@ -8,6 +8,7 @@ from typing import Optional
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.utils import optional_kwargs
 
 
 def register(mcp: FastMCP) -> None:
@@ -48,19 +49,24 @@ def register(mcp: FastMCP) -> None:
             type: Filter by transaction type (USD only).
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        kwargs = {}
-        if limit is not None:
-            kwargs["limit"] = limit
-        if offset is not None:
-            kwargs["offset"] = offset
-        if type is not None:
-            kwargs["type"] = type
 
-        transactions = ouro.money.get_transactions(currency=currency, **kwargs)
+        transactions = ouro.money.get_transactions(
+            currency=currency,
+            with_pagination=True,
+            **optional_kwargs(limit=limit, offset=offset, type=type),
+        )
+        items = transactions.get("data", []) if isinstance(transactions, dict) else transactions
+        pagination = transactions.get("pagination", {}) if isinstance(transactions, dict) else {}
         return json.dumps({
             "currency": currency.lower(),
-            "transactions": transactions,
-            "count": len(transactions) if isinstance(transactions, list) else None,
+            "results": items,
+            "count": len(items) if isinstance(items, list) else None,
+            "pagination": {
+                "offset": pagination.get("offset", offset or 0),
+                "limit": pagination.get("limit", limit or (len(items) if isinstance(items, list) else 0)),
+                "hasMore": pagination.get("hasMore", False),
+                "total": pagination.get("total"),
+            },
         })
 
     @mcp.tool()
@@ -165,7 +171,13 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             asset_id=asset_id,
             role=role,
+            with_pagination=True,
         )
+        if isinstance(result, dict):
+            return json.dumps({
+                **result.get("data", {}),
+                "pagination": result.get("pagination", {}),
+            })
         return json.dumps(result)
 
     @mcp.tool(annotations={"readOnlyHint": True})

@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any, Callable
 
-from ouro._exceptions import (
+from ouro import (
     AuthenticationError,
     BadRequestError,
     InternalServerError,
@@ -15,8 +15,6 @@ from ouro._exceptions import (
 )
 
 log = logging.getLogger(__name__)
-
-MAX_RESPONSE_SIZE = 50_000  # ~50KB JSON threshold
 
 
 def handle_ouro_errors(fn: Callable) -> Callable:
@@ -66,43 +64,3 @@ def handle_ouro_errors(fn: Callable) -> Callable:
             return json.dumps({"error": "unexpected", "message": str(e)})
 
     return wrapper
-
-
-def truncate_response(data: str, context: str = "") -> str:
-    """If a JSON response exceeds the size threshold, truncate and flag it."""
-    if len(data) <= MAX_RESPONSE_SIZE:
-        return data
-    try:
-        parsed = json.loads(data)
-        if isinstance(parsed, dict) and "rows" in parsed:
-            # Progressively remove rows until under limit
-            rows = parsed["rows"]
-            while len(json.dumps(parsed)) > MAX_RESPONSE_SIZE and rows:
-                rows.pop()
-            parsed["returned"] = len(rows)
-            parsed["truncated"] = True
-            if context:
-                parsed["note"] = f"Response truncated to fit context window. {context}"
-            return json.dumps(parsed)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return data[:MAX_RESPONSE_SIZE] + "\n... [truncated]"
-
-
-def format_asset_summary(asset: Any) -> dict:
-    """Extract a consistent summary dict from any ouro-py asset model."""
-    from ouro.utils.content import description_to_markdown
-
-    summary = {
-        "id": str(asset.id),
-        "name": asset.name,
-        "asset_type": asset.asset_type,
-        "visibility": asset.visibility,
-        "created_at": asset.created_at.isoformat() if asset.created_at else None,
-        "last_updated": asset.last_updated.isoformat() if asset.last_updated else None,
-    }
-    if asset.description:
-        summary["description"] = description_to_markdown(asset.description, max_length=500)
-    if asset.user:
-        summary["owner"] = asset.user.username
-    return summary
