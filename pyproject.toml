@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ouro-mcp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "MCP server for the Ouro platform"
 readme = "README.md"
 license = { text = "MIT" }
@@ -25,9 +25,13 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/ourofoundation/ouro-mcp"
 Repository = "https://github.com/ourofoundation/ouro-mcp"
+PyPI = "https://pypi.org/project/ouro-mcp"
 
 [project.scripts]
 ouro-mcp = "ouro_mcp.server:main"
+
+[tool.hatch.version]
+path = "src/ouro_mcp/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ouro_mcp"]
