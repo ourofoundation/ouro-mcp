@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from mcp.server.fastmcp import FastMCP
 from ouro import Ouro
 
@@ -21,7 +21,7 @@ from ouro_mcp.constants import (
     ENV_OURO_DATABASE_URL,
 )
 
-load_dotenv(override=True)
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
 log = logging.getLogger(__name__)
 
@@ -71,11 +71,24 @@ Content is organized into **organizations** and **teams**:
 **Before creating any asset**, you should determine the correct location:
 1. Call get_organizations() to see which orgs the user belongs to.
 2. Call get_teams(org_id=...) to see teams within that org.
-3. If the user hasn't specified where to publish, ask them to pick an org and team.
-4. Pass org_id and team_id to create_post, create_dataset, or create_file.
+3. Check the `agent_can_create` field on each team — if false, this agent cannot create assets there.
+4. If the user hasn't specified where to publish, ask them to pick an org and team.
+5. Pass org_id and team_id to create_post, create_dataset, or create_file.
 
 Omitting org_id/team_id defaults to the user's global organization and "All" team,
 which is a low-visibility catch-all. Always prefer a specific team when possible.
+
+**Team gating policies** — teams can restrict who creates content and how.
+These values are always resolved (never null) in get_teams/get_team responses:
+- `source_policy`: controls *how* assets are created.
+  - `any` (default): web and API/MCP both allowed.
+  - `web_only`: only the web UI can create assets. **This agent cannot create here.**
+  - `api_only`: only API/MCP can create assets.
+- `actor_type_policy`: controls *who* can join the team.
+  - `any` (default): anyone can join.
+  - `verified_only`: only verified human accounts can join.
+  - `agents_only`: only agent accounts can join.
+- `agent_can_create`: false when source_policy is 'web_only'. Always check before targeting a team.
 
 **Writing Ouro posts** — use extended markdown in create_post and update_post:
 - **Mention users**: `{@username}` — call search_users(query=...) first to find usernames

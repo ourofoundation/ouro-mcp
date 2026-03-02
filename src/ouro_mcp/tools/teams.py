@@ -6,9 +6,8 @@ import json
 from typing import Optional
 
 from mcp.server.fastmcp import Context, FastMCP
-
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import truncate_response
+from ouro_mcp.utils import resolve_team_policy, truncate_response
 
 
 def register(mcp: FastMCP) -> None:
@@ -23,6 +22,13 @@ def register(mcp: FastMCP) -> None:
 
         By default, returns teams you have joined. Set discover=True to browse
         public teams you could join. Use org_id to filter by organization.
+
+        Each team includes resolved gating policies:
+        - source_policy ('any' | 'web_only' | 'api_only'): controls how assets
+          are created. MCP counts as API, so 'web_only' blocks this tool.
+        - actor_type_policy ('any' | 'verified_only' | 'agents_only'): controls
+          who can join the team.
+        - agent_can_create: False when source_policy is 'web_only'.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -33,12 +39,17 @@ def register(mcp: FastMCP) -> None:
 
         results = []
         for team in teams:
+            source = resolve_team_policy(team, "source_policy")
+            actor = resolve_team_policy(team, "actor_type_policy")
             entry = {
                 "id": str(team.get("id", "")),
                 "name": team.get("name"),
                 "org_id": str(team.get("org_id", "")),
                 "visibility": team.get("visibility"),
                 "default_role": team.get("default_role"),
+                "source_policy": source,
+                "actor_type_policy": actor,
+                "agent_can_create": source != "web_only",
             }
             desc = team.get("description")
             if desc and isinstance(desc, dict):
@@ -60,11 +71,13 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        return json.dumps({
-            "results": results,
-            "count": len(results),
-            "mode": "discover" if discover else "mine",
-        })
+        return json.dumps(
+            {
+                "results": results,
+                "count": len(results),
+                "mode": "discover" if discover else "mine",
+            }
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -72,17 +85,30 @@ def register(mcp: FastMCP) -> None:
         id: str,
         ctx: Context,
     ) -> str:
-        """Get detailed information about a specific team, including members and metrics."""
+        """Get detailed information about a specific team, including members, metrics, and gating policies.
+
+        Gating policies (always resolved, never null):
+        - source_policy ('any' | 'web_only' | 'api_only'): controls how assets
+          are created. MCP counts as API, so 'web_only' blocks this tool.
+        - actor_type_policy ('any' | 'verified_only' | 'agents_only'): controls
+          who can join the team.
+        - agent_can_create: False when source_policy is 'web_only'.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
 
         team = ouro.teams.retrieve(id)
 
+        source = resolve_team_policy(team, "source_policy")
+        actor = resolve_team_policy(team, "actor_type_policy")
         result = {
             "id": str(team.get("id", "")),
             "name": team.get("name"),
             "org_id": str(team.get("org_id", "")),
             "visibility": team.get("visibility"),
             "default_role": team.get("default_role"),
+            "source_policy": source,
+            "actor_type_policy": actor,
+            "agent_can_create": source != "web_only",
         }
 
         desc = team.get("description")
@@ -100,7 +126,9 @@ def register(mcp: FastMCP) -> None:
             {
                 "user_id": str(m.get("user_id", "")),
                 "role": m.get("role"),
-                "username": m.get("user", {}).get("username") if m.get("user") else None,
+                "username": (
+                    m.get("user", {}).get("username") if m.get("user") else None
+                ),
             }
             for m in members
         ]
@@ -150,16 +178,18 @@ def register(mcp: FastMCP) -> None:
                 entry["description"] = desc.get("text", "")[:200]
             results.append(entry)
 
-        result = json.dumps({
-            "results": results,
-            "count": len(results),
-            "pagination": {
-                "offset": pagination.get("offset", offset),
-                "limit": pagination.get("limit", limit),
-                "hasMore": pagination.get("hasMore", len(results) == limit),
-                "total": pagination.get("total"),
-            },
-        })
+        result = json.dumps(
+            {
+                "results": results,
+                "count": len(results),
+                "pagination": {
+                    "offset": pagination.get("offset", offset),
+                    "limit": pagination.get("limit", limit),
+                    "hasMore": pagination.get("hasMore", len(results) == limit),
+                    "total": pagination.get("total"),
+                },
+            }
+        )
 
         return truncate_response(result)
 
@@ -169,7 +199,12 @@ def register(mcp: FastMCP) -> None:
         id: str,
         ctx: Context,
     ) -> str:
-        """Join a team. You must be a member of the team's organization."""
+        """Join a team. You must be a member of the team's organization.
+
+        Teams with actor_type_policy='verified_only' only allow verified humans.
+        Teams with actor_type_policy='agents_only' only allow agent accounts.
+        Check get_teams(discover=True) to see policies before joining.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.teams.join(id)
         return json.dumps({"success": True, "team": result})

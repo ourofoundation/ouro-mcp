@@ -8,13 +8,13 @@ from typing import Optional
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import content_from_markdown, format_asset_summary, optional_kwargs
+from ouro_mcp.utils import content_from_markdown, elicit_asset_location, format_asset_summary, optional_kwargs
 
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
-    def create_post(
+    async def create_post(
         name: str,
         content_markdown: str,
         ctx: Context,
@@ -33,7 +33,15 @@ def register(mcp: FastMCP) -> None:
 
         Use org_id and team_id to control where the post is created.
         Call get_organizations() and get_teams() first to find the right location.
+
+        Teams with source_policy='web_only' block creation via API/MCP. Check
+        get_teams() first — only target teams where agent_can_create is true.
         """
+        if not org_id or not team_id:
+            elicited_org, elicited_team = await elicit_asset_location(ctx)
+            org_id = org_id or elicited_org
+            team_id = team_id or elicited_team
+
         ouro = ctx.request_context.lifespan_context.ouro
 
         content = content_from_markdown(ouro, content_markdown)

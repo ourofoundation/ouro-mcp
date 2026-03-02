@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
+from mcp import types as mcp_types
+from mcp.server.fastmcp import Context
+
 from ouro_mcp.constants import MAX_RESPONSE_SIZE
+
+log = logging.getLogger(__name__)
 
 
 def truncate_response(data: str, context: str = "") -> str:
@@ -68,3 +74,88 @@ def file_result(file: Any) -> dict:
     if file.metadata and hasattr(file.metadata, "size"):
         result["size"] = file.metadata.size
     return result
+
+
+def resolve_team_policy(team: dict, field: str, default: str = "any") -> str:
+    """Return the effective policy for a team, falling back to the org's policy."""
+    value = team.get(field)
+    if value:
+        return value
+    org = team.get("organization") or {}
+    return org.get(field) or default
+
+
+_ELICITATION_CAP = mcp_types.ClientCapabilities(
+    elicitation=mcp_types.ElicitationCapability()
+)
+
+
+async def elicit_asset_location(
+    ctx: Context,
+) -> tuple[str | None, str | None]:
+    """Ask the user where an asset should be published, if the client supports elicitation.
+
+    Returns (org_id, team_id). Both are None when elicitation is unavailable,
+    the user declines, or there are no teams to choose from.
+    """
+    if not ctx.session.check_client_capability(_ELICITATION_CAP):
+        return None, None
+
+    ouro = ctx.request_context.lifespan_context.ouro
+
+    try:
+        teams = ouro.teams.list(joined=True)
+    except Exception:
+        log.debug("Failed to fetch teams for elicitation", exc_info=True)
+        return None, None
+
+    if not teams:
+        return None, None
+
+    teams = [t for t in teams if resolve_team_policy(t, "source_policy") != "web_only"]
+
+    if not teams:
+        return None, None
+
+    if len(teams) == 1:
+        team = teams[0]
+        return str(team.get("org_id", "")), str(team.get("id", ""))
+
+    team_to_org: dict[str, str] = {}
+    options = []
+    for team in teams:
+        team_id = str(team.get("id", ""))
+        org_id = str(team.get("org_id", ""))
+        team_name = team.get("name", "Unknown")
+        org = team.get("organization") or {}
+        org_name = org.get("name") or org.get("display_name") or "Unknown Org"
+
+        options.append({"const": team_id, "title": f"{org_name} / {team_name}"})
+        team_to_org[team_id] = org_id
+
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "team": {
+                "type": "string",
+                "title": "Team",
+                "description": "Choose which team to publish this asset in",
+                "oneOf": options,
+            },
+        },
+        "required": ["team"],
+    }
+
+    result = await ctx.session.elicit_form(
+        message="Where should this asset be published?",
+        requestedSchema=schema,
+        related_request_id=ctx.request_id,
+    )
+
+    if result.action == "accept" and result.content:
+        selected_team_id = str(result.content.get("team", ""))
+        selected_org_id = team_to_org.get(selected_team_id)
+        if selected_org_id and selected_team_id:
+            return selected_org_id, selected_team_id
+
+    return None, None

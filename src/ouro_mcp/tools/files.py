@@ -8,13 +8,13 @@ from typing import Optional
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import file_result, optional_kwargs
+from ouro_mcp.utils import elicit_asset_location, file_result, optional_kwargs
 
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
-    def create_file(
+    async def create_file(
         name: str,
         file_path: str,
         ctx: Context,
@@ -28,7 +28,15 @@ def register(mcp: FastMCP) -> None:
         file_path must be an absolute path to a file on the local filesystem.
         Use org_id and team_id to control where the file is created.
         Call get_organizations() and get_teams() first to find the right location.
+
+        Teams with source_policy='web_only' block creation via API/MCP. Check
+        get_teams() first — only target teams where agent_can_create is true.
         """
+        if not org_id or not team_id:
+            elicited_org, elicited_team = await elicit_asset_location(ctx)
+            org_id = org_id or elicited_org
+            team_id = team_id or elicited_team
+
         ouro = ctx.request_context.lifespan_context.ouro
 
         file = ouro.files.create(

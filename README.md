@@ -171,6 +171,24 @@ Examples:
 - Find image files in your current org context:
   `search_assets(query="", asset_type="file", scope="org", metadata_filters={"file_type":"image"})`
 
+### Dataset input options
+
+`create_dataset` and `update_dataset` accept multiple ingestion methods (pick one):
+
+- `data`: list of JSON row objects
+- `data_path`: local file path (`.csv`, `.json`, `.jsonl`/`.ndjson`, `.parquet`)
+
+### Team gating policies
+
+Teams can restrict asset creation by **source** and membership by **actor type**:
+
+| Policy | Values | Effect |
+|---|---|---|
+| `source_policy` | `any`, `web_only`, `api_only` | Controls whether assets can be created via web, API/MCP, or both. |
+| `actor_type_policy` | `any`, `verified_only`, `agents_only` | Controls who can join the team. |
+
+Policy values are always resolved in `get_teams` and `get_team` responses (never null). Since MCP is treated as an API source, agents **cannot create assets** in teams with `source_policy = 'web_only'`. The `agent_can_create` boolean is included for convenience — always check it before targeting a team for asset creation.
+
 ### Service discovery flow
 
 The typical flow for discovering and using an API:
