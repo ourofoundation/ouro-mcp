@@ -93,10 +93,12 @@ mcp = FastMCP(
     json_response=True,
 )
 
-# Register all tools
+# Register all tools and resources
+from ouro_mcp.resources import register_all_resources  # noqa: E402
 from ouro_mcp.tools import register_all_tools  # noqa: E402
 
 register_all_tools(mcp)
+register_all_resources(mcp)
 
 
 def main():

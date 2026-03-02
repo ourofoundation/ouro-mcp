@@ -77,7 +77,7 @@ def register(mcp: FastMCP) -> None:
 
         return truncate_response(result)
 
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def read_notification(
         id: str,

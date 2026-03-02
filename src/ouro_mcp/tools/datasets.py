@@ -61,7 +61,7 @@ def register(mcp: FastMCP) -> None:
             context="Use offset parameter to load more rows.",
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def create_dataset(
         name: str,
@@ -95,7 +95,7 @@ def register(mcp: FastMCP) -> None:
         result["table_name"] = dataset.metadata.get("table_name") if dataset.metadata else None
         return json.dumps(result)
 
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def update_dataset(
         id: str,

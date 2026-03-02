@@ -69,7 +69,7 @@ def register(mcp: FastMCP) -> None:
             },
         })
 
-    @mcp.tool()
+    @mcp.tool(annotations={"destructiveHint": True})
     @handle_ouro_errors
     def unlock_asset(
         asset_type: str,
@@ -98,7 +98,7 @@ def register(mcp: FastMCP) -> None:
             **result,
         })
 
-    @mcp.tool()
+    @mcp.tool(annotations={"destructiveHint": True})
     @handle_ouro_errors
     def send_money(
         recipient_id: str,

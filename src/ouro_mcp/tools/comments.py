@@ -54,7 +54,7 @@ def register(mcp: FastMCP) -> None:
 
         return truncate_response(result)
 
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def create_comment(
         parent_id: str,
@@ -78,7 +78,7 @@ def register(mcp: FastMCP) -> None:
 
         return json.dumps(format_asset_summary(comment))
 
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def update_comment(
         id: str,

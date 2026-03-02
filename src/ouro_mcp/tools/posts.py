@@ -12,7 +12,7 @@ from ouro_mcp.utils import content_from_markdown, format_asset_summary, optional
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def create_post(
         name: str,
@@ -48,7 +48,7 @@ def register(mcp: FastMCP) -> None:
 
         return json.dumps(format_asset_summary(post))
 
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def update_post(
         id: str,

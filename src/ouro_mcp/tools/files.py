@@ -12,7 +12,7 @@ from ouro_mcp.utils import file_result, optional_kwargs
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def create_file(
         name: str,
@@ -41,7 +41,7 @@ def register(mcp: FastMCP) -> None:
 
         return json.dumps(file_result(file))
 
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def update_file(
         id: str,

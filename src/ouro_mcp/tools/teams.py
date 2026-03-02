@@ -163,7 +163,7 @@ def register(mcp: FastMCP) -> None:
 
         return truncate_response(result)
 
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def join_team(
         id: str,
@@ -174,7 +174,7 @@ def register(mcp: FastMCP) -> None:
         result = ouro.teams.join(id)
         return json.dumps({"success": True, "team": result})
 
-    @mcp.tool()
+    @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def leave_team(
         id: str,
