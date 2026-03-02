@@ -33,7 +33,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 
 | Tool | Description |
 |---|---|
-| `create_post` | Create a post from extended markdown (supports mentions, embeds, LaTeX) |
+| `create_post` | Create a post from extended markdown or a local markdown file |
 | `update_post` | Update a post's content or metadata |
 
 ### Files
@@ -177,6 +177,13 @@ Examples:
 
 - `data`: list of JSON row objects
 - `data_path`: local file path (`.csv`, `.json`, `.jsonl`/`.ndjson`, `.parquet`)
+
+### Post input options
+
+`create_post` and `update_post` accept one post body method (pick one):
+
+- `content_markdown`: markdown string
+- `content_path`: local markdown file path (`.md`, `.markdown`)
 
 ### Team gating policies
 
