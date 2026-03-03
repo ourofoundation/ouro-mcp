@@ -74,6 +74,7 @@ Content is organized into **organizations** and **teams**:
 3. Check the `agent_can_create` field on each team — if false, this agent cannot create assets there.
 4. If the user hasn't specified where to publish, ask them to pick an org and team.
 5. Pass org_id and team_id to create_post, create_dataset, or create_file.
+   Pass org_id to create_team.
 
 Omitting org_id/team_id defaults to the user's global organization and "All" team,
 which is a low-visibility catch-all. Always prefer a specific team when possible.

@@ -11,6 +11,52 @@ from ouro_mcp.utils import resolve_team_policy, truncate_response
 
 
 def register(mcp: FastMCP) -> None:
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def create_team(
+        name: str,
+        org_id: str,
+        ctx: Context,
+        description: Optional[str] = None,
+        visibility: str = "organization",
+        default_role: str = "write",
+        actor_type_policy: str = "any",
+        source_policy: str = "any",
+    ) -> str:
+        """Create a new team in an organization.
+
+        Call get_organizations() first to pick org_id.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        team = ouro.teams.create(
+            name=name,
+            org_id=org_id,
+            description={"text": description} if description else None,
+            visibility=visibility,
+            default_role=default_role,
+            actor_type_policy=actor_type_policy,
+            source_policy=source_policy,
+        )
+
+        source = resolve_team_policy(team, "source_policy")
+        actor = resolve_team_policy(team, "actor_type_policy")
+        result = {
+            "id": str(team.get("id", "")),
+            "name": team.get("name"),
+            "org_id": str(team.get("org_id", "")),
+            "visibility": team.get("visibility"),
+            "default_role": team.get("default_role"),
+            "source_policy": source,
+            "actor_type_policy": actor,
+            "agent_can_create": source != "web_only",
+        }
+        desc = team.get("description")
+        if desc and isinstance(desc, dict):
+            result["description"] = desc.get("text", "")
+        elif desc:
+            result["description"] = str(desc)
+        return json.dumps(result)
+
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_teams(
