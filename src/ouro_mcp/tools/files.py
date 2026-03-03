@@ -58,11 +58,13 @@ def register(mcp: FastMCP) -> None:
         name: Optional[str] = None,
         description: Optional[str] = None,
         visibility: Optional[str] = None,
+        org_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> str:
         """Update a file's content or metadata.
 
         Pass file_path to replace the file data with a new file from the local filesystem.
-        Pass name, description, or visibility to update metadata.
+        Pass name, description, visibility, org_id, or team_id to update metadata.
         Requires admin or write permission on the file.
         """
         ouro = ctx.request_context.lifespan_context.ouro
@@ -70,7 +72,13 @@ def register(mcp: FastMCP) -> None:
         file = ouro.files.update(
             id,
             file_path=file_path,
-            **optional_kwargs(name=name, description=description, visibility=visibility),
+            **optional_kwargs(
+                name=name,
+                description=description,
+                visibility=visibility,
+                org_id=org_id,
+                team_id=team_id,
+            ),
         )
 
         return json.dumps(file_result(file))

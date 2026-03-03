@@ -199,11 +199,13 @@ def register(mcp: FastMCP) -> None:
         data: Optional[list[dict]] = None,
         data_path: Optional[str] = None,
         description: Optional[str] = None,
+        org_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> str:
         """Update a dataset's data or metadata.
 
         Pass data/data_path to append rows (same formats as create_dataset).
-        Pass name, visibility, or description to update metadata.
+        Pass name, visibility, description, org_id, or team_id to update metadata.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -214,7 +216,13 @@ def register(mcp: FastMCP) -> None:
         dataset = ouro.datasets.update(
             id,
             data=df,
-            **optional_kwargs(name=name, visibility=visibility, description=description),
+            **optional_kwargs(
+                name=name,
+                visibility=visibility,
+                description=description,
+                org_id=org_id,
+                team_id=team_id,
+            ),
         )
 
         return json.dumps(format_asset_summary(dataset))

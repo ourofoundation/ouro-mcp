@@ -3,11 +3,32 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Any, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import resolve_team_policy, truncate_response
+
+
+def _team_summary(team: dict[str, Any]) -> dict[str, Any]:
+    source = resolve_team_policy(team, "source_policy")
+    actor = resolve_team_policy(team, "actor_type_policy")
+    result = {
+        "id": str(team.get("id", "")),
+        "name": team.get("name"),
+        "org_id": str(team.get("org_id", "")),
+        "visibility": team.get("visibility"),
+        "default_role": team.get("default_role"),
+        "source_policy": source,
+        "actor_type_policy": actor,
+        "agent_can_create": source != "web_only",
+    }
+    desc = team.get("description")
+    if desc and isinstance(desc, dict):
+        result["description"] = desc.get("text", "")
+    elif desc:
+        result["description"] = str(desc)
+    return result
 
 
 def register(mcp: FastMCP) -> None:
@@ -17,7 +38,7 @@ def register(mcp: FastMCP) -> None:
         name: str,
         org_id: str,
         ctx: Context,
-        description: Optional[str] = None,
+        description: Union[str, dict],
         visibility: str = "public",
         default_role: str = "write",
         actor_type_policy: str = "any",
@@ -26,6 +47,10 @@ def register(mcp: FastMCP) -> None:
         """Create a new team in an organization.
 
         Call get_organizations() first to pick org_id.
+
+        Description is required and supports:
+        - markdown string (recommended): backend converts markdown to rich content
+        - structured content JSON object (advanced)
 
         Important constraints:
         - name must be a slug using only lowercase letters, numbers, and dashes.
@@ -37,31 +62,43 @@ def register(mcp: FastMCP) -> None:
         team = ouro.teams.create(
             name=name,
             org_id=org_id,
-            description={"text": description} if description else None,
+            description=description,
             visibility=visibility,
             default_role=default_role,
             actor_type_policy=actor_type_policy,
             source_policy=source_policy,
         )
 
-        source = resolve_team_policy(team, "source_policy")
-        actor = resolve_team_policy(team, "actor_type_policy")
-        result = {
-            "id": str(team.get("id", "")),
-            "name": team.get("name"),
-            "org_id": str(team.get("org_id", "")),
-            "visibility": team.get("visibility"),
-            "default_role": team.get("default_role"),
-            "source_policy": source,
-            "actor_type_policy": actor,
-            "agent_can_create": source != "web_only",
-        }
-        desc = team.get("description")
-        if desc and isinstance(desc, dict):
-            result["description"] = desc.get("text", "")
-        elif desc:
-            result["description"] = str(desc)
-        return json.dumps(result)
+        return json.dumps(_team_summary(team))
+
+    @mcp.tool(annotations={"idempotentHint": True})
+    @handle_ouro_errors
+    def update_team(
+        id: str,
+        ctx: Context,
+        name: Optional[str] = None,
+        description: Optional[Union[str, dict]] = None,
+        visibility: Optional[str] = None,
+        default_role: Optional[str] = None,
+        actor_type_policy: Optional[str] = None,
+        source_policy: Optional[str] = None,
+    ) -> str:
+        """Update a team.
+
+        You can update name, visibility, default_role, and policy settings.
+        Description supports either a markdown string or a structured content JSON object.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        team = ouro.teams.update(
+            id=id,
+            name=name,
+            description=description,
+            visibility=visibility,
+            default_role=default_role,
+            actor_type_policy=actor_type_policy,
+            source_policy=source_policy,
+        )
+        return json.dumps(_team_summary(team))
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -91,23 +128,7 @@ def register(mcp: FastMCP) -> None:
 
         results = []
         for team in teams:
-            source = resolve_team_policy(team, "source_policy")
-            actor = resolve_team_policy(team, "actor_type_policy")
-            entry = {
-                "id": str(team.get("id", "")),
-                "name": team.get("name"),
-                "org_id": str(team.get("org_id", "")),
-                "visibility": team.get("visibility"),
-                "default_role": team.get("default_role"),
-                "source_policy": source,
-                "actor_type_policy": actor,
-                "agent_can_create": source != "web_only",
-            }
-            desc = team.get("description")
-            if desc and isinstance(desc, dict):
-                entry["description"] = desc.get("text", "")
-            elif desc:
-                entry["description"] = str(desc)
+            entry = _team_summary(team)
 
             org = team.get("organization")
             if org:
@@ -150,24 +171,7 @@ def register(mcp: FastMCP) -> None:
 
         team = ouro.teams.retrieve(id)
 
-        source = resolve_team_policy(team, "source_policy")
-        actor = resolve_team_policy(team, "actor_type_policy")
-        result = {
-            "id": str(team.get("id", "")),
-            "name": team.get("name"),
-            "org_id": str(team.get("org_id", "")),
-            "visibility": team.get("visibility"),
-            "default_role": team.get("default_role"),
-            "source_policy": source,
-            "actor_type_policy": actor,
-            "agent_can_create": source != "web_only",
-        }
-
-        desc = team.get("description")
-        if desc and isinstance(desc, dict):
-            result["description"] = desc.get("text", "")
-        elif desc:
-            result["description"] = str(desc)
+        result = _team_summary(team)
 
         org = team.get("organization")
         if org:
@@ -244,6 +248,61 @@ def register(mcp: FastMCP) -> None:
         )
 
         return truncate_response(result)
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    @handle_ouro_errors
+    def get_team_unreads(
+        id: str,
+        ctx: Context,
+        offset: int = 0,
+        limit: int = 5,
+    ) -> str:
+        """Get paginated unread asset previews for one team.
+
+        This is designed as a quick "what's going on?" view for agents.
+        Use get_asset(asset_id) to inspect any item in full depth.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+
+        team = ouro.teams.retrieve(id)
+        page_limit = max(1, min(limit, 50))
+        preview = ouro.teams.unread_preview(
+            id=id, offset=max(offset, 0), limit=page_limit
+        )
+        unread_count = int(preview.get("unread_count", 0) or 0)
+        pagination = preview.get("pagination", {})
+
+        results = []
+        for item in preview.get("results", []):
+            entry = {
+                "id": str(item.get("id", "")),
+                "name": item.get("name"),
+                "created_at": item.get("created_at"),
+                "visibility": item.get("visibility"),
+            }
+
+            author = item.get("author")
+            if author:
+                entry["author"] = author.get("username")
+
+            desc = item.get("description")
+            if desc and isinstance(desc, dict):
+                entry["description"] = desc.get("text", "")[:200]
+
+            results.append(entry)
+
+        payload = {
+            "results": results,
+            "count": len(results),
+            "pagination": {
+                "offset": pagination.get("offset", max(offset, 0)),
+                "limit": pagination.get("limit", page_limit),
+                "hasMore": pagination.get("hasMore", False),
+                "total": pagination.get("total", unread_count),
+            },
+        }
+
+        return truncate_response(json.dumps(payload))
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors

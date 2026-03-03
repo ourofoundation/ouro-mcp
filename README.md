@@ -10,7 +10,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 - **Discover and execute API routes** — call any user-published API on the platform
 - **Delete assets** they own
 
-## Tools (29)
+## Tools (31)
 
 ### Assets & Discovery
 
@@ -64,7 +64,9 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `get_organizations` | List your organizations or discover joinable ones |
 | `get_teams` | List your teams or discover public teams in an org |
 | `get_team` | Get detailed team info including members |
+| `get_team_unreads` | Get unread count plus paginated unread asset previews for one team |
 | `get_team_activity` | Browse a team's activity feed |
+| `update_team` | Update a team's metadata and policies |
 | `join_team` | Join a team |
 | `leave_team` | Leave a team |
 

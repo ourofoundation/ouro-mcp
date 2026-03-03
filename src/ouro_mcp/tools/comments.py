@@ -6,9 +6,12 @@ import json
 from typing import Optional
 
 from mcp.server.fastmcp import Context, FastMCP
-
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import content_from_markdown, format_asset_summary, truncate_response
+from ouro_mcp.utils import (
+    content_from_markdown,
+    format_asset_summary,
+    truncate_response,
+)
 
 
 def register(mcp: FastMCP) -> None:
@@ -42,15 +45,19 @@ def register(mcp: FastMCP) -> None:
 
             replies = getattr(c, "replies", None)
             if replies is not None:
-                entry["reply_count"] = replies if isinstance(replies, int) else len(replies)
+                entry["reply_count"] = (
+                    replies if isinstance(replies, int) else len(replies)
+                )
 
             results.append(entry)
 
-        result = json.dumps({
-            "results": results,
-            "count": len(results),
-            "parent_id": parent_id,
-        })
+        result = json.dumps(
+            {
+                "results": results,
+                "count": len(results),
+                "parent_id": parent_id,
+            }
+        )
 
         return truncate_response(result)
 
