@@ -18,7 +18,7 @@ def register(mcp: FastMCP) -> None:
         org_id: str,
         ctx: Context,
         description: Optional[str] = None,
-        visibility: str = "organization",
+        visibility: str = "public",
         default_role: str = "write",
         actor_type_policy: str = "any",
         source_policy: str = "any",
@@ -26,6 +26,12 @@ def register(mcp: FastMCP) -> None:
         """Create a new team in an organization.
 
         Call get_organizations() first to pick org_id.
+
+        Important constraints:
+        - name must be a slug using only lowercase letters, numbers, and dashes.
+          Example: "research-lab-1".
+        - For external members, team creation is only allowed when the organization
+          enables external public team creation, and visibility is "public".
         """
         ouro = ctx.request_context.lifespan_context.ouro
         team = ouro.teams.create(
