@@ -97,6 +97,12 @@ These values are always resolved (never null) in get_teams/get_team responses:
   ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets
 - **Standard markdown**: headings, **bold**, *italic*, lists, code blocks, tables, links
 - **Math**: \\(inline\\) and \\[display\\] LaTeX
+
+**Conversations and messages**:
+- Use list_conversations() to see conversations you belong to.
+- Use get_conversation(id) to inspect conversation details and members.
+- Use create_conversation(member_user_ids=...) to start a new conversation.
+- Use send_message(conversation_id, text) and list_messages(conversation_id, ...) for chat.
 """.strip()
 
 mcp = FastMCP(
