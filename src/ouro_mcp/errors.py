@@ -20,8 +20,30 @@ log = logging.getLogger(__name__)
 
 def _format_ouro_error(e: Exception) -> str:
     """Convert an ouro-py exception to an agent-friendly JSON error string."""
+    raw = str(e)
+    raw_lower = raw.lower()
+
+    # Known server-side failures that agents should handle without retries.
+    if (
+        "json object requested, multiple (or no) rows returned" in raw_lower
+        or "thread depth" in raw_lower
+    ):
+        return json.dumps(
+            {
+                "error": "nested_reply_failed",
+                "message": "Nested reply failed. Do not retry repeatedly; post a root-level follow-up and mention the target user as inline code `@username`.",
+            }
+        )
+    if "unique_user_to_team_role" in raw_lower:
+        return json.dumps(
+            {
+                "error": "already_team_member",
+                "message": "User is already a member of this team.",
+            }
+        )
+
     if isinstance(e, NotFoundError):
-        return json.dumps({"error": "not_found", "message": str(e)})
+        return json.dumps({"error": "not_found", "message": raw})
     if isinstance(e, AuthenticationError):
         return json.dumps(
             {
@@ -45,7 +67,7 @@ def _format_ouro_error(e: Exception) -> str:
             msg += f" Retry after {retry_after} seconds."
         return json.dumps({"error": "rate_limited", "message": msg})
     if isinstance(e, BadRequestError):
-        return json.dumps({"error": "bad_request", "message": str(e)})
+        return json.dumps({"error": "bad_request", "message": raw})
     if isinstance(e, InternalServerError):
         return json.dumps(
             {
@@ -54,9 +76,9 @@ def _format_ouro_error(e: Exception) -> str:
             }
         )
     if isinstance(e, TimeoutError):
-        return json.dumps({"error": "timeout", "message": str(e)})
+        return json.dumps({"error": "timeout", "message": raw})
     log.exception("Unexpected error in MCP tool")
-    return json.dumps({"error": "unexpected", "message": str(e)})
+    return json.dumps({"error": "unexpected", "message": raw})
 
 
 def handle_ouro_errors(fn: Callable) -> Callable:
