@@ -74,7 +74,7 @@ def register(mcp: FastMCP) -> None:
         comment being replied to.
 
         content_markdown supports extended markdown:
-        - User mentions: `` `@username` `` -- call search_users() for usernames
+        - User mentions: @username
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
         - Standard markdown and LaTeX math
         """
@@ -95,7 +95,7 @@ def register(mcp: FastMCP) -> None:
         """Update a comment's content.
 
         content_markdown supports extended markdown:
-        - User mentions: `` `@username` `` -- call search_users() for usernames
+        - User mentions: @username
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
         - Standard markdown and LaTeX math
         """

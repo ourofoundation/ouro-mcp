@@ -60,7 +60,7 @@ def register(mcp: FastMCP) -> None:
         - content_path: local .md/.markdown file path
 
         Markdown is converted via Ouro's from-markdown API, which supports:
-        - User mentions: `` `@username` `` — call search_users() first to get usernames
+        - User mentions: @username
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"file"|"dataset"|"post"|"route"|"service","viewMode":"preview"|"card"}``` — use search_assets() or get_asset() for IDs
         - Standard markdown: headings, bold, italic, lists, code blocks, tables, links
         - Math: \\(inline\\) and \\[display\\] LaTeX
@@ -115,7 +115,7 @@ def register(mcp: FastMCP) -> None:
         """Update a post's content or metadata.
 
         Pass content_markdown/content_path to replace the post body. Supports extended markdown:
-        - User mentions: `` `@username` `` — call search_users() for usernames
+        - User mentions: @username
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
         - Standard markdown and LaTeX math
 

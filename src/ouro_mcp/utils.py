@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from mcp import types as mcp_types
@@ -57,10 +58,32 @@ def optional_kwargs(**kw: Any) -> dict:
     return {k: v for k, v in kw.items() if v is not None}
 
 
+def normalize_markdown_input(markdown: str) -> str:
+    """Normalize common shell-escaped markdown sequences.
+
+    Agents frequently pass markdown via shell CLI args (e.g. content_markdown="..."),
+    where escaped sequences like ``\\n`` are sent literally. Convert those back to
+    markdown-friendly characters so the backend receives the intended content.
+    """
+    normalized = markdown.replace("\\`", "`")
+    if "\\r\\n" in normalized:
+        normalized = normalized.replace("\\r\\n", "\n")
+    if "\\n" in normalized:
+        normalized = normalized.replace("\\n", "\n")
+    # Agents should send mentions as @username. Convert that single input form
+    # into the parser's canonical mention syntax before conversion.
+    normalized = re.sub(
+        r"(?<![\w`{])@([A-Za-z0-9_]{1,64})\b",
+        r"`{@\1}`",
+        normalized,
+    )
+    return normalized
+
+
 def content_from_markdown(ouro: Any, markdown: str) -> Any:
     """Create a Content object from markdown using the Ouro client."""
     content = ouro.posts.Content()
-    content.from_markdown(markdown)
+    content.from_markdown(normalize_markdown_input(markdown))
     return content
 
 

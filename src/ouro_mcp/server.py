@@ -98,7 +98,7 @@ These values are always resolved (never null) in get_teams/get_team responses:
   public team creation, and the team visibility is "public".
 
 **Writing Ouro posts** — use extended markdown in create_post and update_post:
-- **Mention users**: `` `@username` `` — call search_users(query=...) first to find usernames
+- **Mention users**: @username
 - **Embed assets**: ```assetComponent
   {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card"}
   ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets

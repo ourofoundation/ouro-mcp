@@ -31,7 +31,7 @@ def _format_ouro_error(e: Exception) -> str:
         return json.dumps(
             {
                 "error": "nested_reply_failed",
-                "message": "Nested reply failed. Do not retry repeatedly; post a root-level follow-up and mention the target user as inline code `@username`.",
+                "message": "Nested reply failed. Do not retry repeatedly; post a root-level follow-up and mention the target user as @username.",
             }
         )
     if "unique_user_to_team_role" in raw_lower:
