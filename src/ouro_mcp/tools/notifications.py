@@ -60,19 +60,11 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        result = json.dumps({
+        return truncate_response(json.dumps({
             "results": results,
-            "count": len(results),
-            "pagination": {
-                "offset": response.get("pagination", {}).get("offset", offset),
-                "limit": response.get("pagination", {}).get("limit", limit),
-                "hasMore": response.get("pagination", {}).get("hasMore", len(results) == limit),
-                "total": response.get("pagination", {}).get("total"),
-            },
-            "unread_only": unread_only,
-        })
-
-        return truncate_response(result)
+            "total": response.get("pagination", {}).get("total"),
+            "hasMore": response.get("pagination", {}).get("hasMore", len(results) == limit),
+        }))
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors

@@ -56,16 +56,10 @@ def register(mcp: FastMCP) -> None:
         limit: Annotated[int, Field(description="Max results to return")] = 20,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
-        """Search or browse assets on Ouro (datasets, posts, files, services, routes).
+        """Search or browse assets on Ouro. Supports hybrid semantic + full-text search.
 
-        With a query: performs hybrid semantic + full-text search.
-        Without a query: returns recent assets sorted by creation date.
-        With a UUID as query: looks up that single asset directly.
-
-        Examples:
-          search_assets(asset_type="dataset")
-          search_assets(query="sales data", extension="csv")
-          search_assets(asset_type="service")
+        Without a query: returns recent assets by creation date.
+        With a UUID as query: direct asset lookup.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -110,13 +104,8 @@ def register(mcp: FastMCP) -> None:
         return json.dumps(
             {
                 "results": assets,
-                "count": len(assets),
-                "pagination": {
-                    "offset": response.get("pagination", {}).get("offset", offset),
-                    "limit": response.get("pagination", {}).get("limit", limit),
-                    "hasMore": response.get("pagination", {}).get("hasMore", len(assets) == limit),
-                    "total": response.get("pagination", {}).get("total"),
-                },
+                "total": response.get("pagination", {}).get("total"),
+                "hasMore": response.get("pagination", {}).get("hasMore", len(assets) == limit),
             }
         )
 

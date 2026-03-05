@@ -52,15 +52,7 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        result = json.dumps(
-            {
-                "results": results,
-                "count": len(results),
-                "parent_id": parent_id,
-            }
-        )
-
-        return truncate_response(result)
+        return truncate_response(json.dumps({"results": results}))
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors

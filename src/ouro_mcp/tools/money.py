@@ -48,15 +48,9 @@ def register(mcp: FastMCP) -> None:
         items = transactions.get("data", []) if isinstance(transactions, dict) else transactions
         pagination = transactions.get("pagination", {}) if isinstance(transactions, dict) else {}
         return json.dumps({
-            "currency": currency.lower(),
             "results": items,
-            "count": len(items) if isinstance(items, list) else None,
-            "pagination": {
-                "offset": pagination.get("offset", offset or 0),
-                "limit": pagination.get("limit", limit or (len(items) if isinstance(items, list) else 0)),
-                "hasMore": pagination.get("hasMore", False),
-                "total": pagination.get("total"),
-            },
+            "total": pagination.get("total"),
+            "hasMore": pagination.get("hasMore", False),
         })
 
     @mcp.tool(annotations={"destructiveHint": True})

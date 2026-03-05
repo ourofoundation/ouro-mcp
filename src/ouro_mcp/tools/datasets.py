@@ -116,15 +116,8 @@ def register(mcp: FastMCP) -> None:
 
         result = json.dumps({
             "rows": rows,
-            "total_rows": total_rows,
-            "count": len(rows),
-            "truncated": (offset + limit) < total_rows,
-            "pagination": {
-                "offset": offset,
-                "limit": limit,
-                "hasMore": (offset + limit) < total_rows,
-                "total": total_rows,
-            },
+            "total": total_rows,
+            "hasMore": (offset + limit) < total_rows,
         })
 
         return truncate_response(

@@ -40,14 +40,9 @@ def register(mcp: FastMCP) -> None:
                 "path": route.route.path if route.route else None,
                 "expected_parameters": route.route.parameters if route.route else None,
                 "expected_request_body": route.route.request_body if route.route else None,
-                "provided_body": body,
-                "provided_query": query,
-                "provided_params": params,
-                "validation": "Parameters shown above. Review before executing with dry_run=False.",
             })
 
         method = route.route.method.upper() if route.route else "UNKNOWN"
-        is_destructive = method in ("POST", "PUT", "DELETE", "PATCH")
 
         start = time.time()
 
@@ -79,11 +74,6 @@ def register(mcp: FastMCP) -> None:
             "duration_seconds": duration,
             "data": _serialize_result(result),
         }
-
-        if is_destructive:
-            response["confirmation_note"] = (
-                f"This route performed a {method} operation on '{route.name}'."
-            )
 
         return json.dumps(response, default=str)
 

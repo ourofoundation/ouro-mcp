@@ -46,8 +46,4 @@ def register(mcp: FastMCP) -> None:
                     entry["membership_type"] = membership.get("membership_type")
             results.append(entry)
 
-        return json.dumps({
-            "results": results,
-            "count": len(results),
-            "mode": "discover" if discover else "mine",
-        })
+        return json.dumps({"results": results})

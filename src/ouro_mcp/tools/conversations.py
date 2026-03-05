@@ -17,28 +17,29 @@ def _conversation_summary(conversation: Any) -> dict:
     if isinstance(conversation, dict):
         metadata = conversation.get("metadata")
         members = metadata.get("members") if isinstance(metadata, dict) else []
-        created_at = conversation.get("created_at")
-        last_updated = conversation.get("last_updated")
-        return {
+        result: dict[str, Any] = {
             "id": str(conversation.get("id", "")),
             "name": conversation.get("name"),
             "summary": conversation.get("summary"),
-            "org_id": str(conversation.get("org_id", "")),
-            "team_id": str(conversation.get("team_id", "")),
-            "created_at": created_at,
-            "last_updated": last_updated,
+            "created_at": conversation.get("created_at"),
+            "last_updated": conversation.get("last_updated"),
             "member_user_ids": [str(member) for member in (members or [])],
         }
+        org_id = conversation.get("org_id")
+        if org_id:
+            result["org_id"] = str(org_id)
+        team_id = conversation.get("team_id")
+        if team_id:
+            result["team_id"] = str(team_id)
+        return result
 
     metadata = getattr(conversation, "metadata", None)
     members = getattr(metadata, "members", None) if metadata is not None else []
 
-    return {
+    result: dict[str, Any] = {
         "id": str(getattr(conversation, "id", "")),
         "name": getattr(conversation, "name", None),
         "summary": getattr(conversation, "summary", None),
-        "org_id": str(getattr(conversation, "org_id", "")),
-        "team_id": str(getattr(conversation, "team_id", "")),
         "created_at": (
             conversation.created_at.isoformat()
             if getattr(conversation, "created_at", None)
@@ -51,6 +52,13 @@ def _conversation_summary(conversation: Any) -> dict:
         ),
         "member_user_ids": [str(member) for member in (members or [])],
     }
+    org_id = getattr(conversation, "org_id", None)
+    if org_id:
+        result["org_id"] = str(org_id)
+    team_id = getattr(conversation, "team_id", None)
+    if team_id:
+        result["team_id"] = str(team_id)
+    return result
 
 
 def _message_summary(message: dict) -> dict:
@@ -88,16 +96,10 @@ def register(mcp: FastMCP) -> None:
         )
 
         results = [_conversation_summary(conversation) for conversation in conversations]
-        result = json.dumps({
+        return truncate_response(json.dumps({
             "results": results,
-            "count": len(results),
-            "pagination": {
-                "offset": offset,
-                "limit": limit,
-                "hasMore": len(results) == limit,
-            },
-        })
-        return truncate_response(result)
+            "hasMore": len(results) == limit,
+        }))
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -149,15 +151,7 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
         )
         results = [_message_summary(message) for message in messages]
-
-        result = json.dumps({
+        return truncate_response(json.dumps({
             "results": results,
-            "count": len(results),
-            "conversation_id": conversation_id,
-            "pagination": {
-                "offset": offset,
-                "limit": limit,
-                "hasMore": len(results) == limit,
-            },
-        })
-        return truncate_response(result)
+            "hasMore": len(results) == limit,
+        }))

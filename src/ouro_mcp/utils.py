@@ -20,14 +20,12 @@ def truncate_response(data: str, context: str = "") -> str:
     try:
         parsed = json.loads(data)
         if isinstance(parsed, dict) and "rows" in parsed:
-            # Progressively remove rows until under limit
             rows = parsed["rows"]
             while len(json.dumps(parsed)) > MAX_RESPONSE_SIZE and rows:
                 rows.pop()
-            parsed["count"] = len(rows)
             parsed["truncated"] = True
             if context:
-                parsed["note"] = f"Response truncated to fit context window. {context}"
+                parsed["note"] = f"Response truncated. {context}"
             return json.dumps(parsed)
     except (json.JSONDecodeError, TypeError):
         pass

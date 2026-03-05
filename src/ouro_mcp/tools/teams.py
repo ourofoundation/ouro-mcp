@@ -146,13 +146,7 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        return json.dumps(
-            {
-                "results": results,
-                "count": len(results),
-                "mode": "discover" if discover else "mine",
-            }
-        )
+        return json.dumps({"results": results})
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -200,16 +194,11 @@ def register(mcp: FastMCP) -> None:
                 entry["description"] = desc.get("text", "")[:200]
             results.append(entry)
 
-        payload = {
+        payload: dict[str, Any] = {
             "results": results,
-            "count": len(results),
             **extra,
-            "pagination": {
-                "offset": pagination.get("offset", offset),
-                "limit": pagination.get("limit", limit),
-                "hasMore": pagination.get("hasMore", len(results) == limit),
-                "total": pagination.get("total"),
-            },
+            "total": pagination.get("total"),
+            "hasMore": pagination.get("hasMore", len(results) == limit),
         }
         return truncate_response(json.dumps(payload))
 
