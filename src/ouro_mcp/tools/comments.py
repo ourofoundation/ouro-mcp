@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Annotated
 
+from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
@@ -18,7 +19,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_comments(
-        parent_id: str,
+        parent_id: Annotated[str, Field(description="Asset ID for top-level comments, or comment ID for replies")],
         ctx: Context,
     ) -> str:
         """List comments on an asset or replies to a comment.
@@ -64,8 +65,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def create_comment(
-        parent_id: str,
-        content_markdown: str,
+        parent_id: Annotated[str, Field(description="Asset ID or comment ID to reply to")],
+        content_markdown: Annotated[str, Field(description="Extended markdown (supports @mentions, asset embeds, LaTeX)")],
         ctx: Context,
     ) -> str:
         """Create a comment on an asset or reply to an existing comment.
@@ -88,8 +89,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def update_comment(
-        id: str,
-        content_markdown: str,
+        id: Annotated[str, Field(description="Comment UUID")],
+        content_markdown: Annotated[str, Field(description="Replacement extended markdown")],
         ctx: Context,
     ) -> str:
         """Update a comment's content.

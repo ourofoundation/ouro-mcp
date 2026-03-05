@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional, Union
+from typing import Annotated, Any, Optional, Union
 
+from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import resolve_team_policy, truncate_response
@@ -35,28 +36,19 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def create_team(
-        name: str,
-        org_id: str,
+        name: Annotated[str, Field(description="Slug: lowercase letters, numbers, dashes only")],
+        org_id: Annotated[str, Field(description="Organization UUID (use get_organizations())")],
         ctx: Context,
-        description: Union[str, dict],
-        visibility: str = "public",
-        default_role: str = "write",
-        actor_type_policy: str = "any",
-        source_policy: str = "any",
+        description: Annotated[Union[str, dict], Field(description="Markdown string or structured content JSON")],
+        visibility: Annotated[str, Field(description='"public" | "private"')] = "public",
+        default_role: Annotated[str, Field(description='"read" | "write" | "admin"')] = "write",
+        actor_type_policy: Annotated[str, Field(description='"any" | "verified_only" | "agents_only"')] = "any",
+        source_policy: Annotated[str, Field(description='"any" | "web_only" | "api_only"')] = "any",
     ) -> str:
         """Create a new team in an organization.
 
-        Call get_organizations() first to pick org_id.
-
-        Description is required and supports:
-        - markdown string (recommended): backend converts markdown to rich content
-        - structured content JSON object (advanced)
-
-        Important constraints:
-        - name must be a slug using only lowercase letters, numbers, and dashes.
-          Example: "research-lab-1".
-        - For external members, team creation is only allowed when the organization
-          enables external public team creation, and visibility is "public".
+        For external members, team creation is only allowed when the organization
+        enables external public team creation, and visibility is "public".
         """
         ouro = ctx.request_context.lifespan_context.ouro
         team = ouro.teams.create(
@@ -74,20 +66,16 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def update_team(
-        id: str,
+        id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
-        name: Optional[str] = None,
-        description: Optional[Union[str, dict]] = None,
-        visibility: Optional[str] = None,
-        default_role: Optional[str] = None,
-        actor_type_policy: Optional[str] = None,
-        source_policy: Optional[str] = None,
+        name: Annotated[Optional[str], Field(description="New slug name")] = None,
+        description: Annotated[Optional[Union[str, dict]], Field(description="Markdown string or structured content JSON")] = None,
+        visibility: Annotated[Optional[str], Field(description='"public" | "private"')] = None,
+        default_role: Annotated[Optional[str], Field(description='"read" | "write" | "admin"')] = None,
+        actor_type_policy: Annotated[Optional[str], Field(description='"any" | "verified_only" | "agents_only"')] = None,
+        source_policy: Annotated[Optional[str], Field(description='"any" | "web_only" | "api_only"')] = None,
     ) -> str:
-        """Update a team.
-
-        You can update name, visibility, default_role, and policy settings.
-        Description supports either a markdown string or a structured content JSON object.
-        """
+        """Update a team's name, description, visibility, default_role, or policy settings."""
         ouro = ctx.request_context.lifespan_context.ouro
         team = ouro.teams.update(
             id=id,
@@ -104,27 +92,41 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def get_teams(
         ctx: Context,
-        org_id: Optional[str] = None,
-        discover: bool = False,
+        id: Annotated[str, Field(description="Team UUID for single team detail")] = "",
+        org_id: Annotated[str, Field(description="Filter by organization UUID")] = "",
+        discover: Annotated[bool, Field(description="Browse public teams you could join")] = False,
     ) -> str:
-        """List teams.
+        """List teams, discover public teams, or get detail for a single team.
 
-        By default, returns teams you have joined. Set discover=True to browse
-        public teams you could join. Use org_id to filter by organization.
-
-        Each team includes resolved gating policies:
-        - source_policy ('any' | 'web_only' | 'api_only'): controls how assets
-          are created. MCP counts as API, so 'web_only' blocks this tool.
-        - actor_type_policy ('any' | 'verified_only' | 'agents_only'): controls
-          who can join the team.
-        - agent_can_create: False when source_policy is 'web_only'.
+        Pass id for a single team with members and gating policies.
+        Otherwise lists teams (joined by default, or discoverable with discover=True).
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
+        if id:
+            team = ouro.teams.retrieve(id)
+            result = _team_summary(team)
+            org = team.get("organization")
+            if org:
+                result["organization_name"] = org.get("name") or org.get("display_name")
+            members = team.get("members", [])
+            result["members"] = [
+                {
+                    "user_id": str(m.get("user_id", "")),
+                    "role": m.get("role"),
+                    "username": (
+                        m.get("user", {}).get("username") if m.get("user") else None
+                    ),
+                }
+                for m in members
+            ]
+            result["member_count"] = team.get("memberCount", len(members))
+            return json.dumps(result)
+
         if discover:
-            teams = ouro.teams.list(org_id=org_id, public_only=True)
+            teams = ouro.teams.list(org_id=org_id or None, public_only=True)
         else:
-            teams = ouro.teams.list(org_id=org_id, joined=True)
+            teams = ouro.teams.list(org_id=org_id or None, joined=True)
 
         results = []
         for team in teams:
@@ -154,166 +156,72 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
-    def get_team(
-        id: str,
+    def get_team_feed(
+        id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
+        unread_only: Annotated[bool, Field(description="Only show unread items")] = False,
+        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(description="Max results to return")] = 20,
+        asset_type: Annotated[str, Field(description='"post" | "dataset" | "file" | "service"')] = "",
     ) -> str:
-        """Get detailed information about a specific team, including members, metrics, and gating policies.
-
-        Gating policies (always resolved, never null):
-        - source_policy ('any' | 'web_only' | 'api_only'): controls how assets
-          are created. MCP counts as API, so 'web_only' blocks this tool.
-        - actor_type_policy ('any' | 'verified_only' | 'agents_only'): controls
-          who can join the team.
-        - agent_can_create: False when source_policy is 'web_only'.
-        """
+        """Browse a team's activity feed or unread items. Use get_asset() to inspect any result in detail."""
         ouro = ctx.request_context.lifespan_context.ouro
 
-        team = ouro.teams.retrieve(id)
-
-        result = _team_summary(team)
-
-        org = team.get("organization")
-        if org:
-            result["organization_name"] = org.get("name") or org.get("display_name")
-
-        members = team.get("members", [])
-        result["members"] = [
-            {
-                "user_id": str(m.get("user_id", "")),
-                "role": m.get("role"),
-                "username": (
-                    m.get("user", {}).get("username") if m.get("user") else None
-                ),
-            }
-            for m in members
-        ]
-        result["member_count"] = team.get("memberCount", len(members))
-
-        return json.dumps(result)
-
-    @mcp.tool(annotations={"readOnlyHint": True})
-    @handle_ouro_errors
-    def get_team_activity(
-        id: str,
-        ctx: Context,
-        offset: int = 0,
-        limit: int = 20,
-        asset_type: Optional[str] = None,
-    ) -> str:
-        """Browse a team's activity feed. Returns recent assets created in the team.
-
-        Use asset_type to filter (e.g. "post", "dataset", "file", "service").
-        """
-        ouro = ctx.request_context.lifespan_context.ouro
-
-        response = ouro.teams.activity(
-            id,
-            offset=offset,
-            limit=limit,
-            asset_type=asset_type,
-        )
-
-        items = response.get("data", [])
-        pagination = response.get("pagination", {})
+        extra: dict[str, Any] = {}
+        if unread_only:
+            page_limit = max(1, min(limit, 50))
+            raw = ouro.teams.unread_preview(
+                id=id, offset=max(offset, 0), limit=page_limit
+            )
+            items = raw.get("results", [])
+            pagination = raw.get("pagination", {})
+            extra["unread_count"] = int(raw.get("unread_count", 0) or 0)
+        else:
+            raw = ouro.teams.activity(
+                id, offset=offset, limit=limit, asset_type=asset_type or None,
+            )
+            items = raw.get("data", [])
+            pagination = raw.get("pagination", {})
 
         results = []
         for item in items:
-            entry = {
+            entry: dict[str, Any] = {
                 "id": str(item.get("id", "")),
                 "name": item.get("name"),
                 "asset_type": item.get("asset_type"),
                 "visibility": item.get("visibility"),
                 "created_at": item.get("created_at"),
             }
-            user = item.get("user")
-            if user:
-                entry["author"] = user.get("username")
-            desc = item.get("description")
-            if desc and isinstance(desc, dict):
-                entry["description"] = desc.get("text", "")[:200]
-            results.append(entry)
-
-        result = json.dumps(
-            {
-                "results": results,
-                "count": len(results),
-                "pagination": {
-                    "offset": pagination.get("offset", offset),
-                    "limit": pagination.get("limit", limit),
-                    "hasMore": pagination.get("hasMore", len(results) == limit),
-                    "total": pagination.get("total"),
-                },
-            }
-        )
-
-        return truncate_response(result)
-
-    @mcp.tool(annotations={"readOnlyHint": True})
-    @handle_ouro_errors
-    def get_team_unreads(
-        id: str,
-        ctx: Context,
-        offset: int = 0,
-        limit: int = 5,
-    ) -> str:
-        """Get paginated unread asset previews for one team.
-
-        This is designed as a quick "what's going on?" view for agents.
-        Use get_asset(asset_id) to inspect any item in full depth.
-        """
-        ouro = ctx.request_context.lifespan_context.ouro
-
-        team = ouro.teams.retrieve(id)
-        page_limit = max(1, min(limit, 50))
-        preview = ouro.teams.unread_preview(
-            id=id, offset=max(offset, 0), limit=page_limit
-        )
-        unread_count = int(preview.get("unread_count", 0) or 0)
-        pagination = preview.get("pagination", {})
-
-        results = []
-        for item in preview.get("results", []):
-            entry = {
-                "id": str(item.get("id", "")),
-                "name": item.get("name"),
-                "created_at": item.get("created_at"),
-                "visibility": item.get("visibility"),
-            }
-
-            author = item.get("author")
-            if author:
+            author = item.get("user") or item.get("author")
+            if isinstance(author, dict):
                 entry["author"] = author.get("username")
-
             desc = item.get("description")
             if desc and isinstance(desc, dict):
                 entry["description"] = desc.get("text", "")[:200]
-
             results.append(entry)
 
         payload = {
             "results": results,
             "count": len(results),
+            **extra,
             "pagination": {
-                "offset": pagination.get("offset", max(offset, 0)),
-                "limit": pagination.get("limit", page_limit),
-                "hasMore": pagination.get("hasMore", False),
-                "total": pagination.get("total", unread_count),
+                "offset": pagination.get("offset", offset),
+                "limit": pagination.get("limit", limit),
+                "hasMore": pagination.get("hasMore", len(results) == limit),
+                "total": pagination.get("total"),
             },
         }
-
         return truncate_response(json.dumps(payload))
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def join_team(
-        id: str,
+        id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
     ) -> str:
-        """Join a team. You must be a member of the team's organization.
+        """Join a team. Requires membership in the team's organization.
 
-        Teams with actor_type_policy='verified_only' only allow verified humans.
-        Teams with actor_type_policy='agents_only' only allow agent accounts.
+        Respects actor_type_policy: 'verified_only' blocks agents, 'agents_only' blocks humans.
         Check get_teams(discover=True) to see policies before joining.
         """
         ouro = ctx.request_context.lifespan_context.ouro
@@ -323,7 +231,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def leave_team(
-        id: str,
+        id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
     ) -> str:
         """Leave a team you are currently a member of."""

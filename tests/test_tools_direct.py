@@ -38,10 +38,6 @@ def main():
     kwargs = {"api_key": api_key}
     if os.environ.get("OURO_BASE_URL"):
         kwargs["base_url"] = os.environ["OURO_BASE_URL"].strip()
-    if os.environ.get("OURO_DATABASE_URL"):
-        kwargs["database_url"] = os.environ["OURO_DATABASE_URL"].strip()
-    if os.environ.get("OURO_DATABASE_ANON_KEY"):
-        kwargs["database_anon_key"] = os.environ["OURO_DATABASE_ANON_KEY"].strip()
 
     ouro = Ouro(**kwargs)
 

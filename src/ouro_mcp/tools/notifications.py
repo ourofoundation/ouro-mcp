@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Annotated
 
+from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
@@ -16,22 +17,18 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def get_notifications(
         ctx: Context,
-        offset: int = 0,
-        limit: int = 20,
-        org_id: Optional[str] = None,
-        unread_only: bool = False,
+        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(description="Max results to return")] = 20,
+        org_id: Annotated[str, Field(description="Filter by organization UUID")] = "",
+        unread_only: Annotated[bool, Field(description="Only return unread notifications")] = False,
     ) -> str:
-        """List notifications for the authenticated user.
-
-        Returns newest first. Set unread_only=True to see only unread
-        notifications. Use org_id to scope to a specific organization.
-        """
+        """List notifications for the authenticated user, newest first."""
         ouro = ctx.request_context.lifespan_context.ouro
 
         response = ouro.notifications.list(
             offset=offset,
             limit=limit,
-            org_id=org_id,
+            org_id=org_id or None,
             unread_only=unread_only,
             with_pagination=True,
         )
@@ -80,7 +77,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def read_notification(
-        id: str,
+        id: Annotated[str, Field(description="Notification UUID")],
         ctx: Context,
     ) -> str:
         """Mark a notification as read and return it."""

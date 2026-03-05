@@ -228,8 +228,6 @@ Set these environment variables (or add them to `.env`) to point at your local d
 ```bash
 OURO_API_KEY=your-local-key
 OURO_BASE_URL=http://localhost:8003
-OURO_DATABASE_URL=http://localhost:54321
-OURO_DATABASE_ANON_KEY=your-local-anon-key
 ```
 
 ## Development

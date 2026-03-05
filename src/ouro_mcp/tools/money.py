@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Annotated, Optional
 
+from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
@@ -19,14 +20,10 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_balance(
-        currency: str,
+        currency: Annotated[str, Field(description='"btc" (returns sats) or "usd" (returns cents)')],
         ctx: Context,
     ) -> str:
-        """Get wallet balance.
-
-        Args:
-            currency: "btc" (returns sats) or "usd" (returns cents).
-        """
+        """Get wallet balance."""
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.money.get_balance(currency=currency)
         return json.dumps({"currency": currency.lower(), "balance": result})
@@ -34,20 +31,13 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_transactions(
-        currency: str,
+        currency: Annotated[str, Field(description='"btc" or "usd"')],
         ctx: Context,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        type: Optional[str] = None,
+        limit: Annotated[Optional[int], Field(description="Max transactions to return (USD only)")] = None,
+        offset: Annotated[Optional[int], Field(description="Pagination offset (USD only)")] = None,
+        type: Annotated[Optional[str], Field(description="Filter by transaction type (USD only)")] = None,
     ) -> str:
-        """Get transaction history.
-
-        Args:
-            currency: "btc" or "usd".
-            limit: Max transactions to return (USD only).
-            offset: Pagination offset (USD only).
-            type: Filter by transaction type (USD only).
-        """
+        """Get transaction history."""
         ouro = ctx.request_context.lifespan_context.ouro
 
         transactions = ouro.money.get_transactions(
@@ -72,18 +62,12 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"destructiveHint": True})
     @handle_ouro_errors
     def unlock_asset(
-        asset_type: str,
-        asset_id: str,
-        currency: str,
+        asset_type: Annotated[str, Field(description='"post" | "file" | "dataset" | etc.')],
+        asset_id: Annotated[str, Field(description="Asset UUID")],
+        currency: Annotated[str, Field(description='"btc" or "usd"')],
         ctx: Context,
     ) -> str:
-        """Unlock (purchase) a paid asset. Grants permanent read access after payment.
-
-        Args:
-            asset_type: The type of asset ("post", "file", "dataset", etc.).
-            asset_id: The asset's UUID.
-            currency: "btc" or "usd".
-        """
+        """Unlock (purchase) a paid asset. Grants permanent read access after payment."""
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.money.unlock_asset(
             asset_type=asset_type,
@@ -101,22 +85,13 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"destructiveHint": True})
     @handle_ouro_errors
     def send_money(
-        recipient_id: str,
-        amount: int,
-        currency: str,
+        recipient_id: Annotated[str, Field(description="Recipient user UUID")],
+        amount: Annotated[int, Field(description="Amount in sats (BTC) or cents (USD)")],
+        currency: Annotated[str, Field(description='"btc" or "usd"')],
         ctx: Context,
-        message: Optional[str] = None,
+        message: Annotated[Optional[str], Field(description="Optional note (USD only)")] = None,
     ) -> str:
-        """Send money to another Ouro user.
-
-        For BTC: sends sats. For USD: sends a tip in cents.
-
-        Args:
-            recipient_id: The recipient's user UUID.
-            amount: Amount in sats (BTC) or cents (USD).
-            currency: "btc" or "usd".
-            message: Optional message (USD only).
-        """
+        """Send money to another Ouro user. BTC sends sats, USD sends cents."""
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.money.send(
             recipient_id=recipient_id,
@@ -152,19 +127,12 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def get_usage_history(
         ctx: Context,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        asset_id: Optional[str] = None,
-        role: Optional[str] = None,
+        limit: Annotated[Optional[int], Field(description="Max records to return")] = None,
+        offset: Annotated[Optional[int], Field(description="Pagination offset")] = None,
+        asset_id: Annotated[Optional[str], Field(description="Filter by asset UUID")] = None,
+        role: Annotated[Optional[str], Field(description='"consumer" (spending) or "creator" (earnings)')] = None,
     ) -> str:
-        """Get usage-based billing history (USD). Shows charges for pay-per-use route calls.
-
-        Args:
-            limit: Max records to return.
-            offset: Pagination offset.
-            asset_id: Filter by asset ID.
-            role: "consumer" (your spending) or "creator" (your earnings).
-        """
+        """Get usage-based billing history (USD). Shows charges for pay-per-use route calls."""
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.money.get_usage_history(
             limit=limit,

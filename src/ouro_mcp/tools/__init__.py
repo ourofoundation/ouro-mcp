@@ -17,11 +17,13 @@ def register_all_tools(mcp: FastMCP) -> None:
         posts,
         services,
         teams,
+        users,
     )
 
     organizations.register(mcp)
     teams.register(mcp)
     assets.register(mcp)
+    users.register(mcp)
     datasets.register(mcp)
     posts.register(mcp)
     comments.register(mcp)

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from typing import Annotated
 
+from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
@@ -14,7 +16,7 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def get_organizations(
         ctx: Context,
-        discover: bool = False,
+        discover: Annotated[bool, Field(description="Browse discoverable orgs you could join")] = False,
     ) -> str:
         """List organizations.
 

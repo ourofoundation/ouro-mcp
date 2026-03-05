@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Any, Optional
 
 import pandas as pd
+from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import elicit_asset_location, format_asset_summary, optional_kwargs, truncate_response
 
 
-def _dataframe_from_rows(rows: list[dict]) -> pd.DataFrame:
+def _dataframe_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
     if not isinstance(rows, list):
         raise ValueError("data must be a list of objects (rows).")
     if any(not isinstance(row, dict) for row in rows):
@@ -63,7 +64,7 @@ def _dataframe_from_path(data_path: str) -> pd.DataFrame:
 
 
 def _resolve_dataset_data(
-    data: Optional[list[dict]] = None,
+    data: Optional[str] = None,
     data_path: Optional[str] = None,
 ) -> Optional[pd.DataFrame]:
     provided = [
@@ -79,7 +80,7 @@ def _resolve_dataset_data(
         return None
 
     if data is not None:
-        return _dataframe_from_rows(data)
+        return _dataframe_from_json(data)
     if data_path is not None:
         return _dataframe_from_path(data_path)
 
@@ -92,16 +93,12 @@ def register(mcp: FastMCP) -> None:
     )
     @handle_ouro_errors
     def query_dataset(
-        dataset_id: str,
+        dataset_id: Annotated[str, Field(description="Dataset UUID")],
         ctx: Context,
-        limit: int = 100,
-        offset: int = 0,
+        limit: Annotated[int, Field(description="Max rows to return")] = 100,
+        offset: Annotated[int, Field(description="Row offset for pagination")] = 0,
     ) -> str:
-        """Query a dataset's contents as JSON records. Returns rows with pagination metadata.
-
-        Use get_asset(id) first to see the dataset's schema before querying.
-        Use limit and offset to paginate through large datasets.
-        """
+        """Query a dataset's contents as JSON records. Use get_asset(id) first to see schema."""
         ouro = ctx.request_context.lifespan_context.ouro
 
         df = ouro.datasets.query(dataset_id)
@@ -138,27 +135,19 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     async def create_dataset(
-        name: str,
+        name: Annotated[str, Field(description="Dataset name")],
         ctx: Context,
-        data: Optional[list[dict]] = None,
-        data_path: Optional[str] = None,
-        visibility: str = "private",
-        description: Optional[str] = None,
-        org_id: Optional[str] = None,
-        team_id: Optional[str] = None,
+        data: Annotated[Optional[str], Field(description='JSON rows: \'[{"col": "val"}, ...]\' or \'{"rows": [...]}\'')] = None,
+        data_path: Annotated[Optional[str], Field(description="Local file path (.csv, .json, .jsonl, .parquet)")] = None,
+        visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "private",
+        description: Annotated[Optional[str], Field(description="Dataset description")] = None,
+        org_id: Annotated[str, Field(description="Organization UUID")] = "",
+        team_id: Annotated[str, Field(description="Team UUID")] = "",
     ) -> str:
-        """Create a new dataset on Ouro from JSON records.
+        """Create a new dataset on Ouro. Provide data or data_path (one required).
 
-        Supported dataset inputs (choose one):
-        - data: list of dicts where each dict is a row
-        - data_path: local file path (.csv, .json, .jsonl/.ndjson, .parquet)
-
-        Example data: [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
-        Use org_id and team_id to control where the dataset is created.
-        Call get_organizations() and get_teams() first to find the right location.
-
-        Teams with source_policy='web_only' block creation via API/MCP. Check
-        get_teams() first — only target teams where agent_can_create is true.
+        Call get_organizations() and get_teams() first to pick org_id and team_id.
+        Only target teams where agent_can_create is true.
         """
         if not org_id or not team_id:
             elicited_org, elicited_team = await elicit_asset_location(ctx)
@@ -169,8 +158,6 @@ def register(mcp: FastMCP) -> None:
 
         df = _resolve_dataset_data(data=data, data_path=data_path)
         if df is None:
-            # ouro-py currently assumes a DataFrame in create(); provide a clear,
-            # agent-friendly error instead of surfacing an internal AttributeError.
             raise ValueError(
                 "No dataset rows provided. Pass one of: data or data_path."
             )
@@ -182,7 +169,7 @@ def register(mcp: FastMCP) -> None:
             visibility=visibility,
             data=df,
             description=description,
-            **optional_kwargs(org_id=org_id, team_id=team_id),
+            **optional_kwargs(org_id=org_id or None, team_id=team_id or None),
         )
 
         result = format_asset_summary(dataset)
@@ -192,20 +179,23 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def update_dataset(
-        id: str,
+        id: Annotated[str, Field(description="Dataset UUID")],
         ctx: Context,
-        name: Optional[str] = None,
-        visibility: Optional[str] = None,
-        data: Optional[list[dict]] = None,
-        data_path: Optional[str] = None,
-        description: Optional[str] = None,
-        org_id: Optional[str] = None,
-        team_id: Optional[str] = None,
+        name: Annotated[Optional[str], Field(description="New name")] = None,
+        visibility: Annotated[Optional[str], Field(description='"public" | "private" | "organization"')] = None,
+        data: Annotated[Optional[str], Field(description="JSON rows for dataset ingest")] = None,
+        data_path: Annotated[Optional[str], Field(description="Local file path for dataset ingest (.csv, .json, .jsonl, .parquet)")] = None,
+        data_mode: Annotated[str, Field(description='"append" | "overwrite" | "upsert"')] = "append",
+        description: Annotated[Optional[str], Field(description="New description")] = None,
+        org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
+        team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
     ) -> str:
         """Update a dataset's data or metadata.
 
-        Pass data/data_path to append rows (same formats as create_dataset).
-        Pass name, visibility, description, org_id, or team_id to update metadata.
+        Pass data/data_path for row ingest and choose data_mode:
+        - append (default): add rows
+        - overwrite: replace existing rows
+        - upsert: merge rows by id
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -216,6 +206,7 @@ def register(mcp: FastMCP) -> None:
         dataset = ouro.datasets.update(
             id,
             data=df,
+            data_mode=data_mode,
             **optional_kwargs(
                 name=name,
                 visibility=visibility,

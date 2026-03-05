@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
+from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.utils.content import description_to_markdown
 
@@ -20,7 +21,10 @@ def register(mcp: FastMCP) -> None:
         annotations={"readOnlyHint": True},
     )
     @handle_ouro_errors
-    def get_asset(id: str, ctx: Context) -> str:
+    def get_asset(
+        id: Annotated[str, Field(description="UUID of any asset type")],
+        ctx: Context,
+    ) -> str:
         """Get any asset by ID. Returns metadata and type-appropriate detail.
 
         For datasets: includes schema and stats.
@@ -28,8 +32,6 @@ def register(mcp: FastMCP) -> None:
         For files: includes URL, size, and MIME type.
         For services: includes list of routes.
         For routes: includes parameter schema, method, and path.
-
-        Accepts a UUID for any asset type.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         asset = ouro.assets.retrieve(id)
@@ -41,18 +43,18 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def search_assets(
         ctx: Context,
-        query: str = "",
-        asset_type: Optional[str] = None,
-        scope: Optional[str] = None,
-        org_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        visibility: Optional[str] = None,
-        file_type: Optional[str] = None,
-        extension: Optional[str] = None,
-        metadata_filters: Optional[dict[str, Any]] = None,
-        limit: int = 20,
-        offset: int = 0,
+        query: Annotated[str, Field(description="Search query or UUID for direct lookup")] = "",
+        asset_type: Annotated[str, Field(description='"dataset" | "post" | "file" | "service" | "route"')] = "",
+        scope: Annotated[str, Field(description='"personal" | "org" | "global" | "all"')] = "",
+        org_id: Annotated[str, Field(description="Organization UUID")] = "",
+        team_id: Annotated[str, Field(description="Team UUID")] = "",
+        user_id: Annotated[str, Field(description="Asset owner UUID")] = "",
+        visibility: Annotated[str, Field(description='"public" | "private" | "organization" | "monetized"')] = "",
+        file_type: Annotated[str, Field(description='File category: "image" | "video" | "audio" | "pdf"')] = "",
+        extension: Annotated[str, Field(description='File extension, e.g. "csv", "json", "png"')] = "",
+        metadata_filters: Annotated[Optional[dict[str, Any]], Field(description="Additional metadata key/value filters")] = None,
+        limit: Annotated[int, Field(description="Max results to return")] = 20,
+        offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
         """Search or browse assets on Ouro (datasets, posts, files, services, routes).
 
@@ -60,21 +62,10 @@ def register(mcp: FastMCP) -> None:
         Without a query: returns recent assets sorted by creation date.
         With a UUID as query: looks up that single asset directly.
 
-        Filters (all optional):
-        - asset_type: "dataset", "post", "file", "service", "route"
-        - scope: "personal", "org", "global", "all"
-        - org_id: scope to an organization (UUID)
-        - team_id: scope to a team within an org (UUID)
-        - user_id: filter by asset owner (UUID)
-        - visibility: "public", "private", "organization", "monetized"
-        - file_type: filter files by category: "image", "video", "audio", "pdf"
-        - extension: filter files by extension, e.g. "csv", "json", "png"
-        - metadata_filters: other metadata key/values (e.g. {"custom_key": "value"})
-
         Examples:
-          Browse recent datasets: search_assets(asset_type="dataset")
-          Find CSV files: search_assets(query="sales data", file_type="image", extension="csv")
-          Browse all services: search_assets(asset_type="service")
+          search_assets(asset_type="dataset")
+          search_assets(query="sales data", extension="csv")
+          search_assets(asset_type="service")
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -90,12 +81,12 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             with_pagination=True,
             **optional_kwargs(
-                asset_type=asset_type,
-                scope=scope,
-                org_id=org_id,
-                team_id=team_id,
-                user_id=user_id,
-                visibility=visibility,
+                asset_type=asset_type or None,
+                scope=scope or None,
+                org_id=org_id or None,
+                team_id=team_id or None,
+                user_id=user_id or None,
+                visibility=visibility or None,
                 metadata_filters=merged_metadata if merged_metadata else None,
             ),
         )
@@ -130,31 +121,13 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool(
-        annotations={"readOnlyHint": True},
-    )
-    @handle_ouro_errors
-    def search_users(query: str, ctx: Context) -> str:
-        """Search for users on Ouro by name or username."""
-        ouro = ctx.request_context.lifespan_context.ouro
-        results = ouro.users.search(query)
-
-        users = []
-        for u in results:
-            users.append(
-                {
-                    "id": str(u.get("user_id", u.get("id", ""))),
-                    "username": u.get("username"),
-                    "display_name": u.get("display_name"),
-                }
-            )
-
-        return json.dumps({"results": users, "count": len(users)})
-
-    @mcp.tool(
         annotations={"destructiveHint": True},
     )
     @handle_ouro_errors
-    def delete_asset(id: str, ctx: Context) -> str:
+    def delete_asset(
+        id: Annotated[str, Field(description="UUID of the asset to delete")],
+        ctx: Context,
+    ) -> str:
         """Delete an asset by ID. Auto-detects the asset type and routes to the appropriate delete method."""
         ouro = ctx.request_context.lifespan_context.ouro
 

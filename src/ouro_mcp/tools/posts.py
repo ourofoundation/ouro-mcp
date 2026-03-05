@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
-
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import content_from_markdown, elicit_asset_location, format_asset_summary, optional_kwargs
+from ouro_mcp.utils import (
+    content_from_markdown,
+    elicit_asset_location,
+    format_asset_summary,
+    optional_kwargs,
+)
+from pydantic import Field
 
 
 def _resolve_post_markdown(
@@ -44,32 +49,30 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     async def create_post(
-        name: str,
+        name: Annotated[str, Field(description="Post title")],
         ctx: Context,
-        content_markdown: Optional[str] = None,
-        content_path: Optional[str] = None,
-        visibility: str = "private",
-        description: Optional[str] = None,
-        org_id: Optional[str] = None,
-        team_id: Optional[str] = None,
+        content_markdown: Annotated[
+            Optional[str],
+            Field(
+                description="Extended markdown body (supports @mentions, asset embeds, LaTeX)"
+            ),
+        ] = None,
+        content_path: Annotated[
+            Optional[str], Field(description="Local .md/.markdown file path")
+        ] = None,
+        visibility: Annotated[
+            str, Field(description='"public" | "private" | "organization"')
+        ] = "public",
+        description: Annotated[
+            Optional[str], Field(description="Short description/subtitle")
+        ] = None,
+        org_id: Annotated[str, Field(description="Organization UUID")] = "",
+        team_id: Annotated[str, Field(description="Team UUID")] = "",
     ) -> str:
-        """Create a new post on Ouro from extended markdown.
+        """Create a new post on Ouro from extended markdown. Provide content_markdown or content_path.
 
-        Supported post body inputs (choose one):
-        - content_markdown: markdown string
-        - content_path: local .md/.markdown file path
-
-        Markdown is converted via Ouro's from-markdown API, which supports:
-        - User mentions: @username
-        - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"file"|"dataset"|"post"|"route"|"service","viewMode":"preview"|"card"}``` — use search_assets() or get_asset() for IDs
-        - Standard markdown: headings, bold, italic, lists, code blocks, tables, links
-        - Math: \\(inline\\) and \\[display\\] LaTeX
-
-        Use org_id and team_id to control where the post is created.
-        Call get_organizations() and get_teams() first to find the right location.
-
-        Teams with source_policy='web_only' block creation via API/MCP. Check
-        get_teams() first — only target teams where agent_can_create is true.
+        Call get_organizations() and get_teams() first to pick org_id and team_id.
+        Only target teams where agent_can_create is true.
         """
         if not org_id or not team_id:
             elicited_org, elicited_team = await elicit_asset_location(ctx)
@@ -94,7 +97,7 @@ def register(mcp: FastMCP) -> None:
             name=name,
             visibility=visibility,
             description=description,
-            **optional_kwargs(org_id=org_id, team_id=team_id),
+            **optional_kwargs(org_id=org_id or None, team_id=team_id or None),
         )
 
         return json.dumps(format_asset_summary(post))
@@ -102,32 +105,39 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def update_post(
-        id: str,
+        id: Annotated[str, Field(description="Post UUID")],
         ctx: Context,
-        name: Optional[str] = None,
-        content_markdown: Optional[str] = None,
-        content_path: Optional[str] = None,
-        visibility: Optional[str] = None,
-        description: Optional[str] = None,
-        org_id: Optional[str] = None,
-        team_id: Optional[str] = None,
+        name: Annotated[Optional[str], Field(description="New title")] = None,
+        content_markdown: Annotated[
+            Optional[str], Field(description="Replacement extended markdown body")
+        ] = None,
+        content_path: Annotated[
+            Optional[str],
+            Field(description="Local .md/.markdown file with replacement body"),
+        ] = None,
+        visibility: Annotated[
+            Optional[str], Field(description='"public" | "private" | "organization"')
+        ] = None,
+        description: Annotated[
+            Optional[str], Field(description="New description/subtitle")
+        ] = None,
+        org_id: Annotated[
+            Optional[str], Field(description="Move to organization UUID")
+        ] = None,
+        team_id: Annotated[
+            Optional[str], Field(description="Move to team UUID")
+        ] = None,
     ) -> str:
-        """Update a post's content or metadata.
-
-        Pass content_markdown/content_path to replace the post body. Supports extended markdown:
-        - User mentions: @username
-        - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
-        - Standard markdown and LaTeX math
-
-        Pass name, visibility, description, org_id, or team_id to update metadata.
-        """
+        """Update a post's content or metadata. Pass content_markdown/content_path to replace the body."""
         ouro = ctx.request_context.lifespan_context.ouro
 
         markdown = _resolve_post_markdown(
             content_markdown=content_markdown,
             content_path=content_path,
         )
-        content = content_from_markdown(ouro, markdown) if markdown is not None else None
+        content = (
+            content_from_markdown(ouro, markdown) if markdown is not None else None
+        )
 
         post = ouro.posts.update(
             id,

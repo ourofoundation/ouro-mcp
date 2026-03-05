@@ -17,8 +17,6 @@ from ouro_mcp.constants import (
     DEFAULT_HTTP_PORT,
     ENV_OURO_API_KEY,
     ENV_OURO_BASE_URL,
-    ENV_OURO_DATABASE_ANON_KEY,
-    ENV_OURO_DATABASE_URL,
 )
 
 load_dotenv(find_dotenv(usecwd=True), override=True)
@@ -48,10 +46,6 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[OuroContext]:
     kwargs = {"api_key": api_key}
     if os.environ.get(ENV_OURO_BASE_URL):
         kwargs["base_url"] = os.environ[ENV_OURO_BASE_URL].strip()
-    if os.environ.get(ENV_OURO_DATABASE_URL):
-        kwargs["database_url"] = os.environ[ENV_OURO_DATABASE_URL].strip()
-    if os.environ.get(ENV_OURO_DATABASE_ANON_KEY):
-        kwargs["database_anon_key"] = os.environ[ENV_OURO_DATABASE_ANON_KEY].strip()
 
     ouro = Ouro(**kwargs)
     ouro._raw_client.headers["X-Ouro-Client"] = f"ouro-mcp/{__version__}"

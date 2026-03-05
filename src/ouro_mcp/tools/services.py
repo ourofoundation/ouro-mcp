@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
+from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
@@ -17,25 +18,15 @@ def register(mcp: FastMCP) -> None:
     )
     @handle_ouro_errors
     def execute_route(
-        name_or_id: str,
+        name_or_id: Annotated[str, Field(description='Route UUID or "entity_name/route_name"')],
         ctx: Context,
-        body: Optional[dict] = None,
-        query: Optional[dict] = None,
-        params: Optional[dict] = None,
-        dry_run: bool = False,
-        timeout: int = 120,
+        body: Annotated[Optional[dict], Field(description="Request body (for POST/PUT routes)")] = None,
+        query: Annotated[Optional[dict], Field(description="Query parameters")] = None,
+        params: Annotated[Optional[dict], Field(description="URL path parameters")] = None,
+        dry_run: Annotated[bool, Field(description="Validate parameters without executing")] = False,
+        timeout: Annotated[int, Field(description="Max seconds to wait for async routes")] = 120,
     ) -> str:
-        """Execute an API route on Ouro. This lets you call any user-published API on the platform.
-
-        Use get_asset(route_id) first to see the route's parameter schema.
-
-        name_or_id: Route UUID or "entity_name/route_name" format.
-        body: Request body (for POST/PUT routes).
-        query: Query parameters.
-        params: URL path parameters.
-        dry_run: If True, validate parameters without executing.
-        timeout: Max seconds to wait for async routes (default 120).
-        """
+        """Execute an API route on Ouro. Use get_asset(route_id) first to see the route's parameter schema."""
         ouro = ctx.request_context.lifespan_context.ouro
 
         route = ouro.routes.retrieve(name_or_id)

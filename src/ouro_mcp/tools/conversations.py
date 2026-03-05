@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
+from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.resources.conversations import Messages
 
@@ -66,17 +67,22 @@ def _message_summary(message: dict) -> dict:
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
-    def list_conversations(
+    def get_conversations(
         ctx: Context,
-        org_id: Optional[str] = None,
-        limit: int = 20,
-        offset: int = 0,
+        id: Annotated[str, Field(description="Conversation UUID for single lookup")] = "",
+        org_id: Annotated[str, Field(description="Filter by organization UUID")] = "",
+        limit: Annotated[int, Field(description="Max results to return")] = 20,
+        offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
-        """List conversations the authenticated user belongs to."""
+        """Get a conversation by ID, or list conversations you belong to."""
         ouro = ctx.request_context.lifespan_context.ouro
 
+        if id:
+            conversation = ouro.conversations.retrieve(id)
+            return json.dumps(_conversation_summary(conversation))
+
         conversations = ouro.conversations.list(
-            org_id=org_id,
+            org_id=org_id or None,
             limit=limit,
             offset=offset,
         )
@@ -93,26 +99,14 @@ def register(mcp: FastMCP) -> None:
         })
         return truncate_response(result)
 
-    @mcp.tool(annotations={"readOnlyHint": True})
-    @handle_ouro_errors
-    def get_conversation(
-        id: str,
-        ctx: Context,
-    ) -> str:
-        """Get a conversation by ID with metadata."""
-        ouro = ctx.request_context.lifespan_context.ouro
-
-        conversation = ouro.conversations.retrieve(id)
-        return json.dumps(_conversation_summary(conversation))
-
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def create_conversation(
-        member_user_ids: list[str],
+        member_user_ids: Annotated[list[str], Field(description="User UUIDs to include")],
         ctx: Context,
-        name: Optional[str] = None,
-        summary: Optional[str] = None,
-        org_id: Optional[str] = None,
+        name: Annotated[Optional[str], Field(description="Conversation name")] = None,
+        summary: Annotated[Optional[str], Field(description="Conversation summary")] = None,
+        org_id: Annotated[str, Field(description="Organization UUID")] = "",
     ) -> str:
         """Create a conversation with the specified member user IDs."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -121,15 +115,15 @@ def register(mcp: FastMCP) -> None:
             member_user_ids=member_user_ids,
             name=name,
             summary=summary,
-            org_id=org_id,
+            org_id=org_id or None,
         )
         return json.dumps(_conversation_summary(conversation))
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def send_message(
-        conversation_id: str,
-        text: str,
+        conversation_id: Annotated[str, Field(description="Conversation UUID")],
+        text: Annotated[str, Field(description="Message text")],
         ctx: Context,
     ) -> str:
         """Send a text message to a conversation."""
@@ -141,10 +135,10 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def list_messages(
-        conversation_id: str,
+        conversation_id: Annotated[str, Field(description="Conversation UUID")],
         ctx: Context,
-        limit: int = 20,
-        offset: int = 0,
+        limit: Annotated[int, Field(description="Max messages to return")] = 20,
+        offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
         """List messages in a conversation with pagination."""
         ouro = ctx.request_context.lifespan_context.ouro
