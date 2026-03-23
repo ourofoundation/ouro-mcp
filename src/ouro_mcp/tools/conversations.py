@@ -77,8 +77,8 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def get_conversations(
         ctx: Context,
-        id: Annotated[str, Field(description="Conversation UUID for single lookup")] = "",
-        org_id: Annotated[str, Field(description="Filter by organization UUID")] = "",
+        id: Annotated[Optional[str], Field(description="Conversation UUID for single lookup")] = None,
+        org_id: Annotated[Optional[str], Field(description="Filter by organization UUID")] = None,
         limit: Annotated[int, Field(description="Max results to return")] = 20,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
@@ -90,7 +90,7 @@ def register(mcp: FastMCP) -> None:
             return json.dumps(_conversation_summary(conversation))
 
         conversations = ouro.conversations.list(
-            org_id=org_id or None,
+            org_id=org_id,
             limit=limit,
             offset=offset,
         )
@@ -105,10 +105,10 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_conversation(
         member_user_ids: Annotated[list[str], Field(description="User UUIDs to include")],
+        org_id: Annotated[str, Field(description="Organization UUID (use get_organizations())")],
         ctx: Context,
         name: Annotated[Optional[str], Field(description="Conversation name")] = None,
         summary: Annotated[Optional[str], Field(description="Conversation summary")] = None,
-        org_id: Annotated[str, Field(description="Organization UUID")] = "",
     ) -> str:
         """Create a conversation with the specified member user IDs."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -117,7 +117,7 @@ def register(mcp: FastMCP) -> None:
             member_user_ids=member_user_ids,
             name=name,
             summary=summary,
-            org_id=org_id or None,
+            org_id=org_id,
         )
         return json.dumps(_conversation_summary(conversation))
 

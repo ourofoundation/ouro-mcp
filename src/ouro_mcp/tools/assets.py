@@ -6,12 +6,11 @@ import json
 import logging
 from typing import Annotated, Any, Optional
 
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.utils.content import description_to_markdown
-
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import format_asset_summary, optional_kwargs
+from pydantic import Field
 
 log = logging.getLogger(__name__)
 
@@ -44,15 +43,24 @@ def register(mcp: FastMCP) -> None:
     def search_assets(
         ctx: Context,
         query: Annotated[str, Field(description="Search query or UUID for direct lookup")] = "",
-        asset_type: Annotated[str, Field(description='"dataset" | "post" | "file" | "service" | "route"')] = "",
-        scope: Annotated[str, Field(description='"personal" | "org" | "global" | "all"')] = "",
-        org_id: Annotated[str, Field(description="Organization UUID")] = "",
-        team_id: Annotated[str, Field(description="Team UUID")] = "",
-        user_id: Annotated[str, Field(description="Asset owner UUID")] = "",
-        visibility: Annotated[str, Field(description='"public" | "private" | "organization" | "monetized"')] = "",
-        file_type: Annotated[str, Field(description='File category: "image" | "video" | "audio" | "pdf"')] = "",
-        extension: Annotated[str, Field(description='File extension, e.g. "csv", "json", "png"')] = "",
-        metadata_filters: Annotated[Optional[dict[str, Any]], Field(description="Additional metadata key/value filters")] = None,
+        asset_type: Annotated[
+            Optional[str], Field(description='"dataset" | "post" | "file" | "service" | "route"')
+        ] = None,
+        scope: Annotated[Optional[str], Field(description='"personal" | "org" | "global" | "all"')] = None,
+        org_id: Annotated[Optional[str], Field(description="Organization UUID")] = None,
+        team_id: Annotated[Optional[str], Field(description="Team UUID")] = None,
+        user_id: Annotated[Optional[str], Field(description="Asset owner UUID")] = None,
+        visibility: Annotated[
+            Optional[str], Field(description='"public" | "private" | "organization" | "monetized"')
+        ] = None,
+        file_type: Annotated[
+            Optional[str], Field(description='File category: "image" | "video" | "audio" | "pdf"')
+        ] = None,
+        extension: Annotated[Optional[str], Field(description='File extension, e.g. "csv", "json", "png"')] = None,
+        metadata_filters: Annotated[
+            Optional[Any],
+            Field(description='Metadata key/value filters as JSON object or string, e.g. \'{"key": "value"}\''),
+        ] = None,
         limit: Annotated[int, Field(description="Max results to return")] = 20,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
@@ -63,7 +71,17 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        merged_metadata = dict(metadata_filters or {})
+        merged_metadata: dict[str, Any] = {}
+        if metadata_filters:
+            if isinstance(metadata_filters, dict):
+                merged_metadata.update(metadata_filters)
+            elif isinstance(metadata_filters, str):
+                try:
+                    parsed = json.loads(metadata_filters)
+                    if isinstance(parsed, dict):
+                        merged_metadata.update(parsed)
+                except (json.JSONDecodeError, TypeError):
+                    log.warning("Ignoring invalid metadata_filters JSON: %s", metadata_filters)
         if file_type:
             merged_metadata["file_type"] = file_type
         if extension:
@@ -75,13 +93,13 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             with_pagination=True,
             **optional_kwargs(
-                asset_type=asset_type or None,
-                scope=scope or None,
-                org_id=org_id or None,
-                team_id=team_id or None,
-                user_id=user_id or None,
-                visibility=visibility or None,
-                metadata_filters=merged_metadata if merged_metadata else None,
+                asset_type=asset_type,
+                scope=scope,
+                org_id=org_id,
+                team_id=team_id,
+                user_id=user_id,
+                visibility=visibility,
+                metadata_filters=merged_metadata or None,
             ),
         )
 
@@ -92,12 +110,9 @@ def register(mcp: FastMCP) -> None:
                     "id": str(item.get("id", "")),
                     "name": item.get("name"),
                     "asset_type": item.get("asset_type"),
-                    "description": description_to_markdown(
-                        item.get("description"), max_length=200
-                    ),
+                    "description": description_to_markdown(item.get("description"), max_length=200),
                     "visibility": item.get("visibility"),
-                    "user": item.get("username")
-                    or item.get("user", {}).get("username"),
+                    "user": item.get("username") or item.get("user", {}).get("username"),
                 }
             )
 
@@ -147,6 +162,34 @@ def register(mcp: FastMCP) -> None:
             }
         )
 
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def download_asset(
+        id: Annotated[str, Field(description="UUID of the asset to download")],
+        output_path: Annotated[
+            str,
+            Field(description="Local file path or existing directory where the asset should be saved"),
+        ],
+        ctx: Context,
+        asset_type: Annotated[
+            Optional[str],
+            Field(description='Optional override: "file" | "dataset" | "post"'),
+        ] = None,
+    ) -> str:
+        """Download an asset to the local filesystem.
+
+        Files keep their original bytes, datasets download as CSV, and posts as HTML.
+        If output_path is a directory, the server-provided filename is used.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        result = ouro.assets.download(id, output_path=output_path, asset_type=asset_type)
+        return json.dumps(
+            {
+                "downloaded": True,
+                **result,
+            }
+        )
+
 
 def _format_asset_detail(asset, ouro) -> dict:
     """Build a type-appropriate detail response for any asset."""
@@ -170,8 +213,9 @@ def _format_asset_detail(asset, ouro) -> dict:
         if asset.preview:
             base["preview"] = asset.preview[:5]
 
-    elif asset_type == "post":
+    elif asset_type in {"post", "comment"}:
         if asset.content:
+            # TODO: markdown version???
             base["content_text"] = asset.content.text
         else:
             base["content_text"] = None

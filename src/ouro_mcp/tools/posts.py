@@ -10,7 +10,6 @@ from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
-    elicit_asset_location,
     format_asset_summary,
     optional_kwargs,
 )
@@ -48,8 +47,10 @@ def _resolve_post_markdown(
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
-    async def create_post(
+    def create_post(
         name: Annotated[str, Field(description="Post title")],
+        org_id: Annotated[str, Field(description="Organization UUID (use get_organizations())")],
+        team_id: Annotated[str, Field(description="Team UUID (use get_teams())")],
         ctx: Context,
         content_markdown: Annotated[
             Optional[str],
@@ -66,19 +67,12 @@ def register(mcp: FastMCP) -> None:
         description: Annotated[
             Optional[str], Field(description="Short description/subtitle")
         ] = None,
-        org_id: Annotated[str, Field(description="Organization UUID")] = "",
-        team_id: Annotated[str, Field(description="Team UUID")] = "",
     ) -> str:
         """Create a new post on Ouro from extended markdown. Provide content_markdown or content_path.
 
         Call get_organizations() and get_teams() first to pick org_id and team_id.
         Only target teams where agent_can_create is true.
         """
-        if not org_id or not team_id:
-            elicited_org, elicited_team = await elicit_asset_location(ctx)
-            org_id = org_id or elicited_org
-            team_id = team_id or elicited_team
-
         ouro = ctx.request_context.lifespan_context.ouro
 
         markdown = _resolve_post_markdown(
@@ -97,7 +91,8 @@ def register(mcp: FastMCP) -> None:
             name=name,
             visibility=visibility,
             description=description,
-            **optional_kwargs(org_id=org_id or None, team_id=team_id or None),
+            org_id=org_id,
+            team_id=team_id,
         )
 
         return json.dumps(format_asset_summary(post))

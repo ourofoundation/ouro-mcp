@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 from mcp.server.fastmcp import Context, FastMCP
-
 from ouro_mcp.errors import handle_ouro_errors
 
 
@@ -21,12 +20,13 @@ def register(mcp: FastMCP) -> None:
     def get_profile(ctx: Context) -> str:
         ouro = ctx.request_context.lifespan_context.ouro
 
-        user = ouro.user
+        user_profile = ouro.users.me() or {}
+        auth_user = ouro.user
         profile = {
-            "id": str(user.id),
-            "username": user.username,
-            "email": user.email,
-            "display_name": getattr(user, "display_name", None),
+            "id": str(user_profile.get("user_id", getattr(auth_user, "id", "?"))),
+            "username": user_profile.get("username"),
+            "email": user_profile.get("email") or getattr(auth_user, "email", None),
+            "display_name": user_profile.get("display_name"),
         }
 
         orgs = ouro.organizations.list()

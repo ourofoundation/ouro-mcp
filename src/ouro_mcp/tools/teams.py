@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any, Optional, Union
+from typing import Annotated, Any, Optional
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import resolve_team_policy, truncate_response
+from ouro_mcp.utils import content_from_markdown, resolve_team_policy, truncate_response
 
 
 def _team_summary(team: dict[str, Any]) -> dict[str, Any]:
@@ -38,8 +38,8 @@ def register(mcp: FastMCP) -> None:
     def create_team(
         name: Annotated[str, Field(description="Slug: lowercase letters, numbers, dashes only")],
         org_id: Annotated[str, Field(description="Organization UUID (use get_organizations())")],
+        description: Annotated[str, Field(description="Team description (plain text or markdown)")],
         ctx: Context,
-        description: Annotated[Union[str, dict], Field(description="Markdown string or structured content JSON")],
         visibility: Annotated[str, Field(description='"public" | "private"')] = "public",
         default_role: Annotated[str, Field(description='"read" | "write" | "admin"')] = "write",
         actor_type_policy: Annotated[str, Field(description='"any" | "verified_only" | "agents_only"')] = "any",
@@ -54,7 +54,7 @@ def register(mcp: FastMCP) -> None:
         team = ouro.teams.create(
             name=name,
             org_id=org_id,
-            description=description,
+            description=content_from_markdown(ouro, description),
             visibility=visibility,
             default_role=default_role,
             actor_type_policy=actor_type_policy,
@@ -69,7 +69,7 @@ def register(mcp: FastMCP) -> None:
         id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
         name: Annotated[Optional[str], Field(description="New slug name")] = None,
-        description: Annotated[Optional[Union[str, dict]], Field(description="Markdown string or structured content JSON")] = None,
+        description: Annotated[Optional[str], Field(description="New description (plain text or markdown)")] = None,
         visibility: Annotated[Optional[str], Field(description='"public" | "private"')] = None,
         default_role: Annotated[Optional[str], Field(description='"read" | "write" | "admin"')] = None,
         actor_type_policy: Annotated[Optional[str], Field(description='"any" | "verified_only" | "agents_only"')] = None,
@@ -77,10 +77,11 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Update a team's name, description, visibility, default_role, or policy settings."""
         ouro = ctx.request_context.lifespan_context.ouro
+        desc_content = content_from_markdown(ouro, description) if description else None
         team = ouro.teams.update(
             id=id,
             name=name,
-            description=description,
+            description=desc_content,
             visibility=visibility,
             default_role=default_role,
             actor_type_policy=actor_type_policy,
@@ -92,8 +93,8 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def get_teams(
         ctx: Context,
-        id: Annotated[str, Field(description="Team UUID for single team detail")] = "",
-        org_id: Annotated[str, Field(description="Filter by organization UUID")] = "",
+        id: Annotated[Optional[str], Field(description="Team UUID for single team detail")] = None,
+        org_id: Annotated[Optional[str], Field(description="Filter by organization UUID")] = None,
         discover: Annotated[bool, Field(description="Browse public teams you could join")] = False,
     ) -> str:
         """List teams, discover public teams, or get detail for a single team.
@@ -124,9 +125,9 @@ def register(mcp: FastMCP) -> None:
             return json.dumps(result)
 
         if discover:
-            teams = ouro.teams.list(org_id=org_id or None, public_only=True)
+            teams = ouro.teams.list(org_id=org_id, public_only=True)
         else:
-            teams = ouro.teams.list(org_id=org_id or None, joined=True)
+            teams = ouro.teams.list(org_id=org_id, joined=True)
 
         results = []
         for team in teams:
@@ -156,7 +157,7 @@ def register(mcp: FastMCP) -> None:
         unread_only: Annotated[bool, Field(description="Only show unread items")] = False,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
         limit: Annotated[int, Field(description="Max results to return")] = 20,
-        asset_type: Annotated[str, Field(description='"post" | "dataset" | "file" | "service"')] = "",
+        asset_type: Annotated[Optional[str], Field(description='"post" | "dataset" | "file" | "service"')] = None,
     ) -> str:
         """Browse a team's activity feed or unread items. Use get_asset() to inspect any result in detail."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -172,7 +173,7 @@ def register(mcp: FastMCP) -> None:
             extra["unread_count"] = int(raw.get("unread_count", 0) or 0)
         else:
             raw = ouro.teams.activity(
-                id, offset=offset, limit=limit, asset_type=asset_type or None,
+                id, offset=offset, limit=limit, asset_type=asset_type,
             )
             items = raw.get("data", [])
             pagination = raw.get("pagination", {})

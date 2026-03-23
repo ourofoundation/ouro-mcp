@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Optional
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
@@ -19,7 +19,7 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
         limit: Annotated[int, Field(description="Max results to return")] = 20,
-        org_id: Annotated[str, Field(description="Filter by organization UUID")] = "",
+        org_id: Annotated[Optional[str], Field(description="Filter by organization UUID")] = None,
         unread_only: Annotated[bool, Field(description="Only return unread notifications")] = False,
     ) -> str:
         """List notifications for the authenticated user, newest first."""
@@ -28,7 +28,7 @@ def register(mcp: FastMCP) -> None:
         response = ouro.notifications.list(
             offset=offset,
             limit=limit,
-            org_id=org_id or None,
+            org_id=org_id,
             unread_only=unread_only,
             with_pagination=True,
         )

@@ -12,11 +12,11 @@ requires-python = ">=3.10"
 authors = [{ name = "Matt Moderwell", email = "matt@ouro.foundation" }]
 keywords = ["ouro", "mcp", "model-context-protocol"]
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
 ]
-dependencies = ["mcp", "ouro-py>=0.3.14", "python-dotenv"]
+dependencies = ["mcp", "ouro-py>=0.4.1", "python-dotenv"]
 
 [project.urls]
 Homepage = "https://github.com/ourofoundation/ouro-mcp"
@@ -34,3 +34,7 @@ packages = ["src/ouro_mcp"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/ouro_mcp"]
+
+[tool.black]
+line-length = 120
+target-version = ["py310"]

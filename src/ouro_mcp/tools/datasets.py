@@ -7,11 +7,10 @@ from pathlib import Path
 from typing import Annotated, Any, Optional
 
 import pandas as pd
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
-
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import elicit_asset_location, format_asset_summary, optional_kwargs, truncate_response
+from ouro_mcp.utils import format_asset_summary, optional_kwargs, truncate_response
+from pydantic import BeforeValidator, Field
 
 
 def _dataframe_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
@@ -41,11 +40,11 @@ def _dataframe_from_json(data_json: str) -> pd.DataFrame:
 
 
 def _dataframe_from_path(data_path: str) -> pd.DataFrame:
-    path = Path(data_path).expanduser()
+    path = Path(data_path).expanduser().resolve()
     if not path.exists():
-        raise ValueError(f"data_path not found: {data_path}")
+        raise ValueError(f"data_path not found: {data_path} (resolved to {path})")
     if not path.is_file():
-        raise ValueError(f"data_path must point to a file: {data_path}")
+        raise ValueError(f"data_path must point to a file: {data_path} (resolved to {path})")
 
     suffix = path.suffix.lower()
     if suffix == ".csv":
@@ -63,8 +62,23 @@ def _dataframe_from_path(data_path: str) -> pd.DataFrame:
     )
 
 
+def _coerce_data(data: Any) -> Any:
+    """Accept a JSON string, list, or dict and always return a JSON string.
+
+    Also used as a Pydantic BeforeValidator so list/dict values from callers
+    that pass parsed JSON (e.g. smolagents) are coerced before type checking.
+    """
+    if data is None:
+        return data
+    if isinstance(data, str):
+        return data
+    if isinstance(data, (list, dict)):
+        return json.dumps(data)
+    raise ValueError(f"data must be a JSON string, list, or dict — got {type(data).__name__}")
+
+
 def _resolve_dataset_data(
-    data: Optional[str] = None,
+    data: Any = None,
     data_path: Optional[str] = None,
 ) -> Optional[pd.DataFrame]:
     provided = [
@@ -73,14 +87,12 @@ def _resolve_dataset_data(
     ]
     selected = [name for name, is_set in provided if is_set]
     if len(selected) > 1:
-        raise ValueError(
-            f"Provide only one of data or data_path (got: {', '.join(selected)})."
-        )
+        raise ValueError(f"Provide only one of data or data_path (got: {', '.join(selected)}).")
     if not selected:
         return None
 
     if data is not None:
-        return _dataframe_from_json(data)
+        return _dataframe_from_json(_coerce_data(data))
     if data_path is not None:
         return _dataframe_from_path(data_path)
 
@@ -114,11 +126,13 @@ def register(mcp: FastMCP) -> None:
                 elif hasattr(v, "isoformat"):
                     row[k] = v.isoformat()
 
-        result = json.dumps({
-            "rows": rows,
-            "total": total_rows,
-            "hasMore": (offset + limit) < total_rows,
-        })
+        result = json.dumps(
+            {
+                "rows": rows,
+                "total": total_rows,
+                "hasMore": (offset + limit) < total_rows,
+            }
+        )
 
         return truncate_response(
             result,
@@ -127,33 +141,37 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
-    async def create_dataset(
+    def create_dataset(
         name: Annotated[str, Field(description="Dataset name")],
+        org_id: Annotated[str, Field(description="Organization UUID (use get_organizations())")],
+        team_id: Annotated[str, Field(description="Team UUID (use get_teams())")],
         ctx: Context,
-        data: Annotated[Optional[str], Field(description='JSON rows: \'[{"col": "val"}, ...]\' or \'{"rows": [...]}\'')] = None,
-        data_path: Annotated[Optional[str], Field(description="Local file path (.csv, .json, .jsonl, .parquet)")] = None,
-        visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "private",
+        data: Annotated[
+            Optional[str],
+            BeforeValidator(_coerce_data),
+            Field(
+                description='JSON rows as a string or array: \'[{"col": "val"}, ...]\' or \'{"rows": [...]}\''
+            ),
+        ] = None,
+        data_path: Annotated[
+            Optional[str],
+            Field(description="Local file path (.csv, .json, .jsonl, .parquet)"),
+        ] = None,
+        visibility: Annotated[
+            str, Field(description='"public" | "private" | "organization"')
+        ] = "private",
         description: Annotated[Optional[str], Field(description="Dataset description")] = None,
-        org_id: Annotated[str, Field(description="Organization UUID")] = "",
-        team_id: Annotated[str, Field(description="Team UUID")] = "",
     ) -> str:
         """Create a new dataset on Ouro. Provide data or data_path (one required).
 
         Call get_organizations() and get_teams() first to pick org_id and team_id.
         Only target teams where agent_can_create is true.
         """
-        if not org_id or not team_id:
-            elicited_org, elicited_team = await elicit_asset_location(ctx)
-            org_id = org_id or elicited_org
-            team_id = team_id or elicited_team
-
         ouro = ctx.request_context.lifespan_context.ouro
 
         df = _resolve_dataset_data(data=data, data_path=data_path)
         if df is None:
-            raise ValueError(
-                "No dataset rows provided. Pass one of: data or data_path."
-            )
+            raise ValueError("No dataset rows provided. Pass one of: data or data_path.")
         if df.empty or len(df.columns) == 0:
             raise ValueError("Dataset data must include at least one column and one row.")
 
@@ -162,7 +180,8 @@ def register(mcp: FastMCP) -> None:
             visibility=visibility,
             data=df,
             description=description,
-            **optional_kwargs(org_id=org_id or None, team_id=team_id or None),
+            org_id=org_id,
+            team_id=team_id,
         )
 
         result = format_asset_summary(dataset)
@@ -175,10 +194,21 @@ def register(mcp: FastMCP) -> None:
         id: Annotated[str, Field(description="Dataset UUID")],
         ctx: Context,
         name: Annotated[Optional[str], Field(description="New name")] = None,
-        visibility: Annotated[Optional[str], Field(description='"public" | "private" | "organization"')] = None,
-        data: Annotated[Optional[str], Field(description="JSON rows for dataset ingest")] = None,
-        data_path: Annotated[Optional[str], Field(description="Local file path for dataset ingest (.csv, .json, .jsonl, .parquet)")] = None,
-        data_mode: Annotated[str, Field(description='"append" | "overwrite" | "upsert"')] = "append",
+        visibility: Annotated[
+            Optional[str], Field(description='"public" | "private" | "organization"')
+        ] = None,
+        data: Annotated[
+            Optional[str],
+            BeforeValidator(_coerce_data),
+            Field(description="JSON rows for dataset ingest (string or array)"),
+        ] = None,
+        data_path: Annotated[
+            Optional[str],
+            Field(description="Local file path for dataset ingest (.csv, .json, .jsonl, .parquet)"),
+        ] = None,
+        data_mode: Annotated[
+            str, Field(description='"append" | "overwrite" | "upsert"')
+        ] = "append",
         description: Annotated[Optional[str], Field(description="New description")] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
