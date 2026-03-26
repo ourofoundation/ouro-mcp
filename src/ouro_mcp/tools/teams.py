@@ -37,7 +37,7 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_team(
         name: Annotated[str, Field(description="Slug: lowercase letters, numbers, dashes only")],
-        org_id: Annotated[str, Field(description="Organization UUID (use get_organizations())")],
+        org_id: Annotated[str, Field(description="Organization UUID")],
         description: Annotated[str, Field(description="Team description (plain text or markdown)")],
         ctx: Context,
         visibility: Annotated[str, Field(description='"public" | "private"')] = "public",

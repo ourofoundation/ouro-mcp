@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 from mcp.server.fastmcp import Context, FastMCP
-
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import format_asset_summary
 

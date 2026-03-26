@@ -10,7 +10,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 - **Discover and execute API routes** — call any user-published API on the platform
 - **Delete assets** they own
 
-## Tools (32)
+## Tools (36)
 
 ### Assets & Discovery
 
@@ -29,6 +29,10 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `query_dataset` | Query a dataset's rows as JSON with pagination |
 | `create_dataset` | Create a dataset from JSON records |
 | `update_dataset` | Update a dataset's data or metadata |
+| `list_dataset_views` | List saved views for a dataset |
+| `create_dataset_view` | Create a saved dataset view |
+| `update_dataset_view` | Update a saved dataset view |
+| `delete_dataset_view` | Delete a saved dataset view |
 
 ### Posts
 
@@ -180,6 +184,17 @@ Examples:
 
 - `data`: list of JSON row objects
 - `data_path`: local file path (`.csv`, `.json`, `.jsonl`/`.ndjson`, `.parquet`)
+
+### Dataset views
+
+Saved dataset views expose the same visualization objects used by the Ouro UI.
+
+- `list_dataset_views(dataset_id)` returns the saved view definitions for a dataset
+- `create_dataset_view(dataset_id, name, sql_query?, engine_type?, config?)` stores a new saved view
+- `update_dataset_view(dataset_id, view_id, ...)` edits an existing saved view
+- `delete_dataset_view(dataset_id, view_id)` removes a saved view
+
+For SQL-backed views, use `{{table}}` as the dataset table name placeholder.
 
 ### Post input options
 

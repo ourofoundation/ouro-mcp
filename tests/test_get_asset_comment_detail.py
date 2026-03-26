@@ -4,7 +4,7 @@ import importlib
 import sys
 import types
 import unittest
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 

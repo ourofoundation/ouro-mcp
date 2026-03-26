@@ -9,7 +9,7 @@ from typing import Annotated, Any, Optional
 import pandas as pd
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import format_asset_summary, optional_kwargs, truncate_response
+from ouro_mcp.utils import format_asset_summary, optional_kwargs, resolve_local_path, truncate_response
 from pydantic import BeforeValidator, Field
 
 
@@ -40,7 +40,7 @@ def _dataframe_from_json(data_json: str) -> pd.DataFrame:
 
 
 def _dataframe_from_path(data_path: str) -> pd.DataFrame:
-    path = Path(data_path).expanduser().resolve()
+    path = resolve_local_path(data_path)
     if not path.exists():
         raise ValueError(f"data_path not found: {data_path} (resolved to {path})")
     if not path.is_file():
@@ -75,6 +75,22 @@ def _coerce_data(data: Any) -> Any:
     if isinstance(data, (list, dict)):
         return json.dumps(data)
     raise ValueError(f"data must be a JSON string, list, or dict — got {type(data).__name__}")
+
+
+def _coerce_json_object(value: Any, *, parameter_name: str) -> Optional[dict[str, Any]]:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"{parameter_name} must be valid JSON: {e}") from e
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{parameter_name} must decode to a JSON object.")
+        return parsed
+    raise ValueError(f"{parameter_name} must be a JSON object or JSON string.")
 
 
 def _resolve_dataset_data(
@@ -143,8 +159,8 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_dataset(
         name: Annotated[str, Field(description="Dataset name")],
-        org_id: Annotated[str, Field(description="Organization UUID (use get_organizations())")],
-        team_id: Annotated[str, Field(description="Team UUID (use get_teams())")],
+        org_id: Annotated[str, Field(description="Organization UUID")],
+        team_id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
         data: Annotated[
             Optional[str],
@@ -162,11 +178,7 @@ def register(mcp: FastMCP) -> None:
         ] = "private",
         description: Annotated[Optional[str], Field(description="Dataset description")] = None,
     ) -> str:
-        """Create a new dataset on Ouro. Provide data or data_path (one required).
-
-        Call get_organizations() and get_teams() first to pick org_id and team_id.
-        Only target teams where agent_can_create is true.
-        """
+        """Create a new dataset on Ouro. Provide data or data_path (one required)."""
         ouro = ctx.request_context.lifespan_context.ouro
 
         df = _resolve_dataset_data(data=data, data_path=data_path)
@@ -240,3 +252,117 @@ def register(mcp: FastMCP) -> None:
         )
 
         return json.dumps(format_asset_summary(dataset))
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True},
+    )
+    @handle_ouro_errors
+    def list_dataset_views(
+        dataset_id: Annotated[str, Field(description="Dataset UUID")],
+        ctx: Context,
+    ) -> str:
+        """List saved views for a dataset.
+
+        A dataset view is a saved visualization definition with SQL and chart config.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        views = ouro.datasets.list_views(dataset_id)
+        return json.dumps({"dataset_id": dataset_id, "views": views})
+
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def create_dataset_view(
+        dataset_id: Annotated[str, Field(description="Dataset UUID")],
+        name: Annotated[str, Field(description="View name")],
+        ctx: Context,
+        description: Annotated[Optional[str], Field(description="Short view description")] = None,
+        sql_query: Annotated[
+            Optional[str],
+            Field(description="Read-only PostgreSQL query using {{table}} as the dataset table name"),
+        ] = None,
+        engine_type: Annotated[
+            str,
+            Field(description='"auto" | "recharts_json"'),
+        ] = "auto",
+        config: Annotated[
+            Optional[Any],
+            Field(description="Chart config as a JSON object or JSON string"),
+        ] = None,
+        prompt: Annotated[
+            Optional[str],
+            Field(description="Natural-language prompt to guide AI generation of the view's SQL and chart config"),
+        ] = None,
+    ) -> str:
+        """Create a saved view for a dataset.
+
+        Views are stored visualizations with an optional SQL query and chart configuration.
+        Pass a prompt to let the API auto-generate the SQL and config via AI.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        created = ouro.datasets.create_view(
+            dataset_id,
+            name=name,
+            description=description,
+            sql_query=sql_query,
+            engine_type=engine_type,
+            config=_coerce_json_object(config, parameter_name="config"),
+            prompt=prompt,
+        )
+        return json.dumps(created)
+
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def update_dataset_view(
+        dataset_id: Annotated[str, Field(description="Dataset UUID")],
+        view_id: Annotated[str, Field(description="Dataset view UUID")],
+        ctx: Context,
+        name: Annotated[Optional[str], Field(description="Updated view name")] = None,
+        description: Annotated[Optional[str], Field(description="Updated description")] = None,
+        sql_query: Annotated[
+            Optional[str],
+            Field(description="Updated read-only SQL query using {{table}}"),
+        ] = None,
+        engine_type: Annotated[
+            Optional[str],
+            Field(description='"auto" | "recharts_json"'),
+        ] = None,
+        config: Annotated[
+            Optional[Any],
+            Field(description="Updated chart config as a JSON object or JSON string"),
+        ] = None,
+        prompt: Annotated[
+            Optional[str],
+            Field(description="Natural-language prompt to guide AI re-generation of the view's SQL and chart config"),
+        ] = None,
+    ) -> str:
+        """Update a saved dataset view."""
+        ouro = ctx.request_context.lifespan_context.ouro
+        updated = ouro.datasets.update_view(
+            dataset_id,
+            view_id,
+            name=name,
+            description=description,
+            sql_query=sql_query,
+            engine_type=engine_type,
+            config=_coerce_json_object(config, parameter_name="config"),
+            prompt=prompt,
+        )
+        return json.dumps(updated)
+
+    @mcp.tool(annotations={"destructiveHint": True})
+    @handle_ouro_errors
+    def delete_dataset_view(
+        dataset_id: Annotated[str, Field(description="Dataset UUID")],
+        view_id: Annotated[str, Field(description="Dataset view UUID")],
+        ctx: Context,
+    ) -> str:
+        """Delete a saved dataset view."""
+        ouro = ctx.request_context.lifespan_context.ouro
+        ouro.datasets.delete_view(dataset_id, view_id)
+        return json.dumps(
+            {
+                "deleted": True,
+                "dataset_id": dataset_id,
+                "view_id": view_id,
+            }
+        )

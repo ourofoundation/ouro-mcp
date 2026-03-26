@@ -18,10 +18,12 @@ from ouro_mcp.constants import (
     ENV_OURO_API_KEY,
     ENV_OURO_BASE_URL,
 )
+from ouro_mcp.logging_config import apply_ouro_mcp_logging, resolve_fastmcp_log_level
 
 load_dotenv(find_dotenv(usecwd=True), override=True)
 
-log = logging.getLogger(__name__)
+# Stable name when launched as ``python -m ouro_mcp.server`` (avoids ``__main__`` in logs).
+log = logging.getLogger("ouro_mcp.server")
 
 
 @dataclass
@@ -93,11 +95,12 @@ These values are always resolved (never null) in get_teams/get_team responses:
 
 **Writing Ouro posts** — use extended markdown in create_post and update_post:
 - **Mention users**: @username
-- **Embed assets**: ```assetComponent
-  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card"}
-  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets
+- **Link to assets**: prefer markdown shorthands `[label](asset:<uuid>)` or typed `[label](post:<uuid>)`, `[label](file:<uuid>)`, `[label](dataset:<uuid>)`, `[label](route:<uuid>)`, `[label](service:<uuid>)` — the server resolves these to canonical URLs. If a tool response includes a `url`, you may paste that exact URL; never invent path segments or use placeholders like `entity` in URLs.
+- **Embed assets** (block-level): ```assetComponent
+  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card", "visualizationId": "<uuid>|null"}
+  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets. For datasets, set visualizationId to render a specific saved dataset view. Use the exact keys `id`, `assetType`, and `viewMode` here; do not use legacy embed keys like `asset_id`, `asset_type`, or `type`.
 - **Standard markdown**: headings, **bold**, *italic*, lists, code blocks, tables, links
-- **Math**: \\(inline\\) and \\[display\\] LaTeX
+- **Math**: $inline$ and $$display$$ LaTeX
 
 **Conversations and messages**:
 - Use list_conversations() to see conversations you belong to.
@@ -106,12 +109,17 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - Use send_message(conversation_id, text) and list_messages(conversation_id, ...) for chat.
 """.strip()
 
+_mcp_log_level = resolve_fastmcp_log_level()
+
 mcp = FastMCP(
     "Ouro",
     instructions=INSTRUCTIONS,
     lifespan=app_lifespan,
     json_response=True,
+    log_level=_mcp_log_level,
 )
+
+apply_ouro_mcp_logging(_mcp_log_level)
 
 # Register all tools and resources
 from ouro_mcp.resources import register_all_resources  # noqa: E402

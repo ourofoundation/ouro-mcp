@@ -58,7 +58,18 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_comment(
         parent_id: Annotated[str, Field(description="Asset ID or comment ID to reply to")],
-        content_markdown: Annotated[str, Field(description="Extended markdown (supports @mentions, asset embeds, LaTeX)")],
+        content_markdown: Annotated[
+            str,
+            Field(
+                description=(
+                    "Extended markdown. Supports @mentions, LaTeX ($inline$, "
+                    "$$display$$), "
+                    "asset link shorthands [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>) "
+                    "(resolved server-side), exact urls from tool results, "
+                    "and block-level asset embeds via ```assetComponent```."
+                )
+            ),
+        ],
         ctx: Context,
     ) -> str:
         """Create a comment on an asset or reply to an existing comment.
@@ -68,8 +79,9 @@ def register(mcp: FastMCP) -> None:
 
         content_markdown supports extended markdown:
         - User mentions: @username
+        - Asset links: [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>), or the exact url from tool results (never placeholder path segments)
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
-        - Standard markdown and LaTeX math
+        - LaTeX: $inline$, $$display$$
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -82,15 +94,27 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def update_comment(
         id: Annotated[str, Field(description="Comment UUID")],
-        content_markdown: Annotated[str, Field(description="Replacement extended markdown")],
+        content_markdown: Annotated[
+            str,
+            Field(
+                description=(
+                    "Replacement extended markdown. Supports @mentions, LaTeX ($inline$, "
+                    "$$display$$), "
+                    "asset link shorthands [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>) "
+                    "(resolved server-side), exact urls from tool results, "
+                    "and block-level asset embeds via ```assetComponent```."
+                )
+            ),
+        ],
         ctx: Context,
     ) -> str:
         """Update a comment's content.
 
         content_markdown supports extended markdown:
         - User mentions: @username
+        - Asset links: [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>), or the exact url from tool results (never placeholder path segments)
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
-        - Standard markdown and LaTeX math
+        - LaTeX: $inline$, $$display$$
         """
         ouro = ctx.request_context.lifespan_context.ouro
 

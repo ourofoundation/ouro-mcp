@@ -23,18 +23,27 @@ def register(mcp: FastMCP) -> None:
     def get_asset(
         id: Annotated[str, Field(description="UUID of any asset type")],
         ctx: Context,
+        detail: Annotated[
+            str,
+            Field(
+                description=(
+                    '"summary" (default) returns name, description, and metadata. '
+                    '"full" also includes type-specific content '
+                    "(post body, dataset schema/stats, file download URL, service routes, route parameters)."
+                )
+            ),
+        ] = "summary",
     ) -> str:
-        """Get any asset by ID. Returns metadata and type-appropriate detail.
+        """Get any asset by ID.
 
-        For datasets: includes schema and stats.
-        For posts: includes text content.
-        For files: includes URL, size, and MIME type.
-        For services: includes list of routes.
-        For routes: includes parameter schema, method, and path.
+        Use detail="summary" (default) when you only need to identify an asset.
+        Use detail="full" to read its content (e.g. post body, dataset schema).
         """
         ouro = ctx.request_context.lifespan_context.ouro
         asset = ouro.assets.retrieve(id)
-        return json.dumps(_format_asset_detail(asset, ouro))
+        if detail == "full":
+            return json.dumps(_format_asset_detail(asset, ouro))
+        return json.dumps(format_asset_summary(asset))
 
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -105,16 +114,17 @@ def register(mcp: FastMCP) -> None:
 
         assets = []
         for item in response.get("data", []):
-            assets.append(
-                {
-                    "id": str(item.get("id", "")),
-                    "name": item.get("name"),
-                    "asset_type": item.get("asset_type"),
-                    "description": description_to_markdown(item.get("description"), max_length=200),
-                    "visibility": item.get("visibility"),
-                    "user": item.get("username") or item.get("user", {}).get("username"),
-                }
-            )
+            row = {
+                "id": str(item.get("id", "")),
+                "name": item.get("name"),
+                "asset_type": item.get("asset_type"),
+                "description": description_to_markdown(item.get("description"), max_length=200),
+                "visibility": item.get("visibility"),
+                "user": item.get("username") or item.get("user", {}).get("username"),
+            }
+            if item.get("url"):
+                row["url"] = item["url"]
+            assets.append(row)
 
         return json.dumps(
             {
@@ -222,7 +232,7 @@ def _format_asset_detail(asset, ouro) -> dict:
 
     elif asset_type == "file":
         if asset.data:
-            base["url"] = asset.data.url
+            base["file_url"] = asset.data.url
         if asset.metadata:
             meta = asset.metadata
             if hasattr(meta, "size"):

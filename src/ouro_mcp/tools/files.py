@@ -10,7 +10,7 @@ from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import file_result, optional_kwargs
+from ouro_mcp.utils import file_result, optional_kwargs, resolve_local_path
 
 
 def _resolve_file_input(
@@ -47,7 +47,7 @@ def _resolve_file_input(
         return {}
 
     if file_path is not None:
-        return {"file_path": file_path}
+        return {"file_path": str(resolve_local_path(file_path))}
 
     if not file_name:
         raise ValueError(
@@ -68,8 +68,8 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_file(
         name: Annotated[str, Field(description="File asset name")],
-        org_id: Annotated[str, Field(description="Organization UUID (use get_organizations())")],
-        team_id: Annotated[str, Field(description="Team UUID (use get_teams())")],
+        org_id: Annotated[str, Field(description="Organization UUID")],
+        team_id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
         file_path: Annotated[
             Optional[str],
@@ -108,9 +108,6 @@ def register(mcp: FastMCP) -> None:
         When using file_content_base64 or file_content_text, also pass
         file_name with the original filename and extension so MIME type
         can be detected.
-
-        Call get_organizations() and get_teams() first to pick org_id and team_id.
-        Only target teams where agent_can_create is true.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 

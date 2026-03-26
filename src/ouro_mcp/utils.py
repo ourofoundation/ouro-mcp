@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+from pathlib import Path
 from typing import Any
 
 from mcp import types as mcp_types
 from mcp.server.fastmcp import Context
-
-from ouro_mcp.constants import MAX_RESPONSE_SIZE
+from ouro_mcp.constants import ENV_WORKSPACE_ROOT, MAX_RESPONSE_SIZE
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,21 @@ def truncate_response(data: str, context: str = "") -> str:
     return data[:MAX_RESPONSE_SIZE] + "\n... [truncated]"
 
 
+def resolve_local_path(raw: str) -> Path:
+    """Resolve a user-supplied file path, respecting WORKSPACE_ROOT for relative paths.
+
+    When WORKSPACE_ROOT is set (typically to the calling agent's workspace
+    directory), relative paths are resolved against it instead of the MCP
+    server's CWD.  Absolute and home-relative (~) paths are unaffected.
+    """
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        workspace = os.environ.get(ENV_WORKSPACE_ROOT)
+        if workspace:
+            p = Path(workspace).expanduser() / p
+    return p.resolve()
+
+
 def format_asset_summary(asset: Any) -> dict:
     """Extract a consistent summary dict from any ouro-py asset model."""
     from ouro.utils.content import description_to_markdown
@@ -48,6 +64,9 @@ def format_asset_summary(asset: Any) -> dict:
         summary["description"] = description_to_markdown(asset.description, max_length=500)
     if asset.user:
         summary["owner"] = asset.user.username
+    page_url = getattr(asset, "url", None)
+    if page_url:
+        summary["url"] = page_url
     return summary
 
 
@@ -89,7 +108,7 @@ def file_result(file: Any) -> dict:
     """Build a standard result dict for a file asset, including data URL and metadata."""
     result = format_asset_summary(file)
     if file.data:
-        result["url"] = file.data.url
+        result["file_url"] = file.data.url
     if file.metadata and hasattr(file.metadata, "type"):
         result["mime_type"] = file.metadata.type
     if file.metadata and hasattr(file.metadata, "size"):
@@ -106,9 +125,7 @@ def resolve_team_policy(team: dict, field: str, default: str = "any") -> str:
     return org.get(field) or default
 
 
-_ELICITATION_CAP = mcp_types.ClientCapabilities(
-    elicitation=mcp_types.ElicitationCapability()
-)
+_ELICITATION_CAP = mcp_types.ClientCapabilities(elicitation=mcp_types.ElicitationCapability())
 
 
 async def elicit_asset_location(

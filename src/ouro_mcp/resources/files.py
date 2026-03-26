@@ -14,7 +14,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.resource(
         "ouro://files/{id}",
         name="File",
-        description="File asset detail: metadata, download URL, MIME type, and size.",
+        description="File asset detail: metadata, `file_url` (download), page `url`, MIME type, and size.",
         mime_type="application/json",
         annotations={"readOnlyHint": True, "idempotentHint": True},
     )

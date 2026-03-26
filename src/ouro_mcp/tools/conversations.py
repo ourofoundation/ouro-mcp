@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any, Optional
 
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.resources.conversations import Messages
-
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import truncate_response
+from ouro_mcp.utils import content_from_markdown, truncate_response
+from pydantic import Field
 
 
 def _conversation_summary(conversation: Any) -> dict:
@@ -40,15 +39,9 @@ def _conversation_summary(conversation: Any) -> dict:
         "id": str(getattr(conversation, "id", "")),
         "name": getattr(conversation, "name", None),
         "summary": getattr(conversation, "summary", None),
-        "created_at": (
-            conversation.created_at.isoformat()
-            if getattr(conversation, "created_at", None)
-            else None
-        ),
+        "created_at": (conversation.created_at.isoformat() if getattr(conversation, "created_at", None) else None),
         "last_updated": (
-            conversation.last_updated.isoformat()
-            if getattr(conversation, "last_updated", None)
-            else None
+            conversation.last_updated.isoformat() if getattr(conversation, "last_updated", None) else None
         ),
         "member_user_ids": [str(member) for member in (members or [])],
     }
@@ -96,16 +89,20 @@ def register(mcp: FastMCP) -> None:
         )
 
         results = [_conversation_summary(conversation) for conversation in conversations]
-        return truncate_response(json.dumps({
-            "results": results,
-            "hasMore": len(results) == limit,
-        }))
+        return truncate_response(
+            json.dumps(
+                {
+                    "results": results,
+                    "hasMore": len(results) == limit,
+                }
+            )
+        )
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def create_conversation(
         member_user_ids: Annotated[list[str], Field(description="User UUIDs to include")],
-        org_id: Annotated[str, Field(description="Organization UUID (use get_organizations())")],
+        org_id: Annotated[str, Field(description="Organization UUID")],
         ctx: Context,
         name: Annotated[Optional[str], Field(description="Conversation name")] = None,
         summary: Annotated[Optional[str], Field(description="Conversation summary")] = None,
@@ -125,13 +122,43 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def send_message(
         conversation_id: Annotated[str, Field(description="Conversation UUID")],
-        text: Annotated[str, Field(description="Message text")],
+        text: Annotated[
+            str,
+            Field(
+                description=(
+                    "Message body as extended Ouro markdown: @mentions, LaTeX ($inline$, $$display$$), "
+                    "asset link shorthands [label](post:|file:|dataset:|route:|service:|asset:<uuid>), "
+                    "```assetComponent``` blocks for embeds, etc. Converted via the Ouro API "
+                    "(link shorthands resolved server-side)."
+                )
+            ),
+        ],
         ctx: Context,
+        message_id: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Optional UUID for the new message row. Use when the client already "
+                    "assigned an id (e.g. websocket streaming id) so the persisted message "
+                    "matches realtime events."
+                )
+            ),
+        ] = None,
     ) -> str:
-        """Send a text message to a conversation."""
+        """Send a message to a conversation. The body is extended Ouro markdown, converted server-side."""
         ouro = ctx.request_context.lifespan_context.ouro
 
-        message = Messages(ouro).create(conversation_id=conversation_id, text=text)
+        content = content_from_markdown(ouro, text)
+        create_kw: dict = {
+            "text": content.text,
+            "json": content.json,
+        }
+        if message_id:
+            create_kw["id"] = message_id
+        message = Messages(ouro).create(
+            conversation_id=conversation_id,
+            **create_kw,
+        )
         return json.dumps(_message_summary(message))
 
     @mcp.tool(annotations={"readOnlyHint": True})
@@ -151,7 +178,11 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
         )
         results = [_message_summary(message) for message in messages]
-        return truncate_response(json.dumps({
-            "results": results,
-            "hasMore": len(results) == limit,
-        }))
+        return truncate_response(
+            json.dumps(
+                {
+                    "results": results,
+                    "hasMore": len(results) == limit,
+                }
+            )
+        )
