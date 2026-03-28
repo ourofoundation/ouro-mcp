@@ -24,10 +24,7 @@ def _format_ouro_error(e: Exception) -> str:
     raw_lower = raw.lower()
 
     # Known server-side failures that agents should handle without retries.
-    if (
-        "json object requested, multiple (or no) rows returned" in raw_lower
-        or "thread depth" in raw_lower
-    ):
+    if "json object requested, multiple (or no) rows returned" in raw_lower or "thread depth" in raw_lower:
         return json.dumps(
             {
                 "error": "nested_reply_failed",

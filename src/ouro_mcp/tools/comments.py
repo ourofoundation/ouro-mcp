@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
@@ -13,6 +12,7 @@ from ouro_mcp.utils import (
     format_asset_summary,
     truncate_response,
 )
+from pydantic import Field
 
 
 def register(mcp: FastMCP) -> None:
@@ -31,6 +31,22 @@ def register(mcp: FastMCP) -> None:
 
         comments = ouro.comments.list_by_parent(parent_id)
 
+        # Try to fetch the parent asset for context
+        parent_context = None
+        try:
+            parent = ouro.assets.retrieve(parent_id)
+            if parent:
+                parent_context = {
+                    "id": str(parent.id),
+                    "asset_type": parent.asset_type,
+                    "name": parent.name,
+                    "username": parent.user.username,
+                }
+                if parent.asset_type == "comment" and parent.content:
+                    parent_context["text"] = parent.content.text[:500] if parent.content.text else None
+        except Exception:
+            pass
+
         results = []
         for c in comments:
             entry = {
@@ -46,13 +62,15 @@ def register(mcp: FastMCP) -> None:
 
             replies = getattr(c, "replies", None)
             if replies is not None:
-                entry["reply_count"] = (
-                    replies if isinstance(replies, int) else len(replies)
-                )
+                entry["reply_count"] = replies if isinstance(replies, int) else len(replies)
 
             results.append(entry)
 
-        return truncate_response(json.dumps({"results": results}))
+        response_data = {"results": results}
+        if parent_context:
+            response_data["parent"] = parent_context
+
+        return truncate_response(json.dumps(response_data))
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -76,6 +94,10 @@ def register(mcp: FastMCP) -> None:
 
         parent_id is the ID of the asset being commented on, or the ID of a
         comment being replied to.
+
+        If you are creating an asset and want to reference it in a comment, you MUST
+        wait for the asset creation tool to return the ID before calling create_comment.
+        Do not use placeholder IDs or call them in parallel.
 
         content_markdown supports extended markdown:
         - User mentions: @username
