@@ -9,7 +9,13 @@ from typing import Annotated, Any, Optional
 import pandas as pd
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import format_asset_summary, optional_kwargs, resolve_local_path, truncate_response
+from ouro_mcp.utils import (
+    dump_json,
+    format_asset_summary,
+    optional_kwargs,
+    resolve_local_path,
+    truncate_response,
+)
 from pydantic import BeforeValidator, Field
 
 
@@ -142,7 +148,7 @@ def register(mcp: FastMCP) -> None:
                 elif hasattr(v, "isoformat"):
                     row[k] = v.isoformat()
 
-        result = json.dumps(
+        result = dump_json(
             {
                 "rows": rows,
                 "total": total_rows,
@@ -198,7 +204,7 @@ def register(mcp: FastMCP) -> None:
 
         result = format_asset_summary(dataset)
         result["table_name"] = dataset.metadata.get("table_name") if dataset.metadata else None
-        return json.dumps(result)
+        return dump_json(result)
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -251,7 +257,7 @@ def register(mcp: FastMCP) -> None:
             ),
         )
 
-        return json.dumps(format_asset_summary(dataset))
+        return dump_json(format_asset_summary(dataset))
 
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -267,7 +273,7 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
         views = ouro.datasets.list_views(dataset_id)
-        return json.dumps({"dataset_id": dataset_id, "views": views})
+        return dump_json({"dataset_id": dataset_id, "views": views})
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -308,7 +314,7 @@ def register(mcp: FastMCP) -> None:
             config=_coerce_json_object(config, parameter_name="config"),
             prompt=prompt,
         )
-        return json.dumps(created)
+        return dump_json(created)
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -347,7 +353,7 @@ def register(mcp: FastMCP) -> None:
             config=_coerce_json_object(config, parameter_name="config"),
             prompt=prompt,
         )
-        return json.dumps(updated)
+        return dump_json(updated)
 
     @mcp.tool(annotations={"destructiveHint": True})
     @handle_ouro_errors
@@ -359,7 +365,7 @@ def register(mcp: FastMCP) -> None:
         """Delete a saved dataset view."""
         ouro = ctx.request_context.lifespan_context.ouro
         ouro.datasets.delete_view(dataset_id, view_id)
-        return json.dumps(
+        return dump_json(
             {
                 "deleted": True,
                 "dataset_id": dataset_id,

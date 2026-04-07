@@ -8,7 +8,7 @@ from typing import Annotated, Any, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.resources.conversations import Messages
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import content_from_markdown, truncate_response
+from ouro_mcp.utils import content_from_markdown, dump_json, truncate_response
 from pydantic import Field
 
 
@@ -80,7 +80,7 @@ def register(mcp: FastMCP) -> None:
 
         if id:
             conversation = ouro.conversations.retrieve(id)
-            return json.dumps(_conversation_summary(conversation))
+            return dump_json(_conversation_summary(conversation))
 
         conversations = ouro.conversations.list(
             org_id=org_id,
@@ -90,7 +90,7 @@ def register(mcp: FastMCP) -> None:
 
         results = [_conversation_summary(conversation) for conversation in conversations]
         return truncate_response(
-            json.dumps(
+            dump_json(
                 {
                     "results": results,
                     "hasMore": len(results) == limit,
@@ -116,7 +116,7 @@ def register(mcp: FastMCP) -> None:
             summary=summary,
             org_id=org_id,
         )
-        return json.dumps(_conversation_summary(conversation))
+        return dump_json(_conversation_summary(conversation))
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -159,7 +159,7 @@ def register(mcp: FastMCP) -> None:
             conversation_id=conversation_id,
             **create_kw,
         )
-        return json.dumps(_message_summary(message))
+        return dump_json(_message_summary(message))
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -179,7 +179,7 @@ def register(mcp: FastMCP) -> None:
         )
         results = [_message_summary(message) for message in messages]
         return truncate_response(
-            json.dumps(
+            dump_json(
                 {
                     "results": results,
                     "hasMore": len(results) == limit,

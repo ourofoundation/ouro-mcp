@@ -9,7 +9,7 @@ from typing import Annotated, Any, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.utils.content import description_to_markdown
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import format_asset_summary, optional_kwargs
+from ouro_mcp.utils import dump_json, format_asset_summary, optional_kwargs
 from pydantic import Field
 
 log = logging.getLogger(__name__)
@@ -42,8 +42,8 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
         asset = ouro.assets.retrieve(id)
         if detail == "full":
-            return json.dumps(_format_asset_detail(asset, ouro))
-        return json.dumps(format_asset_summary(asset))
+            return dump_json(_format_asset_detail(asset, ouro))
+        return dump_json(format_asset_summary(asset))
 
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -126,7 +126,7 @@ def register(mcp: FastMCP) -> None:
                 row["url"] = item["url"]
             assets.append(row)
 
-        return json.dumps(
+        return dump_json(
             {
                 "results": assets,
                 "total": response.get("pagination", {}).get("total"),
@@ -156,14 +156,14 @@ def register(mcp: FastMCP) -> None:
         elif asset_type == "file":
             ouro.files.delete(id)
         else:
-            return json.dumps(
+            return dump_json(
                 {
                     "error": "unsupported_type",
                     "message": f"Cannot delete asset of type '{asset_type}' via this tool.",
                 }
             )
 
-        return json.dumps(
+        return dump_json(
             {
                 "deleted": True,
                 "id": id,
@@ -196,7 +196,7 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
         resolved_path = str(resolve_local_path(output_path))
         result = ouro.assets.download(id, output_path=resolved_path, asset_type=asset_type)
-        return json.dumps(
+        return dump_json(
             {
                 "downloaded": True,
                 **result,

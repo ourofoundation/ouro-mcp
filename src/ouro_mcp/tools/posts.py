@@ -10,6 +10,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
+    dump_json,
     format_asset_summary,
     optional_kwargs,
     resolve_local_path,
@@ -97,7 +98,7 @@ def register(mcp: FastMCP) -> None:
             team_id=team_id,
         )
 
-        return json.dumps(format_asset_summary(post))
+        return dump_json(format_asset_summary(post))
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
@@ -156,4 +157,4 @@ def register(mcp: FastMCP) -> None:
             ),
         )
 
-        return json.dumps(format_asset_summary(post))
+        return dump_json(format_asset_summary(post))

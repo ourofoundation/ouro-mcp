@@ -4,6 +4,7 @@ MAX_RESPONSE_SIZE = 50_000  # ~50KB JSON threshold
 
 ENV_OURO_API_KEY = "OURO_API_KEY"
 ENV_OURO_BASE_URL = "OURO_BASE_URL"
+ENV_OURO_MCP_TIMEZONE = "OURO_MCP_TIMEZONE"
 ENV_WORKSPACE_ROOT = "WORKSPACE_ROOT"
 
 # Logging (read by clients via MCP server env, e.g. ouro-agents config.json)

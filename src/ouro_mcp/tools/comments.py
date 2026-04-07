@@ -9,6 +9,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
+    dump_json,
     format_asset_summary,
     truncate_response,
 )
@@ -70,7 +71,7 @@ def register(mcp: FastMCP) -> None:
         if parent_context:
             response_data["parent"] = parent_context
 
-        return truncate_response(json.dumps(response_data))
+        return truncate_response(dump_json(response_data))
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -110,7 +111,7 @@ def register(mcp: FastMCP) -> None:
         content = content_from_markdown(ouro, content_markdown)
         comment = ouro.comments.create(content=content, parent_id=parent_id)
 
-        return json.dumps(format_asset_summary(comment))
+        return dump_json(format_asset_summary(comment))
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
@@ -143,4 +144,4 @@ def register(mcp: FastMCP) -> None:
         content = content_from_markdown(ouro, content_markdown)
         comment = ouro.comments.update(id, content=content)
 
-        return json.dumps(format_asset_summary(comment))
+        return dump_json(format_asset_summary(comment))

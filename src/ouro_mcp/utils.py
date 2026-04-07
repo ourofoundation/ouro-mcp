@@ -4,14 +4,18 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from mcp import types as mcp_types
 from mcp.server.fastmcp import Context
-from ouro_mcp.constants import ENV_WORKSPACE_ROOT, MAX_RESPONSE_SIZE
+from ouro_mcp.constants import ENV_OURO_MCP_TIMEZONE, ENV_WORKSPACE_ROOT, MAX_RESPONSE_SIZE
 
 log = logging.getLogger(__name__)
+
+_TIMESTAMP_KEYS = {"created_at", "last_updated", "updated_at", "timestamp"}
 
 
 def truncate_response(data: str, context: str = "") -> str:
@@ -31,6 +35,83 @@ def truncate_response(data: str, context: str = "") -> str:
     except (json.JSONDecodeError, TypeError):
         pass
     return data[:MAX_RESPONSE_SIZE] + "\n... [truncated]"
+
+
+def _configured_timezone_name() -> str | None:
+    raw = os.environ.get(ENV_OURO_MCP_TIMEZONE, "").strip()
+    return raw or None
+
+
+def _parse_timestamp_value(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _local_timestamp_fields(value: Any, tz_name: str) -> dict[str, str] | None:
+    dt = _parse_timestamp_value(value)
+    if dt is None:
+        return None
+
+    try:
+        local_dt = dt.astimezone(ZoneInfo(tz_name))
+    except Exception:
+        return None
+
+    return {
+        "local": local_dt.isoformat(),
+        "local_label": local_dt.strftime("%Y-%m-%d %I:%M %p %Z"),
+    }
+
+
+def enrich_timestamps(data: Any, tz_name: str | None = None) -> Any:
+    """Recursively add local-time siblings for common UTC timestamp fields."""
+    active_tz = tz_name or _configured_timezone_name()
+    if not active_tz:
+        return data
+
+    if isinstance(data, list):
+        return [enrich_timestamps(item, active_tz) for item in data]
+
+    if not isinstance(data, dict):
+        return data
+
+    enriched: dict[str, Any] = {}
+    for key, value in data.items():
+        transformed = enrich_timestamps(value, active_tz)
+        enriched[key] = transformed
+        if (
+            key in _TIMESTAMP_KEYS
+            and value is not None
+            and f"{key}_local" not in data
+            and f"{key}_local_label" not in data
+        ):
+            local_fields = _local_timestamp_fields(value, active_tz)
+            if local_fields:
+                enriched[f"{key}_local"] = local_fields["local"]
+                enriched[f"{key}_local_label"] = local_fields["local_label"]
+
+    return enriched
+
+
+def dump_json(data: Any, **kwargs: Any) -> str:
+    """JSON-encode a payload after enriching timestamp fields for local display."""
+    return json.dumps(enrich_timestamps(data), **kwargs)
 
 
 def resolve_local_path(raw: str) -> Path:

@@ -8,7 +8,12 @@ from typing import Annotated, Any, Optional
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import content_from_markdown, resolve_team_policy, truncate_response
+from ouro_mcp.utils import (
+    content_from_markdown,
+    dump_json,
+    resolve_team_policy,
+    truncate_response,
+)
 
 
 def _team_summary(team: dict[str, Any]) -> dict[str, Any]:
@@ -61,7 +66,7 @@ def register(mcp: FastMCP) -> None:
             source_policy=source_policy,
         )
 
-        return json.dumps(_team_summary(team))
+        return dump_json(_team_summary(team))
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
@@ -87,7 +92,7 @@ def register(mcp: FastMCP) -> None:
             actor_type_policy=actor_type_policy,
             source_policy=source_policy,
         )
-        return json.dumps(_team_summary(team))
+        return dump_json(_team_summary(team))
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -122,7 +127,7 @@ def register(mcp: FastMCP) -> None:
                 for m in members
             ]
             result["member_count"] = team.get("memberCount", len(members))
-            return json.dumps(result)
+            return dump_json(result)
 
         if discover:
             teams = ouro.teams.list(org_id=org_id, public_only=True)
@@ -147,7 +152,7 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        return json.dumps({"results": results})
+        return dump_json({"results": results})
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -201,7 +206,7 @@ def register(mcp: FastMCP) -> None:
             "total": pagination.get("total"),
             "hasMore": pagination.get("hasMore", len(results) == limit),
         }
-        return truncate_response(json.dumps(payload))
+        return truncate_response(dump_json(payload))
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
@@ -216,7 +221,7 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.teams.join(id)
-        return json.dumps({"success": True, "team": result})
+        return dump_json({"success": True, "team": result})
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
@@ -227,4 +232,4 @@ def register(mcp: FastMCP) -> None:
         """Leave a team you are currently a member of."""
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.teams.leave(id)
-        return json.dumps({"success": True, "result": result})
+        return dump_json({"success": True, "result": result})

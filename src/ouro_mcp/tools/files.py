@@ -10,7 +10,7 @@ from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import file_result, optional_kwargs, resolve_local_path
+from ouro_mcp.utils import dump_json, file_result, optional_kwargs, resolve_local_path
 
 
 def _resolve_file_input(
@@ -127,7 +127,7 @@ def register(mcp: FastMCP) -> None:
             **file_kwargs,
         )
 
-        return json.dumps(file_result(file))
+        return dump_json(file_result(file))
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
@@ -189,4 +189,4 @@ def register(mcp: FastMCP) -> None:
             ),
         )
 
-        return json.dumps(file_result(file))
+        return dump_json(file_result(file))

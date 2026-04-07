@@ -9,7 +9,7 @@ from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import truncate_response
+from ouro_mcp.utils import dump_json, truncate_response
 
 
 def register(mcp: FastMCP) -> None:
@@ -60,11 +60,17 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        return truncate_response(json.dumps({
-            "results": results,
-            "total": response.get("pagination", {}).get("total"),
-            "hasMore": response.get("pagination", {}).get("hasMore", len(results) == limit),
-        }))
+        return truncate_response(
+            dump_json(
+                {
+                    "results": results,
+                    "total": response.get("pagination", {}).get("total"),
+                    "hasMore": response.get("pagination", {}).get(
+                        "hasMore", len(results) == limit
+                    ),
+                }
+            )
+        )
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
@@ -92,4 +98,4 @@ def register(mcp: FastMCP) -> None:
         if content.get("text"):
             result["text"] = content["text"]
 
-        return json.dumps(result)
+        return dump_json(result)
