@@ -59,6 +59,7 @@ def _message_summary(message: dict) -> dict:
         "id": str(message.get("id", "")),
         "conversation_id": str(message.get("conversation_id", "")),
         "user_id": str(message.get("user_id", "")),
+        "type": message.get("type", "message"),
         "text": message.get("text"),
         "json": message.get("json"),
         "created_at": message.get("created_at"),
@@ -144,6 +145,12 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        type: Annotated[
+            Optional[str],
+            Field(
+                description="Message type: 'message' (default), 'reasoning', or 'tool_call'."
+            ),
+        ] = None,
     ) -> str:
         """Send a message to a conversation. The body is extended Ouro markdown, converted server-side."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -155,6 +162,8 @@ def register(mcp: FastMCP) -> None:
         }
         if message_id:
             create_kw["id"] = message_id
+        if type:
+            create_kw["type"] = type
         message = Messages(ouro).create(
             conversation_id=conversation_id,
             **create_kw,

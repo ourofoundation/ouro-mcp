@@ -192,7 +192,7 @@ def register(mcp: FastMCP) -> None:
         If output_path is a directory, the server-provided filename is used.
         """
         from ouro_mcp.utils import resolve_local_path
-        
+
         ouro = ctx.request_context.lifespan_context.ouro
         resolved_path = str(resolve_local_path(output_path))
         result = ouro.assets.download(id, output_path=resolved_path, asset_type=asset_type)
