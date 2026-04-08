@@ -83,8 +83,8 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Extended markdown. Supports @mentions, LaTeX ($inline$, "
                     "$$display$$), "
-                    "asset link shorthands [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>) "
-                    "(resolved server-side), exact urls from tool results, "
+                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
+                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent```."
                 )
             ),
@@ -102,7 +102,7 @@ def register(mcp: FastMCP) -> None:
 
         content_markdown supports extended markdown:
         - User mentions: @username
-        - Asset links: [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>), or the exact url from tool results (never placeholder path segments)
+        - Asset links: prefer [text](post:|file:|dataset:|route:|service:<uuid>) shorthands; use [text](asset:<uuid>) only when the asset type is unknown
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
         - LaTeX: $inline$, $$display$$
         """
@@ -123,8 +123,8 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Replacement extended markdown. Supports @mentions, LaTeX ($inline$, "
                     "$$display$$), "
-                    "asset link shorthands [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>) "
-                    "(resolved server-side), exact urls from tool results, "
+                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
+                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent```."
                 )
             ),
@@ -135,7 +135,7 @@ def register(mcp: FastMCP) -> None:
 
         content_markdown supports extended markdown:
         - User mentions: @username
-        - Asset links: [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>), or the exact url from tool results (never placeholder path segments)
+        - Asset links: prefer [text](post:|file:|dataset:|route:|service:<uuid>) shorthands; use [text](asset:<uuid>) only when the asset type is unknown
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
         - LaTeX: $inline$, $$display$$
         """

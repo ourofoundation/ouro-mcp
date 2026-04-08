@@ -74,6 +74,8 @@ def _format_ouro_error(e: Exception) -> str:
         )
     if isinstance(e, TimeoutError):
         return json.dumps({"error": "timeout", "message": raw})
+    if isinstance(e, ValueError):
+        return json.dumps({"error": "invalid_arguments", "message": raw})
     log.exception("Unexpected error in MCP tool")
     return json.dumps({"error": "unexpected", "message": raw})
 

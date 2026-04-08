@@ -6,11 +6,10 @@ import json
 from base64 import b64decode
 from typing import Annotated, Any, Optional
 
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
-
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import dump_json, file_result, optional_kwargs, resolve_local_path
+from pydantic import Field
 
 
 def _resolve_file_input(
@@ -73,7 +72,12 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         file_path: Annotated[
             Optional[str],
-            Field(description="Absolute local filesystem path to upload"),
+            Field(
+                description=(
+                    "Path to the file on disk. Relative paths resolve against WORKSPACE_ROOT. "
+                    "Absolute paths are used as-is."
+                )
+            ),
         ] = None,
         file_content_base64: Annotated[
             Optional[str],
@@ -92,18 +96,15 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
-        visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "private",
+        visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "public",
         description: Annotated[Optional[str], Field(description="File description")] = None,
     ) -> str:
         """Upload a file as an asset on Ouro.
 
         Provide the file via **one** of:
-        - file_path — a local filesystem path (works when the MCP server
-          can access the file directly).
-        - file_content_base64 — base64-encoded bytes (for binary files
-          like images or PDFs from a remote/sandboxed client).
-        - file_content_text — plain-text content (for text files like
-          CIF, JSON, CSV, etc.).
+        - file_path — relative paths are resolved from WORKSPACE_ROOT.
+        - file_content_base64 — inline bytes (e.g. remote clients).
+        - file_content_text — inline text (CIF, JSON, CSV, etc.).
 
         When using file_content_base64 or file_content_text, also pass
         file_name with the original filename and extension so MIME type
@@ -117,6 +118,13 @@ def register(mcp: FastMCP) -> None:
             file_content_text=file_content_text,
             file_name=file_name,
         )
+
+        if not file_kwargs:
+            raise ValueError(
+                "create_file requires exactly one of: file_path, file_content_base64, or file_content_text. "
+                "For file_path: use the same path you used with run_python write_file (relative paths resolve "
+                "against WORKSPACE_ROOT). For inline content, file_name (e.g. 'structure.cif') is required."
+            )
 
         file = ouro.files.create(
             name=name,
@@ -136,7 +144,11 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         file_path: Annotated[
             Optional[str],
-            Field(description="Local path to replacement file"),
+            Field(
+                description=(
+                    "Path to replacement file; relative paths resolve against WORKSPACE_ROOT " "(same as create_file)."
+                )
+            ),
         ] = None,
         file_content_base64: Annotated[
             Optional[str],
@@ -150,8 +162,7 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(
                 description=(
-                    "Original filename with extension. Required when "
-                    "using file_content_base64 or file_content_text."
+                    "Original filename with extension. Required when " "using file_content_base64 or file_content_text."
                 )
             ),
         ] = None,

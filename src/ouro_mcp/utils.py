@@ -238,10 +238,6 @@ def format_asset_summary(asset: Any) -> dict:
         summary["monetization"] = asset.monetization
         summary["price"] = getattr(asset, "price", None)
 
-    page_url = getattr(asset, "url", None)
-    if page_url:
-        summary["url"] = page_url
-
     return summary
 
 

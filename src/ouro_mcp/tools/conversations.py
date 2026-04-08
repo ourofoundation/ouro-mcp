@@ -128,9 +128,9 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Message body as extended Ouro markdown: @mentions, LaTeX ($inline$, $$display$$), "
-                    "asset link shorthands [label](post:|file:|dataset:|route:|service:|asset:<uuid>), "
-                    "```assetComponent``` blocks for embeds, etc. Converted via the Ouro API "
-                    "(link shorthands resolved server-side)."
+                    "typed asset link shorthands [label](post:|file:|dataset:|route:|service:<uuid>). "
+                    "Use [label](asset:<uuid>) only when the asset type is unknown. "
+                    "```assetComponent``` blocks for embeds, etc."
                 )
             ),
         ],
@@ -152,7 +152,7 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
     ) -> str:
-        """Send a message to a conversation. The body is extended Ouro markdown, converted server-side."""
+        """Send a message to a conversation using extended Ouro markdown."""
         ouro = ctx.request_context.lifespan_context.ouro
 
         content = content_from_markdown(ouro, text)

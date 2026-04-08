@@ -58,8 +58,8 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Extended markdown body. Supports @mentions, LaTeX ($inline$, "
                     "$$display$$), "
-                    "asset link shorthands [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>) "
-                    "(resolved server-side), exact urls from tool results, "
+                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
+                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
                     '{"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}.'
                 )
@@ -72,7 +72,7 @@ def register(mcp: FastMCP) -> None:
         """Create a new post on Ouro from extended markdown. Provide content_markdown or content_path.
 
         Asset references:
-        - Inline links: [label](asset:<uuid>) or [label](post:|file:|dataset:|route:|service:<uuid>); or paste the exact `url` from a tool response. Do not use placeholder URL segments such as `entity`.
+        - Inline links: prefer [label](post:|file:|dataset:|route:|service:<uuid>). Use [label](asset:<uuid>) only when the asset type is unknown. Do not invent URL paths.
         For embedded assets, use:
         ```assetComponent
         {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}
@@ -112,8 +112,8 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Replacement extended markdown body. Supports @mentions, LaTeX ($inline$, "
                     "$$display$$), "
-                    "asset link shorthands [text](asset:<uuid>) or [text](post:|file:|dataset:|route:|service:<uuid>) "
-                    "(resolved server-side), exact urls from tool results, "
+                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
+                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
                     '{"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}.'
                 )
@@ -130,7 +130,7 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Update a post's content or metadata. Pass content_markdown/content_path to replace the body.
 
-        Inline links: [label](asset:<uuid>) or typed post:/file:/…; or exact `url` from tools — not placeholder paths.
+        Inline links: prefer typed post:/file:/dataset:/route:/service: shorthands. Use asset:<uuid> only when the asset type is unknown. Do not invent URL paths.
 
         For embedded assets, use:
         ```assetComponent

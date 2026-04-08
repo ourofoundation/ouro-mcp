@@ -154,8 +154,6 @@ def register(mcp: FastMCP) -> None:
             if item.get("parent_id"):
                 row["parent_id"] = str(item["parent_id"])
 
-            if item.get("url"):
-                row["url"] = item["url"]
             assets.append(row)
 
         return dump_json(
@@ -281,8 +279,6 @@ def register(mcp: FastMCP) -> None:
             if route_data:
                 entry["method"] = route_data.get("method")
                 entry["path"] = route_data.get("path")
-            if r.get("url"):
-                entry["url"] = r["url"]
             results.append(entry)
         return dump_json({"asset_id": id, "compatible_routes": results})
 
