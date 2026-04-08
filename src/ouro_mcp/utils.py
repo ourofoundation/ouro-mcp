@@ -129,25 +129,119 @@ def resolve_local_path(raw: str) -> Path:
     return p.resolve()
 
 
+def _getv(obj: Any, key: str, default: Any = None) -> Any:
+    """Get a value from a dict or object attribute, whichever applies."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def user_summary(source: Any) -> dict | None:
+    """Build a standard {id, username, is_agent} dict from a model or raw dict.
+
+    Handles both typed UserProfile objects (attribute access) and raw API
+    response dicts where user info may be nested or flattened.
+    """
+    if source is None:
+        return None
+
+    user_obj = _getv(source, "user") or _getv(source, "author") or {}
+    username = _getv(source, "username") or _getv(user_obj, "username")
+    if not username:
+        return None
+
+    user_id = (
+        _getv(source, "user_id")
+        or _getv(user_obj, "user_id")
+        or _getv(user_obj, "id")
+        or ""
+    )
+    return {
+        "id": str(user_id),
+        "username": username,
+        "is_agent": _getv(user_obj, "is_agent", False),
+    }
+
+
+def org_summary(source: Any) -> dict | None:
+    """Build a standard {id, name} dict from a model or raw dict.
+
+    Handles OrganizationProfile objects and raw dicts where org info
+    may be a nested object or a flat org_id field.
+    """
+    if source is None:
+        return None
+
+    org = _getv(source, "organization")
+    org_id = _getv(source, "org_id") or _getv(org, "id") if org else _getv(source, "org_id")
+    if not org_id:
+        return None
+
+    result: dict[str, Any] = {"id": str(org_id)}
+    org_name = _getv(org, "name") if org else None
+    if org_name:
+        result["name"] = org_name
+    return result
+
+
+def team_summary(source: Any) -> dict | None:
+    """Build a standard {id, name} dict from a model or raw dict."""
+    if source is None:
+        return None
+    team_obj = _getv(source, "team") or {}
+    team_id = _getv(source, "team_id") or _getv(team_obj, "id")
+    if not team_id:
+        return None
+
+    result: dict[str, Any] = {"id": str(team_id)}
+    team_name = _getv(team_obj, "name")
+    if team_name:
+        result["name"] = team_name
+    return result
+
+
 def format_asset_summary(asset: Any) -> dict:
     """Extract a consistent summary dict from any ouro-py asset model."""
     from ouro.utils.content import description_to_markdown
 
-    summary = {
+    summary: dict[str, Any] = {
         "id": str(asset.id),
         "name": asset.name,
         "asset_type": asset.asset_type,
         "visibility": asset.visibility,
         "created_at": asset.created_at.isoformat() if asset.created_at else None,
         "last_updated": asset.last_updated.isoformat() if asset.last_updated else None,
+        "state": getattr(asset, "state", None),
+        "source": getattr(asset, "source", None),
     }
+
     if asset.description:
         summary["description"] = description_to_markdown(asset.description, max_length=500)
-    if asset.user:
-        summary["owner"] = asset.user.username
+
+    user = user_summary(asset)
+    if user:
+        summary["user"] = user
+
+    org = org_summary(asset)
+    if org:
+        summary["organization"] = org
+
+    team = team_summary(asset)
+    if team:
+        summary["team"] = team
+
+    parent_id = getattr(asset, "parent_id", None)
+    if parent_id:
+        summary["parent_id"] = str(parent_id)
+
+    if getattr(asset, "monetization", None) and asset.monetization != "none":
+        summary["monetization"] = asset.monetization
+        summary["price"] = getattr(asset, "price", None)
+
     page_url = getattr(asset, "url", None)
     if page_url:
         summary["url"] = page_url
+
     return summary
 
 

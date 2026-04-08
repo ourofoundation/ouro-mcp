@@ -9,7 +9,15 @@ from typing import Annotated, Any, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.utils.content import description_to_markdown
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, format_asset_summary, optional_kwargs
+from ouro_mcp.utils import (
+    dump_json,
+    format_asset_summary,
+    optional_kwargs,
+    org_summary,
+    team_summary,
+    truncate_response,
+    user_summary,
+)
 from pydantic import Field
 
 log = logging.getLogger(__name__)
@@ -27,9 +35,10 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(
                 description=(
-                    '"summary" (default) returns name, description, and metadata. '
+                    '"summary" (default) returns name, description, metadata, and engagement counts. '
                     '"full" also includes type-specific content '
-                    "(post body, dataset schema/stats, file download URL, service routes, route parameters)."
+                    "(post body, dataset schema/stats, file download URL, service routes, route parameters), "
+                    "plus provenance (creation action), connections, and tags."
                 )
             ),
         ] = "summary",
@@ -38,12 +47,16 @@ def register(mcp: FastMCP) -> None:
 
         Use detail="summary" (default) when you only need to identify an asset.
         Use detail="full" to read its content (e.g. post body, dataset schema).
+        Both levels include engagement counts (views, comments, reactions, downloads).
         """
         ouro = ctx.request_context.lifespan_context.ouro
         asset = ouro.assets.retrieve(id)
         if detail == "full":
-            return dump_json(_format_asset_detail(asset, ouro))
-        return dump_json(format_asset_summary(asset))
+            result = _format_asset_detail(asset, ouro)
+        else:
+            result = format_asset_summary(asset)
+        _enrich_counts(result, ouro, id)
+        return dump_json(result)
 
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -114,14 +127,33 @@ def register(mcp: FastMCP) -> None:
 
         assets = []
         for item in response.get("data", []):
-            row = {
+            row: dict[str, Any] = {
                 "id": str(item.get("id", "")),
                 "name": item.get("name"),
                 "asset_type": item.get("asset_type"),
                 "description": description_to_markdown(item.get("description"), max_length=200),
                 "visibility": item.get("visibility"),
-                "user": item.get("username") or item.get("user", {}).get("username"),
+                "state": item.get("state"),
+                "source": item.get("source"),
+                "created_at": item.get("created_at"),
+                "last_updated": item.get("last_updated"),
             }
+
+            user = user_summary(item)
+            if user:
+                row["user"] = user
+
+            org = org_summary(item)
+            if org:
+                row["organization"] = org
+
+            team = team_summary(item)
+            if team:
+                row["team"] = team
+
+            if item.get("parent_id"):
+                row["parent_id"] = str(item["parent_id"])
+
             if item.get("url"):
                 row["url"] = item["url"]
             assets.append(row)
@@ -203,22 +235,113 @@ def register(mcp: FastMCP) -> None:
             }
         )
 
+    @mcp.tool(annotations={"readOnlyHint": True})
+    @handle_ouro_errors
+    def get_asset_connections(
+        id: Annotated[str, Field(description="UUID of the asset")],
+        ctx: Context,
+    ) -> str:
+        """Get the connection graph for an asset.
 
-def _format_asset_detail(asset, ouro) -> dict:
+        Returns relationships like references, components, derivatives,
+        action inputs/outputs, and replicators. Useful for understanding
+        how assets relate to each other and navigating lineage.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        connections = ouro.assets.connections(id)
+        return truncate_response(dump_json({"asset_id": id, "connections": connections}))
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    @handle_ouro_errors
+    def get_compatible_routes(
+        id: Annotated[str, Field(description="UUID of the asset")],
+        ctx: Context,
+    ) -> str:
+        """Find routes that can operate on this asset.
+
+        Returns routes whose input type is compatible with the given asset,
+        answering the question "what can I do with this asset?".
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        routes = ouro.assets.compatible_routes(id)
+        results = []
+        for r in routes:
+            entry: dict[str, Any] = {
+                "id": str(r.get("id", "")),
+                "name": r.get("name"),
+                "asset_type": r.get("asset_type", "route"),
+            }
+            if r.get("description"):
+                desc = r["description"]
+                if isinstance(desc, dict):
+                    entry["description"] = desc.get("text", "")[:200]
+                else:
+                    entry["description"] = str(desc)[:200]
+            route_data = r.get("route") or {}
+            if route_data:
+                entry["method"] = route_data.get("method")
+                entry["path"] = route_data.get("path")
+            if r.get("url"):
+                entry["url"] = r["url"]
+            results.append(entry)
+        return dump_json({"asset_id": id, "compatible_routes": results})
+
+
+def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
+    """Best-effort merge of engagement counts into an asset result dict."""
+    try:
+        counts = ouro.assets.counts(asset_id)
+        if counts:
+            result["counts"] = {
+                "views": counts.get("views", 0),
+                "comments": counts.get("comments", 0),
+                "reactions": counts.get("reactions", 0),
+                "downloads": counts.get("downloads", 0),
+            }
+    except Exception:
+        log.debug("Failed to fetch counts for asset %s", asset_id, exc_info=True)
+
+
+def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
+    """Best-effort merge of provenance, connections, and tags into an asset result dict."""
+    try:
+        creation_action = ouro.assets.creation_actions(asset_id)
+        if creation_action:
+            result["creation_action"] = creation_action
+    except Exception:
+        log.debug("Failed to fetch creation action for %s", asset_id, exc_info=True)
+
+    try:
+        connections = ouro.assets.connections(asset_id)
+        if connections:
+            result["connections"] = connections
+    except Exception:
+        log.debug("Failed to fetch connections for %s", asset_id, exc_info=True)
+
+    try:
+        tags = ouro.assets.tags(asset_id)
+        if tags:
+            result["tags"] = tags
+    except Exception:
+        log.debug("Failed to fetch tags for %s", asset_id, exc_info=True)
+
+
+def _format_asset_detail(asset: Any, ouro: Any) -> dict:
     """Build a type-appropriate detail response for any asset."""
     base = format_asset_summary(asset)
 
+    asset_id = str(asset.id)
     asset_type = asset.asset_type
 
     if asset_type == "dataset":
         try:
-            schema = ouro.datasets.schema(str(asset.id))
+            schema = ouro.datasets.schema(asset_id)
             base["schema"] = schema
         except Exception:
             log.debug("Failed to fetch schema for dataset %s", asset.id, exc_info=True)
             base["schema"] = None
         try:
-            stats = ouro.datasets.stats(str(asset.id))
+            stats = ouro.datasets.stats(asset_id)
             base["stats"] = stats
         except Exception:
             log.debug("Failed to fetch stats for dataset %s", asset.id, exc_info=True)
@@ -228,7 +351,6 @@ def _format_asset_detail(asset, ouro) -> dict:
 
     elif asset_type in {"post", "comment"}:
         if asset.content:
-            # TODO: markdown version???
             base["content_text"] = asset.content.text
         else:
             base["content_text"] = None
@@ -245,7 +367,7 @@ def _format_asset_detail(asset, ouro) -> dict:
 
     elif asset_type == "service":
         try:
-            routes = ouro.services.read_routes(str(asset.id))
+            routes = ouro.services.read_routes(asset_id)
             base["routes"] = [
                 {
                     "id": str(r.id),
@@ -269,8 +391,7 @@ def _format_asset_detail(asset, ouro) -> dict:
             base["request_body"] = asset.route.request_body
             base["input_type"] = asset.route.input_type
             base["output_type"] = asset.route.output_type
-        if asset.monetization and asset.monetization != "none":
-            base["monetization"] = asset.monetization
-            base["price"] = asset.price
+
+    _enrich_provenance(base, ouro, asset_id)
 
     return base

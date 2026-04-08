@@ -13,6 +13,7 @@ from ouro_mcp.utils import (
     dump_json,
     resolve_team_policy,
     truncate_response,
+    user_summary,
 )
 
 
@@ -192,9 +193,9 @@ def register(mcp: FastMCP) -> None:
                 "visibility": item.get("visibility"),
                 "created_at": item.get("created_at"),
             }
-            author = item.get("user") or item.get("author")
-            if isinstance(author, dict):
-                entry["author"] = author.get("username")
+            user = user_summary(item)
+            if user:
+                entry["user"] = user
             desc = item.get("description")
             if desc and isinstance(desc, dict):
                 entry["description"] = desc.get("text", "")[:200]
