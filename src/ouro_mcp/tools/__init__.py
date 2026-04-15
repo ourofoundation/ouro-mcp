@@ -15,6 +15,7 @@ def register_all_tools(mcp: FastMCP) -> None:
         notifications,
         organizations,
         posts,
+        quests,
         services,
         teams,
         users,
@@ -26,6 +27,7 @@ def register_all_tools(mcp: FastMCP) -> None:
     users.register(mcp)
     datasets.register(mcp)
     posts.register(mcp)
+    quests.register(mcp)
     comments.register(mcp)
     conversations.register(mcp)
     files.register(mcp)

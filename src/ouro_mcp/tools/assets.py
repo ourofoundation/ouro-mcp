@@ -66,7 +66,7 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         query: Annotated[str, Field(description="Search query or UUID for direct lookup")] = "",
         asset_type: Annotated[
-            Optional[str], Field(description='"dataset" | "post" | "file" | "service" | "route"')
+            Optional[str], Field(description='"dataset" | "post" | "file" | "service" | "route" | "quest"')
         ] = None,
         scope: Annotated[Optional[str], Field(description='"personal" | "org" | "global" | "all"')] = None,
         org_id: Annotated[Optional[str], Field(description="Organization UUID")] = None,
@@ -83,6 +83,14 @@ def register(mcp: FastMCP) -> None:
             Optional[Any],
             Field(description='Metadata key/value filters as JSON object or string, e.g. \'{"key": "value"}\''),
         ] = None,
+        sort: Annotated[
+            Optional[str],
+            Field(description='"relevant" (default with query) | "recent" (default without query) | "popular" | "updated"'),
+        ] = None,
+        time_window: Annotated[
+            Optional[str],
+            Field(description='For sort="popular": "day" | "week" | "month" (default) | "all"'),
+        ] = None,
         limit: Annotated[int, Field(description="Max results to return")] = 20,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
@@ -90,6 +98,8 @@ def register(mcp: FastMCP) -> None:
 
         Without a query: returns recent assets by creation date.
         With a UUID as query: direct asset lookup.
+        Use sort="popular" to find the most engaged assets (by views, reactions, comments, downloads, uses).
+        Combine with time_window to scope popularity to a time period.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -122,6 +132,8 @@ def register(mcp: FastMCP) -> None:
                 user_id=user_id,
                 visibility=visibility,
                 metadata_filters=merged_metadata or None,
+                sort=sort,
+                time_window=time_window,
             ),
         )
 
@@ -185,6 +197,8 @@ def register(mcp: FastMCP) -> None:
             ouro.posts.delete(id)
         elif asset_type == "file":
             ouro.files.delete(id)
+        elif asset_type == "quest":
+            ouro.quests.delete(id)
         else:
             return dump_json(
                 {
@@ -387,6 +401,31 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             base["request_body"] = asset.route.request_body
             base["input_type"] = asset.route.input_type
             base["output_type"] = asset.route.output_type
+
+    elif asset_type == "quest":
+        if asset.quest:
+            base["quest"] = {
+                "type": asset.quest.type,
+                "status": asset.quest.status,
+                "max_xp_per_contributor": asset.quest.max_xp_per_contributor,
+            }
+        if asset.items:
+            base["items"] = [
+                {
+                    "id": str(i.id),
+                    "description": i.description,
+                    "status": i.status,
+                    **({"notes": i.notes} if i.notes else {}),
+                    **({"assignee_id": str(i.assignee_id)} if i.assignee_id else {}),
+                }
+                for i in asset.items
+            ]
+        if asset.progress:
+            base["progress"] = {
+                "total": asset.progress.total,
+                "done": asset.progress.done,
+                "remaining": asset.progress.remaining,
+            }
 
     _enrich_provenance(base, ouro, asset_id)
 
