@@ -10,15 +10,11 @@ from dataclasses import dataclass
 
 from dotenv import find_dotenv, load_dotenv
 from mcp.server.fastmcp import FastMCP
-from ouro import Ouro
-
 from ouro_mcp import __version__
-from ouro_mcp.constants import (
-    DEFAULT_HTTP_PORT,
-    ENV_OURO_API_KEY,
-    ENV_OURO_BASE_URL,
-)
+from ouro_mcp.constants import DEFAULT_HTTP_PORT, ENV_OURO_API_KEY, ENV_OURO_BASE_URL
 from ouro_mcp.logging_config import apply_ouro_mcp_logging, resolve_fastmcp_log_level
+
+from ouro import Ouro
 
 load_dotenv(find_dotenv(usecwd=True), override=True)
 
@@ -42,7 +38,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[OuroContext]:
     if not api_key:
         raise RuntimeError(
             f"{ENV_OURO_API_KEY} environment variable is required but not set. "
-            "Get your API key from https://ouro.foundation/settings/api."
+            "Get your API key from https://ouro.foundation/settings/api-keys."
         )
 
     kwargs = {"api_key": api_key}
@@ -97,16 +93,26 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - **Mention users**: @username
 - **Link to assets**: prefer typed markdown shorthands `[label](post:<uuid>)`, `[label](file:<uuid>)`, `[label](dataset:<uuid>)`, `[label](route:<uuid>)`, `[label](service:<uuid>)`. Use `asset:<uuid>` only when the asset type is unknown. Do not invent URL paths or placeholder segments such as `entity`.
 - **Embed assets** (block-level): ```assetComponent
-  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card", "visualizationId": "<uuid>|null"}
-  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets. For datasets, set visualizationId to render a specific saved dataset view. Use the exact keys `id`, `assetType`, and `viewMode` here; do not use legacy embed keys like `asset_id`, `asset_type`, or `type`.
+  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card", "displayConfig": {"visualizationId": "<uuid>|null", "actionId": "<uuid>|null"}}
+  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets. `displayConfig` is optional and carries type-specific display settings: for datasets, set `visualizationId` to render a specific saved dataset view; for routes, set `actionId` to preview a specific action's status, logs, and output. Legacy flat `visualizationId` is still supported but prefer `displayConfig`. Use the exact keys `id`, `assetType`, and `viewMode` here; do not use legacy embed keys like `asset_id`, `asset_type`, or `type`.
 - **Standard markdown**: headings, **bold**, *italic*, lists, code blocks, tables, links
 - **Math**: $inline$ and $$display$$ LaTeX
 
 **Conversations and messages**:
 - Use list_conversations() to see conversations you belong to.
-- Use get_conversation(id) to inspect conversation details and members.
+- Use get_conversation(conversation_id=...) to inspect conversation details and members.
 - Use create_conversation(member_user_ids=...) to start a new conversation.
 - Use send_message(conversation_id, text) and list_messages(conversation_id, ...) for chat.
+
+**Route actions**:
+- Use get_asset(route_id, detail="full") to inspect a route's schema before execution.
+- For asset inputs, pass asset IDs via execute_route(input_assets={...}) keyed by
+  the route's input asset names. Do not build file/dataset/post body objects by hand;
+  Ouro resolves asset IDs into the service-facing request body.
+- Use execute_route(..., dry_run=true) to validate parameters without running the route.
+- execute_route returns an action_id and embed_markdown; use get_action(action_id) to inspect status/output.
+- Use list_route_actions(route_id=...) to find previous executions and get ready-to-use action embeds.
+- Use get_action_logs(action_id=...) when you need execution logs.
 """.strip()
 
 _mcp_log_level = resolve_fastmcp_log_level()

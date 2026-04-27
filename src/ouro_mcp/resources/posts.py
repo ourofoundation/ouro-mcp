@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import json
-
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import format_asset_summary
+from ouro_mcp.utils import dump_json, format_asset_summary
 
 
 def register(mcp: FastMCP) -> None:
@@ -25,4 +23,4 @@ def register(mcp: FastMCP) -> None:
         result = format_asset_summary(post)
         result["content_text"] = post.content.text if post.content else None
 
-        return json.dumps(result)
+        return dump_json(result)

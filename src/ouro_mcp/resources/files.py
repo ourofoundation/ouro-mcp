@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
-
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import file_result
+from ouro_mcp.utils import dump_json, file_result
 
 
 def register(mcp: FastMCP) -> None:
@@ -22,4 +20,4 @@ def register(mcp: FastMCP) -> None:
     def get_file(id: str, ctx: Context) -> str:
         ouro = ctx.request_context.lifespan_context.ouro
         file = ouro.files.retrieve(id)
-        return json.dumps(file_result(file))
+        return dump_json(file_result(file))

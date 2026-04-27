@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Any, Optional
 
 from pydantic import Field
@@ -11,6 +10,7 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
     dump_json,
+    list_response,
     resolve_team_policy,
     truncate_response,
     user_summary,
@@ -153,7 +153,7 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        return dump_json({"results": results})
+        return dump_json(list_response(results))
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -201,12 +201,12 @@ def register(mcp: FastMCP) -> None:
                 entry["description"] = desc.get("text", "")[:200]
             results.append(entry)
 
-        payload: dict[str, Any] = {
-            "results": results,
-            **extra,
-            "total": pagination.get("total"),
-            "hasMore": pagination.get("hasMore", len(results) == limit),
-        }
+        payload = list_response(
+            results,
+            pagination=pagination,
+            limit=limit,
+            extra=extra,
+        )
         return truncate_response(dump_json(payload))
 
     @mcp.tool(annotations={"idempotentHint": True})

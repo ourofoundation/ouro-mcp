@@ -61,7 +61,7 @@ def register(mcp: FastMCP) -> None:
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
-                    '{"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}.'
+                    '{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card","displayConfig":{...}}.'
                 )
             ),
         ] = None,
@@ -75,8 +75,10 @@ def register(mcp: FastMCP) -> None:
         - Inline links: prefer [label](post:|file:|dataset:|route:|service:<uuid>). Use [label](asset:<uuid>) only when the asset type is unknown. Do not invent URL paths.
         For embedded assets, use:
         ```assetComponent
-        {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}
+        {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
         ```
+        displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
+        For routes, set actionId to preview a specific action's status, logs, and output.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -115,7 +117,7 @@ def register(mcp: FastMCP) -> None:
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
-                    '{"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}.'
+                    '{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card","displayConfig":{...}}.'
                 )
             ),
         ] = None,
@@ -134,8 +136,10 @@ def register(mcp: FastMCP) -> None:
 
         For embedded assets, use:
         ```assetComponent
-        {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}
+        {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
         ```
+        displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
+        For routes, set actionId to preview a specific action's status, logs, and output.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 

@@ -129,18 +129,33 @@ def register(mcp: FastMCP) -> None:
     def query_dataset(
         dataset_id: Annotated[str, Field(description="Dataset UUID")],
         ctx: Context,
-        limit: Annotated[int, Field(description="Max rows to return")] = 100,
+        limit: Annotated[int, Field(description="Max rows to return (1-1000)")] = 100,
         offset: Annotated[int, Field(description="Row offset for pagination")] = 0,
     ) -> str:
-        """Query a dataset's contents as JSON records. Use get_asset(id) first to see schema."""
+        """Query a dataset's contents as JSON records.
+
+        Pages server-side so large datasets don't load fully into memory.
+        Use get_asset(id) first to see the column schema; call with
+        increasing ``offset`` to walk through subsequent pages while
+        ``hasMore`` is true.
+        """
+        if limit <= 0 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000.")
+        if offset < 0:
+            raise ValueError("offset must be non-negative.")
+
         ouro = ctx.request_context.lifespan_context.ouro
 
-        df = ouro.datasets.query(dataset_id)
-        total_rows = len(df)
+        page = ouro.datasets.query(
+            dataset_id,
+            limit=limit,
+            offset=offset,
+            with_pagination=True,
+        )
+        df = page["data"]
+        pagination = page.get("pagination") or {}
 
-        page = df.iloc[offset : offset + limit]
-        rows = page.to_dict(orient="records")
-
+        rows = df.to_dict(orient="records")
         for row in rows:
             for k, v in row.items():
                 if pd.isna(v):
@@ -151,14 +166,15 @@ def register(mcp: FastMCP) -> None:
         result = dump_json(
             {
                 "rows": rows,
-                "total": total_rows,
-                "hasMore": (offset + limit) < total_rows,
+                "offset": offset,
+                "limit": limit,
+                "hasMore": bool(pagination.get("hasMore")),
             }
         )
 
         return truncate_response(
             result,
-            context="Use offset parameter to load more rows.",
+            context="Use the offset parameter to load more rows.",
         )
 
     @mcp.tool(annotations={"idempotentHint": False})

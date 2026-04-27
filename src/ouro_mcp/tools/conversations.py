@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.resources.conversations import Messages
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import content_from_markdown, dump_json, truncate_response
+from ouro_mcp.utils import (
+    content_from_markdown,
+    dump_json,
+    list_response,
+    truncate_response,
+)
 from pydantic import Field
 
 
@@ -39,9 +43,15 @@ def _conversation_summary(conversation: Any) -> dict:
         "id": str(getattr(conversation, "id", "")),
         "name": getattr(conversation, "name", None),
         "summary": getattr(conversation, "summary", None),
-        "created_at": (conversation.created_at.isoformat() if getattr(conversation, "created_at", None) else None),
+        "created_at": (
+            conversation.created_at.isoformat()
+            if getattr(conversation, "created_at", None)
+            else None
+        ),
         "last_updated": (
-            conversation.last_updated.isoformat() if getattr(conversation, "last_updated", None) else None
+            conversation.last_updated.isoformat()
+            if getattr(conversation, "last_updated", None)
+            else None
         ),
         "member_user_ids": [str(member) for member in (members or [])],
     }
@@ -66,38 +76,79 @@ def _message_summary(message: dict) -> dict:
     }
 
 
+def _list_conversations(
+    ouro: Any,
+    *,
+    org_id: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
+    page = ouro.conversations.list(
+        org_id=org_id,
+        limit=limit,
+        offset=offset,
+        with_pagination=True,
+    )
+    conversations = page.get("data") or []
+    pagination = page.get("pagination")
+
+    results = [_conversation_summary(conversation) for conversation in conversations]
+    return truncate_response(
+        dump_json(list_response(results, pagination=pagination, limit=limit))
+    )
+
+
+def _get_conversation(ouro: Any, conversation_id: str) -> str:
+    conversation = ouro.conversations.retrieve(conversation_id)
+    return dump_json(_conversation_summary(conversation))
+
+
 def register(mcp: FastMCP) -> None:
+    @mcp.tool(annotations={"readOnlyHint": True})
+    @handle_ouro_errors
+    def list_conversations(
+        ctx: Context,
+        org_id: Annotated[
+            Optional[str],
+            Field(description="Filter by organization UUID"),
+        ] = None,
+        limit: Annotated[int, Field(description="Max results to return")] = 20,
+        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+    ) -> str:
+        """List conversations you belong to."""
+        ouro = ctx.request_context.lifespan_context.ouro
+        return _list_conversations(ouro, org_id=org_id, limit=limit, offset=offset)
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    @handle_ouro_errors
+    def get_conversation(
+        conversation_id: Annotated[str, Field(description="Conversation UUID")],
+        ctx: Context,
+    ) -> str:
+        """Get one conversation by ID, including member user IDs."""
+        ouro = ctx.request_context.lifespan_context.ouro
+        return _get_conversation(ouro, conversation_id)
+
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_conversations(
         ctx: Context,
-        id: Annotated[Optional[str], Field(description="Conversation UUID for single lookup")] = None,
-        org_id: Annotated[Optional[str], Field(description="Filter by organization UUID")] = None,
+        id: Annotated[
+            Optional[str],
+            Field(description="Conversation UUID for single lookup"),
+        ] = None,
+        org_id: Annotated[
+            Optional[str],
+            Field(description="Filter by organization UUID"),
+        ] = None,
         limit: Annotated[int, Field(description="Max results to return")] = 20,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
-        """Get a conversation by ID, or list conversations you belong to."""
+        """Compatibility wrapper. Prefer list_conversations() or get_conversation()."""
         ouro = ctx.request_context.lifespan_context.ouro
-
         if id:
-            conversation = ouro.conversations.retrieve(id)
-            return dump_json(_conversation_summary(conversation))
-
-        conversations = ouro.conversations.list(
-            org_id=org_id,
-            limit=limit,
-            offset=offset,
-        )
-
-        results = [_conversation_summary(conversation) for conversation in conversations]
-        return truncate_response(
-            dump_json(
-                {
-                    "results": results,
-                    "hasMore": len(results) == limit,
-                }
-            )
-        )
+            return _get_conversation(ouro, id)
+        return _list_conversations(ouro, org_id=org_id, limit=limit, offset=offset)
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -175,23 +226,39 @@ def register(mcp: FastMCP) -> None:
     def list_messages(
         conversation_id: Annotated[str, Field(description="Conversation UUID")],
         ctx: Context,
-        limit: Annotated[int, Field(description="Max messages to return")] = 20,
-        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(description="Max messages to return (1-200)")] = 20,
+        before: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "ISO timestamp cursor: return only messages strictly older than this. "
+                    "Pass the `created_at` of the oldest message in the previous page to "
+                    "load the next page. Omit for the newest page."
+                )
+            ),
+        ] = None,
     ) -> str:
-        """List messages in a conversation with pagination."""
+        """List messages in a conversation, newest-first.
+
+        The backend uses a `before` timestamp cursor (not offset/limit) — page
+        by taking the `created_at` of the oldest message in the previous page
+        and passing it as `before` on the next call.
+        """
+        if limit <= 0 or limit > 200:
+            raise ValueError("limit must be between 1 and 200.")
+
         ouro = ctx.request_context.lifespan_context.ouro
 
-        messages = Messages(ouro).list(
+        page = Messages(ouro).list(
             conversation_id=conversation_id,
             limit=limit,
-            offset=offset,
+            before=before,
+            with_pagination=True,
         )
+        messages = page.get("data") or []
+        pagination = page.get("pagination")
+
         results = [_message_summary(message) for message in messages]
         return truncate_response(
-            dump_json(
-                {
-                    "results": results,
-                    "hasMore": len(results) == limit,
-                }
-            )
+            dump_json(list_response(results, pagination=pagination, limit=limit))
         )

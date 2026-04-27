@@ -12,8 +12,11 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
     format_asset_summary,
+    list_response,
     optional_kwargs,
     org_summary,
+    route_input_assets_summary,
+    route_request_body_without_input_assets,
     team_summary,
     truncate_response,
     user_summary,
@@ -49,6 +52,13 @@ def register(mcp: FastMCP) -> None:
         Use detail="full" to read its content (e.g. post body, dataset schema).
         Both levels include engagement counts (views, comments, reactions, downloads).
         """
+        allowed_detail = {"summary", "full"}
+        if detail not in allowed_detail:
+            raise ValueError(
+                f"Invalid detail={detail!r}. Must be one of: "
+                f"{sorted(allowed_detail)}."
+            )
+
         ouro = ctx.request_context.lifespan_context.ouro
         asset = ouro.assets.retrieve(id)
         if detail == "full":
@@ -169,11 +179,11 @@ def register(mcp: FastMCP) -> None:
             assets.append(row)
 
         return dump_json(
-            {
-                "results": assets,
-                "total": response.get("pagination", {}).get("total"),
-                "hasMore": response.get("pagination", {}).get("hasMore", len(assets) == limit),
-            }
+            list_response(
+                assets,
+                pagination=response.get("pagination") or {},
+                limit=limit,
+            )
         )
 
     @mcp.tool(
@@ -268,14 +278,38 @@ def register(mcp: FastMCP) -> None:
     def get_compatible_routes(
         id: Annotated[str, Field(description="UUID of the asset")],
         ctx: Context,
+        sort: Annotated[
+            str,
+            Field(description='"popular" (default, most used first) | "recent" | "updated"'),
+        ] = "popular",
+        limit: Annotated[int, Field(description="Max routes to return (1-200)")] = 20,
+        offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
         """Find routes that can operate on this asset.
 
         Returns routes whose input type is compatible with the given asset,
-        answering the question "what can I do with this asset?".
+        answering the question "what can I do with this asset?". Defaults to
+        popularity order so the most-used routes appear first.
         """
+        allowed_sort = {"popular", "recent", "updated"}
+        if sort not in allowed_sort:
+            raise ValueError(
+                f"Invalid sort={sort!r}. Must be one of: {sorted(allowed_sort)}."
+            )
+        if limit <= 0 or limit > 200:
+            raise ValueError("limit must be between 1 and 200.")
+        if offset < 0:
+            raise ValueError("offset must be non-negative.")
+
         ouro = ctx.request_context.lifespan_context.ouro
-        routes = ouro.assets.compatible_routes(id)
+        page = ouro.assets.compatible_routes(
+            id,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            with_pagination=True,
+        )
+        routes = page.get("data") or []
         results = []
         for r in routes:
             entry: dict[str, Any] = {
@@ -294,7 +328,14 @@ def register(mcp: FastMCP) -> None:
                 entry["method"] = route_data.get("method")
                 entry["path"] = route_data.get("path")
             results.append(entry)
-        return dump_json({"asset_id": id, "compatible_routes": results})
+        response = list_response(
+            results,
+            pagination=page.get("pagination") or {},
+            limit=limit,
+            extra={"asset_id": id, "sort": sort},
+        )
+        response["compatible_routes"] = results
+        return dump_json(response)
 
 
 def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
@@ -398,7 +439,8 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             base["path"] = asset.route.path
             base["route_description"] = asset.route.description
             base["parameters"] = asset.route.parameters
-            base["request_body"] = asset.route.request_body
+            base["request_body"] = route_request_body_without_input_assets(asset.route)
+            base["input_assets"] = route_input_assets_summary(asset.route)
             base["input_type"] = asset.route.input_type
             base["output_type"] = asset.route.output_type
 

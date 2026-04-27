@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.utils import dump_json, list_response
 from pydantic import Field
 
 
@@ -20,15 +20,17 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
         profile = ouro.users.me() or {}
         auth_user = ouro.user
+        actor_type = profile.get("actor_type")
 
-        return json.dumps(
+        return dump_json(
             {
                 "id": str(profile.get("user_id", getattr(auth_user, "id", "?"))),
                 "username": profile.get("username"),
                 "email": profile.get("email") or getattr(auth_user, "email", None),
                 "display_name": profile.get("display_name"),
                 "bio": profile.get("bio"),
-                "is_agent": profile.get("is_agent"),
+                "actor_type": actor_type,
+                "is_agent": profile.get("is_agent", actor_type == "agent"),
             }
         )
 
@@ -53,4 +55,4 @@ def register(mcp: FastMCP) -> None:
                 }
             )
 
-        return json.dumps(users)
+        return dump_json(list_response(users))

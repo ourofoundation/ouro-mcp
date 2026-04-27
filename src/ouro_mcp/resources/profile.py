@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
-
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.utils import dump_json
 
 
 def register(mcp: FastMCP) -> None:
@@ -40,4 +39,4 @@ def register(mcp: FastMCP) -> None:
             for org in orgs
         ]
 
-        return json.dumps(profile)
+        return dump_json(profile)

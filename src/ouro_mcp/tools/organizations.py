@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.utils import dump_json, list_response
 
 
 def register(mcp: FastMCP) -> None:
@@ -46,4 +46,4 @@ def register(mcp: FastMCP) -> None:
                     entry["membership_type"] = membership.get("membership_type")
             results.append(entry)
 
-        return json.dumps({"results": results})
+        return dump_json(list_response(results))

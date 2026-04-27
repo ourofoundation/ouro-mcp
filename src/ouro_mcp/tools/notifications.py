@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Optional
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, truncate_response
+from ouro_mcp.utils import dump_json, list_response, truncate_response
 
 
 def register(mcp: FastMCP) -> None:
@@ -62,13 +61,11 @@ def register(mcp: FastMCP) -> None:
 
         return truncate_response(
             dump_json(
-                {
-                    "results": results,
-                    "total": response.get("pagination", {}).get("total"),
-                    "hasMore": response.get("pagination", {}).get(
-                        "hasMore", len(results) == limit
-                    ),
-                }
+                list_response(
+                    results,
+                    pagination=response.get("pagination") or {},
+                    limit=limit,
+                )
             )
         )
 

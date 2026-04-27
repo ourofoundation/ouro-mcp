@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import format_asset_summary
+from ouro_mcp.utils import dump_json, format_asset_summary
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ def register(mcp: FastMCP) -> None:
         if dataset.preview:
             result["preview"] = dataset.preview[:5]
 
-        return json.dumps(result)
+        return dump_json(result)
 
     @mcp.resource(
         "ouro://datasets/{id}/schema",
@@ -56,4 +55,4 @@ def register(mcp: FastMCP) -> None:
     def get_dataset_schema(id: str, ctx: Context) -> str:
         ouro = ctx.request_context.lifespan_context.ouro
         schema = ouro.datasets.schema(id)
-        return json.dumps({"dataset_id": id, "schema": schema})
+        return dump_json({"dataset_id": id, "schema": schema})

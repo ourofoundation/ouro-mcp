@@ -4,13 +4,12 @@ import json
 import logging
 import os
 import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from mcp import types as mcp_types
-from mcp.server.fastmcp import Context
 from ouro_mcp.constants import ENV_OURO_MCP_TIMEZONE, ENV_WORKSPACE_ROOT, MAX_RESPONSE_SIZE
 
 log = logging.getLogger(__name__)
@@ -110,8 +109,65 @@ def enrich_timestamps(data: Any, tz_name: str | None = None) -> Any:
 
 
 def dump_json(data: Any, **kwargs: Any) -> str:
-    """JSON-encode a payload after enriching timestamp fields for local display."""
-    return json.dumps(enrich_timestamps(data), **kwargs)
+    """JSON-encode a payload after enriching timestamp fields for local display.
+
+    This is the canonical tool-response serializer. Prefer it over
+    ``json.dumps`` so every response picks up local-time siblings when
+    ``OURO_MCP_TIMEZONE`` is set.
+    """
+    return json.dumps(enrich_timestamps(data), default=str, **kwargs)
+
+
+def list_response(
+    results: list,
+    *,
+    pagination: dict | None = None,
+    limit: int | None = None,
+    total: int | None = None,
+    has_more: bool | None = None,
+    extra: dict | None = None,
+) -> dict:
+    """Build the canonical list-response envelope used across all MCP tools.
+
+    Shape: ``{"results": [...], "total": int | None, "hasMore": bool,
+    "nextCursor": Any | None, **extra}``.
+
+    Precedence for ``hasMore`` / ``total`` / ``nextCursor``:
+      1. Explicit ``has_more`` / ``total`` kwargs (caller already resolved them).
+      2. Server-provided values from the ``pagination`` envelope
+         (``pagination["hasMore"]`` / ``["total"]`` / ``["nextCursor"]``).
+      3. Fallback: ``hasMore=False``, ``total=None``, ``nextCursor=None``.
+
+    There is no ``len(results) == limit`` heuristic — if the server didn't
+    give us a definitive ``hasMore`` and the caller didn't either, we say
+    there's nothing more. ``limit`` is still accepted for symmetry with the
+    callsite signature but is not consulted when deriving ``hasMore``.
+    """
+    pag = pagination or {}
+
+    resolved_total = total if total is not None else pag.get("total")
+
+    if has_more is not None:
+        resolved_has_more = bool(has_more)
+    elif "hasMore" in pag:
+        resolved_has_more = bool(pag["hasMore"])
+    else:
+        resolved_has_more = False
+
+    resolved_next_cursor = pag.get("nextCursor")
+
+    payload: dict[str, Any] = {
+        "results": results,
+        "total": resolved_total,
+        "hasMore": resolved_has_more,
+    }
+    if resolved_next_cursor is not None:
+        payload["nextCursor"] = resolved_next_cursor
+    if limit is not None:
+        payload["limit"] = limit
+    if extra:
+        payload.update(extra)
+    return payload
 
 
 def resolve_local_path(raw: str) -> Path:
@@ -156,10 +212,14 @@ def user_summary(source: Any) -> dict | None:
         or _getv(user_obj, "id")
         or ""
     )
+    is_agent = _getv(user_obj, "is_agent", None)
+    if is_agent is None:
+        is_agent = _getv(user_obj, "actor_type") == "agent"
+
     return {
         "id": str(user_id),
         "username": username,
-        "is_agent": _getv(user_obj, "is_agent", False),
+        "is_agent": bool(is_agent),
     }
 
 
@@ -246,6 +306,67 @@ def optional_kwargs(**kw: Any) -> dict:
     return {k: v for k, v in kw.items() if v is not None}
 
 
+def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
+    """Return the simple keyed asset-input contract an agent should use."""
+    raw = _getv(route, "input_assets") or {}
+    result: dict[str, Any] = {}
+
+    if isinstance(raw, dict):
+        for name, config in raw.items():
+            config = config if isinstance(config, dict) else {}
+            result[name] = optional_kwargs(
+                asset_type=config.get("asset_type") or config.get("assetType"),
+                input_filter=config.get("input_filter") or config.get("inputFilter"),
+                input_file_extension=config.get("input_file_extension")
+                or config.get("inputFileExtension"),
+                input_file_extensions=config.get("input_file_extensions")
+                or config.get("inputFileExtensions"),
+                body_path=config.get("body_path") or config.get("bodyPath") or name,
+            )
+
+    input_type = _getv(route, "input_type")
+    if input_type and not result:
+        result[str(input_type)] = {"asset_type": input_type, "body_path": str(input_type)}
+
+    return result or None
+
+
+def route_request_body_without_input_assets(route: Any) -> Any:
+    """Hide Ouro-resolved asset object schemas from route execution metadata.
+
+    Agents should pass IDs via ``input_assets``/``input_asset``. The backend
+    expands those IDs into the service-facing body object.
+    """
+    request_body = _getv(route, "request_body")
+    if not isinstance(request_body, dict):
+        return request_body
+
+    cleaned = deepcopy(request_body)
+    schema = (
+        cleaned.get("content", {})
+        .get("application/json", {})
+        .get("schema")
+    )
+    if not isinstance(schema, dict):
+        return cleaned
+
+    handled_keys = set((route_input_assets_summary(route) or {}).keys())
+    input_type = _getv(route, "input_type")
+    if input_type:
+        handled_keys.add(str(input_type))
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for key in handled_keys:
+            properties.pop(key, None)
+
+    required = schema.get("required")
+    if isinstance(required, list):
+        schema["required"] = [key for key in required if key not in handled_keys]
+
+    return cleaned
+
+
 def normalize_markdown_input(markdown: str) -> str:
     """Normalize common shell-escaped markdown sequences.
 
@@ -294,77 +415,3 @@ def resolve_team_policy(team: dict, field: str, default: str = "any") -> str:
         return value
     org = team.get("organization") or {}
     return org.get(field) or default
-
-
-_ELICITATION_CAP = mcp_types.ClientCapabilities(elicitation=mcp_types.ElicitationCapability())
-
-
-async def elicit_asset_location(
-    ctx: Context,
-) -> tuple[str | None, str | None]:
-    """Ask the user where an asset should be published, if the client supports elicitation.
-
-    Returns (org_id, team_id). Both are None when elicitation is unavailable,
-    the user declines, or there are no teams to choose from.
-    """
-    if not ctx.session.check_client_capability(_ELICITATION_CAP):
-        return None, None
-
-    ouro = ctx.request_context.lifespan_context.ouro
-
-    try:
-        teams = ouro.teams.list(joined=True)
-    except Exception:
-        log.debug("Failed to fetch teams for elicitation", exc_info=True)
-        return None, None
-
-    if not teams:
-        return None, None
-
-    teams = [t for t in teams if resolve_team_policy(t, "source_policy") != "web_only"]
-
-    if not teams:
-        return None, None
-
-    if len(teams) == 1:
-        team = teams[0]
-        return str(team.get("org_id", "")), str(team.get("id", ""))
-
-    team_to_org: dict[str, str] = {}
-    options = []
-    for team in teams:
-        team_id = str(team.get("id", ""))
-        org_id = str(team.get("org_id", ""))
-        team_name = team.get("name", "Unknown")
-        org = team.get("organization") or {}
-        org_name = org.get("name") or org.get("display_name") or "Unknown Org"
-
-        options.append({"const": team_id, "title": f"{org_name} / {team_name}"})
-        team_to_org[team_id] = org_id
-
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "team": {
-                "type": "string",
-                "title": "Team",
-                "description": "Choose which team to publish this asset in",
-                "oneOf": options,
-            },
-        },
-        "required": ["team"],
-    }
-
-    result = await ctx.session.elicit_form(
-        message="Where should this asset be published?",
-        requestedSchema=schema,
-        related_request_id=ctx.request_id,
-    )
-
-    if result.action == "accept" and result.content:
-        selected_team_id = str(result.content.get("team", ""))
-        selected_org_id = team_to_org.get(selected_team_id)
-        if selected_org_id and selected_team_id:
-            return selected_org_id, selected_team_id
-
-    return None, None

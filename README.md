@@ -10,27 +10,35 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 - **Discover and execute API routes** — call any user-published API on the platform
 - **Delete assets** they own
 
-## Tools (36)
+## Tools (52)
 
 ### Assets & Discovery
 
 | Tool | Description |
 |---|---|
 | `get_asset` | Get any asset by ID with type-appropriate detail (schema, content, routes, etc.) |
-| `search_assets` | Search datasets, posts, files, services, and routes with filters |
-| `search_users` | Search for users by name or username |
+| `search_assets` | Search datasets, posts, files, services, routes, and quests with filters |
+| `get_asset_connections` | Get the connection graph (references, components, derivatives, lineage) for an asset |
+| `get_compatible_routes` | Find routes that can operate on a given asset ("what can I do with this?") |
 | `download_asset` | Download a file, dataset, or post to a local path |
-| `delete_asset` | Delete an asset by ID (auto-detects type) |
+| `delete_asset` | Delete an asset by ID (auto-detects type; supports dataset / post / file / quest) |
+
+### Users
+
+| Tool | Description |
+|---|---|
+| `get_me` | Get the authenticated user's own profile (user ID, username, email) |
+| `search_users` | Search for users by name or username |
 
 ### Datasets
 
 | Tool | Description |
 |---|---|
 | `query_dataset` | Query a dataset's rows as JSON with pagination |
-| `create_dataset` | Create a dataset from JSON records |
+| `create_dataset` | Create a dataset from JSON records or a local path (CSV / JSON / JSONL / Parquet) |
 | `update_dataset` | Update a dataset's data or metadata |
 | `list_dataset_views` | List saved views for a dataset |
-| `create_dataset_view` | Create a saved dataset view |
+| `create_dataset_view` | Create a saved dataset view (chart, table, etc.) |
 | `update_dataset_view` | Update a saved dataset view |
 | `delete_dataset_view` | Delete a saved dataset view |
 
@@ -56,24 +64,45 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `create_comment` | Create a comment or reply from extended markdown |
 | `update_comment` | Update a comment's content |
 
+### Conversations
+
+| Tool | Description |
+|---|---|
+| `get_conversations` | Get a conversation by ID, or list conversations you belong to |
+| `create_conversation` | Create a conversation with the specified member user IDs |
+| `send_message` | Send a message to a conversation using extended Ouro markdown |
+| `list_messages` | List messages in a conversation with pagination |
+
 ### Services & Routes
 
 | Tool | Description |
 |---|---|
-| `execute_route` | Execute any API route on Ouro (supports dry_run) |
+| `execute_route` | Execute an API route on Ouro (supports `dry_run`, async polling, `timeout`) |
+| `get_action` | Check the status of a route action (poll when `execute_route` returns `pending`) |
+
+### Quests
+
+| Tool | Description |
+|---|---|
+| `create_quest` | Create a new quest with optional task items |
+| `update_quest` | Update a quest's description or metadata |
+| `list_quest_items` | List items for a quest with status and progress |
+| `create_quest_items` | Batch-add items to an existing quest |
+| `update_quest_item` | Update an item's metadata or status |
+| `complete_quest_item` | Self-complete a quest item (creates an auto-accepted entry) |
+| `delete_quest_item` | Remove an item from a quest |
 
 ### Organizations & Teams
 
 | Tool | Description |
 |---|---|
-| `get_organizations` | List your organizations or discover joinable ones |
-| `get_teams` | List your teams or discover public teams in an org |
-| `get_team` | Get detailed team info including members |
-| `get_team_unreads` | Get unread count plus paginated unread asset previews for one team |
-| `get_team_activity` | Browse a team's activity feed |
-| `update_team` | Update a team's metadata and policies |
-| `join_team` | Join a team |
-| `leave_team` | Leave a team |
+| `get_organizations` | List organizations (yours or discover joinable ones) |
+| `get_teams` | List your teams, discover public teams in an org, or get detail for a single team |
+| `create_team` | Create a new team in an organization |
+| `update_team` | Update a team's name, description, visibility, default_role, or policies |
+| `get_team_feed` | Browse a team's activity feed or unread items |
+| `join_team` | Join a team (requires membership in the team's organization) |
+| `leave_team` | Leave a team you are currently a member of |
 
 ### Money (BTC & USD)
 
@@ -81,10 +110,10 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 |---|---|
 | `get_balance` | Get wallet balance (BTC sats or USD cents) |
 | `get_transactions` | Get transaction history |
-| `unlock_asset` | Purchase a paid asset |
+| `unlock_asset` | Purchase a paid asset (grants permanent read access) |
 | `send_money` | Send BTC or USD to another user |
 | `get_deposit_address` | Get a Bitcoin L1 deposit address |
-| `get_usage_history` | Get usage-based billing history (USD) |
+| `get_usage_history` | Get usage-based billing history (USD) for pay-per-use route calls |
 | `get_pending_earnings` | Get pending creator earnings (USD) |
 | `add_funds` | Get instructions for adding USD funds |
 
