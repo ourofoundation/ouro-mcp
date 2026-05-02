@@ -40,7 +40,7 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     '"summary" (default) returns name, description, metadata, and engagement counts. '
                     '"full" also includes type-specific content '
-                    "(post body, dataset schema/stats, file download URL, service routes, route parameters), "
+                    "(post body, dataset schema/stats, file download URL, service routes, route execution schemas), "
                     "plus provenance (creation action), connections, and tags."
                 )
             ),
@@ -266,8 +266,8 @@ def register(mcp: FastMCP) -> None:
         """Get the connection graph for an asset.
 
         Returns relationships like references, components, derivatives,
-        action inputs/outputs, and replicators. Useful for understanding
-        how assets relate to each other and navigating lineage.
+        and action inputs/outputs. Useful for understanding how assets
+        relate to each other and navigating lineage.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         connections = ouro.assets.connections(id)
@@ -323,10 +323,6 @@ def register(mcp: FastMCP) -> None:
                     entry["description"] = desc.get("text", "")[:200]
                 else:
                     entry["description"] = str(desc)[:200]
-            route_data = r.get("route") or {}
-            if route_data:
-                entry["method"] = route_data.get("method")
-                entry["path"] = route_data.get("path")
             results.append(entry)
         response = list_response(
             results,
@@ -423,8 +419,6 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
                 {
                     "id": str(r.id),
                     "name": r.name,
-                    "method": r.route.method if r.route else None,
-                    "path": r.route.path if r.route else None,
                     "description": r.route.description if r.route else None,
                 }
                 for r in routes
@@ -435,13 +429,10 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
 
     elif asset_type == "route":
         if asset.route:
-            base["method"] = asset.route.method
-            base["path"] = asset.route.path
             base["route_description"] = asset.route.description
             base["parameters"] = asset.route.parameters
             base["request_body"] = route_request_body_without_input_assets(asset.route)
             base["input_assets"] = route_input_assets_summary(asset.route)
-            base["input_type"] = asset.route.input_type
             base["output_type"] = asset.route.output_type
 
     elif asset_type == "quest":

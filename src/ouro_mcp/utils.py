@@ -321,12 +321,11 @@ def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
                 or config.get("inputFileExtension"),
                 input_file_extensions=config.get("input_file_extensions")
                 or config.get("inputFileExtensions"),
-                body_path=config.get("body_path") or config.get("bodyPath") or name,
             )
 
     input_type = _getv(route, "input_type")
     if input_type and not result:
-        result[str(input_type)] = {"asset_type": input_type, "body_path": str(input_type)}
+        result[str(input_type)] = {"asset_type": input_type}
 
     return result or None
 

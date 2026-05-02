@@ -110,7 +110,6 @@ def _format_action_result(
     *,
     route_id: Optional[str] = None,
     route_name: Optional[str] = None,
-    method: Optional[str] = None,
     duration_seconds: Optional[float] = None,
 ) -> dict[str, Any]:
     """Build the tool response dict for a completed (or errored) Action."""
@@ -124,8 +123,6 @@ def _format_action_result(
         result["embed_markdown"] = _route_action_embed(route_id, str(action.id))
     if route_name:
         result["route_name"] = route_name
-    if method:
-        result["method"] = method
     if duration_seconds is not None:
         result["duration_seconds"] = duration_seconds
 
@@ -286,8 +283,8 @@ def register(mcp: FastMCP) -> None:
             Optional[Any],
             Field(
                 description=(
-                    "Request body as JSON object or string (for POST/PUT routes), "
-                    'e.g. \'{"key": "value"}\''
+                    "Route request body as JSON object or string, e.g. "
+                    '\'{"key": "value"}\''
                 )
             ),
         ] = None,
@@ -297,7 +294,7 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         params: Annotated[
             Optional[Any],
-            Field(description='URL path parameters as JSON object or string, e.g. \'{"id": "abc"}\''),
+            Field(description='Route path parameters as JSON object or string, e.g. \'{"id": "abc"}\''),
         ] = None,
         input_assets: Annotated[
             Optional[Any],
@@ -322,7 +319,7 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = 300,
     ) -> str:
-        """Execute an API route on Ouro. Use get_asset(route_id) first to see the route's parameter schema.
+        """Execute a platform route on Ouro. Use get_asset(route_id) first to see the route's execution schema.
 
         Returns the completed action — data on success, error details on failure —
         plus `action_id`, `action_status`, and any `output_asset_id/type`. If the
@@ -348,8 +345,6 @@ def register(mcp: FastMCP) -> None:
                 "dry_run": True,
                 "route_id": str(route.id),
                 "name": route.name,
-                "method": route.route.method if route.route else None,
-                "path": route.route.path if route.route else None,
                 "expected_parameters": route.route.parameters if route.route else None,
                 "expected_request_body": (
                     route_request_body_without_input_assets(route.route)
@@ -361,7 +356,6 @@ def register(mcp: FastMCP) -> None:
                 ),
             })
 
-        method = route.route.method.upper() if route.route else "UNKNOWN"
         start = time.time()
 
         try:
@@ -381,7 +375,6 @@ def register(mcp: FastMCP) -> None:
                 "action_id": action_id,
                 "route_id": str(route.id),
                 "route_name": route.name,
-                "method": method,
                 "message": (
                     f"Route still executing after {timeout}s. "
                     "Call `get_action(action_id)` to check status later, "
@@ -397,7 +390,6 @@ def register(mcp: FastMCP) -> None:
             action,
             route_id=str(route.id),
             route_name=route.name,
-            method=method,
             duration_seconds=duration,
         )
         return dump_json(result)
@@ -561,8 +553,6 @@ def register(mcp: FastMCP) -> None:
                 "route": {
                     "id": str(route.id),
                     "name": route.name,
-                    "method": route.route.method if route.route else None,
-                    "path": route.route.path if route.route else None,
                 },
                 "note": "Use embed_markdown to embed an action preview in Ouro markdown.",
             },
