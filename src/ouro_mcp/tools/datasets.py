@@ -69,7 +69,7 @@ def _dataframe_from_path(data_path: str) -> pd.DataFrame:
 
 
 def _coerce_data(data: Any) -> Any:
-    """Accept a JSON string, list, or dict and always return a JSON string.
+    """Accept JSON text or a parsed JSON value and return JSON text.
 
     Also used as a Pydantic BeforeValidator so list/dict values from callers
     that pass parsed JSON (e.g. smolagents) are coerced before type checking.
@@ -185,10 +185,10 @@ def register(mcp: FastMCP) -> None:
         team_id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
         data: Annotated[
-            Optional[str],
+            Optional[str | list[dict[str, Any]]],
             BeforeValidator(_coerce_data),
             Field(
-                description='JSON rows as a string or array: \'[{"col": "val"}, ...]\' or \'{"rows": [...]}\''
+                description='JSON row array as a string or parsed array: \'[{"col": "val"}, ...]\''
             ),
         ] = None,
         data_path: Annotated[
@@ -232,9 +232,9 @@ def register(mcp: FastMCP) -> None:
             Optional[str], Field(description='"public" | "private" | "organization"')
         ] = None,
         data: Annotated[
-            Optional[str],
+            Optional[str | list[dict[str, Any]]],
             BeforeValidator(_coerce_data),
-            Field(description="JSON rows for dataset ingest (string or array)"),
+            Field(description="JSON row array for dataset ingest (string or parsed array)"),
         ] = None,
         data_path: Annotated[
             Optional[str],

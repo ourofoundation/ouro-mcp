@@ -211,7 +211,7 @@ Examples:
 
 `create_dataset` and `update_dataset` accept multiple ingestion methods (pick one):
 
-- `data`: list of JSON row objects
+- `data`: JSON row array as a string or parsed value: `[{"col": "val"}]`
 - `data_path`: local file path (`.csv`, `.json`, `.jsonl`/`.ndjson`, `.parquet`)
 
 ### Dataset views
