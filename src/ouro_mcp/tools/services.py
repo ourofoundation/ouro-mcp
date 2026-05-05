@@ -300,8 +300,8 @@ def register(mcp: FastMCP) -> None:
             Optional[Any],
             Field(
                 description=(
-                    "Keyed Ouro asset inputs as JSON object or string. Values can be "
-                    'asset IDs or objects, e.g. \'{"structure": "file-id"}\'.'
+                    "Keyed Ouro asset inputs as JSON object or string. Values should be "
+                    'asset IDs, e.g. \'{"structure": "file-id"}\'.'
                 )
             ),
         ] = None,
@@ -309,12 +309,23 @@ def register(mcp: FastMCP) -> None:
             bool,
             Field(description="Validate parameters without executing"),
         ] = False,
+        wait: Annotated[
+            bool,
+            Field(
+                description=(
+                    "If true (default), block until the action reaches a terminal "
+                    "state. If false, return the action_id immediately so you can "
+                    "check back later via get_action(action_id). Pass false for "
+                    "long-running async routes you don't want to block on."
+                )
+            ),
+        ] = True,
         timeout: Annotated[
             int,
             Field(
                 description=(
                     "Max seconds to wait for async routes to complete before returning 'pending'. "
-                    "Bump for long-running ML/simulation routes."
+                    "Bump for long-running ML/simulation routes. Ignored when wait=false."
                 )
             ),
         ] = 300,
@@ -327,6 +338,11 @@ def register(mcp: FastMCP) -> None:
         call `get_action(action_id)` later to check on it. Embed the route with
         `displayConfig.actionId` to render the action inline in Ouro markdown.
 
+        Async routes: routes whose `execution_mode == "async"` (or those with a
+        large `p95_completion_ms`) typically take a long time. For those, pass
+        `wait=false` to get the `action_id` back immediately and check on it
+        later via `get_action(action_id)` rather than blocking the agent loop.
+
         For asset inputs, pass IDs with `input_assets` keyed by route body parameter
         name. Do not construct file/dataset/post body objects by hand; Ouro resolves
         those IDs into the service-facing request body.
@@ -334,6 +350,16 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
 
         route = ouro.routes.retrieve(name_or_id)
+        execution_mode = (
+            getattr(route.route, "execution_mode", None) if route.route else None
+        ) or "sync"
+        metrics = getattr(route, "metrics", None)
+        p95_completion_ms = (
+            getattr(metrics, "p95_completion_ms", None) if metrics else None
+        )
+        avg_completion_ms = (
+            getattr(metrics, "avg_completion_ms", None) if metrics else None
+        )
 
         body_dict = _parse_json_param(body, "body")
         query_dict = _parse_json_param(query, "query")
@@ -345,6 +371,9 @@ def register(mcp: FastMCP) -> None:
                 "dry_run": True,
                 "route_id": str(route.id),
                 "name": route.name,
+                "execution_mode": execution_mode,
+                "p95_completion_ms": p95_completion_ms,
+                "avg_completion_ms": avg_completion_ms,
                 "expected_parameters": route.route.parameters if route.route else None,
                 "expected_request_body": (
                     route_request_body_without_input_assets(route.route)
@@ -365,8 +394,11 @@ def register(mcp: FastMCP) -> None:
                 query=query_dict,
                 params=params_dict,
                 input_assets=input_assets_dict,
-                poll_interval=5.0,
-                poll_timeout=float(timeout),
+                wait=wait,
+                # Pass timeout only when we're actually waiting; otherwise let
+                # the SDK skip polling entirely.
+                poll_interval=5.0 if wait else None,
+                poll_timeout=float(timeout) if wait else None,
             )
         except TimeoutError as exc:
             action_id = getattr(exc, "action_id", None)
@@ -375,6 +407,8 @@ def register(mcp: FastMCP) -> None:
                 "action_id": action_id,
                 "route_id": str(route.id),
                 "route_name": route.name,
+                "execution_mode": execution_mode,
+                "p95_completion_ms": p95_completion_ms,
                 "message": (
                     f"Route still executing after {timeout}s. "
                     "Call `get_action(action_id)` to check status later, "
@@ -386,12 +420,34 @@ def register(mcp: FastMCP) -> None:
             return dump_json(result)
 
         duration = round(time.time() - start, 2)
+
+        # When wait=false we get an in-progress action back; surface it as a
+        # 'pending' result so the agent knows to call get_action later.
+        if not wait and action.is_pending:
+            result = {
+                "status": "pending",
+                "action_id": str(action.id),
+                "action_status": action.status,
+                "route_id": str(route.id),
+                "route_name": route.name,
+                "execution_mode": execution_mode,
+                "p95_completion_ms": p95_completion_ms,
+                "message": (
+                    "Route accepted; check progress with get_action(action_id)."
+                ),
+                "embed_markdown": _route_action_embed(str(route.id), str(action.id)),
+            }
+            return dump_json(result)
+
         result = _format_action_result(
             action,
             route_id=str(route.id),
             route_name=route.name,
             duration_seconds=duration,
         )
+        result["execution_mode"] = execution_mode
+        if p95_completion_ms is not None:
+            result["p95_completion_ms"] = p95_completion_ms
         return dump_json(result)
 
     @mcp.tool(

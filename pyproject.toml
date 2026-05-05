@@ -16,7 +16,7 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
-dependencies = ["mcp", "ouro-py>=0.5.2", "pandas", "pyarrow", "python-dotenv"]
+dependencies = ["mcp", "ouro-py>=0.7.1", "pandas", "pyarrow", "python-dotenv"]
 
 [project.urls]
 Homepage = "https://github.com/ourofoundation/ouro-mcp"
