@@ -43,15 +43,27 @@ class _FakeDatasets:
             metadata={"table_name": "table_1"},
         )
 
-    def query(self, dataset_id: str, *, limit: int, offset: int, with_pagination: bool):
-        self.query_calls.append(
-            {
-                "dataset_id": dataset_id,
-                "limit": limit,
-                "offset": offset,
-                "with_pagination": with_pagination,
-            }
-        )
+    def query(
+        self,
+        dataset_id: str,
+        sql: str | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        with_pagination: bool = False,
+    ):
+        call = {"dataset_id": dataset_id}
+        if sql is not None:
+            call["sql"] = sql
+        else:
+            call.update(
+                {
+                    "limit": limit,
+                    "offset": offset,
+                    "with_pagination": with_pagination,
+                }
+            )
+        self.query_calls.append(call)
         return self.query_page
 
 
@@ -208,3 +220,62 @@ def test_query_dataset_validates_pagination_arguments() -> None:
 
     assert result["error"] == "invalid_arguments"
     assert result["retryable"] is False
+
+
+def test_query_dataset_runs_optional_sql_query() -> None:
+    datasets = _FakeDatasets(
+        query_page=pd.DataFrame(
+            [
+                {
+                    "category": "alpha",
+                    "count": 2,
+                    "missing": float("nan"),
+                    "seen_at": pd.Timestamp("2026-05-02T12:00:00Z"),
+                }
+            ]
+        )
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["query_dataset"](
+            "dataset-1",
+            _ctx(datasets),
+            sql="SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
+        )
+    )
+
+    assert "query_dataset_sql" not in tools
+    assert datasets.query_calls == [
+        {
+            "dataset_id": "dataset-1",
+            "sql": "SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
+        }
+    ]
+    assert result == {
+        "rows": [
+            {
+                "category": "alpha",
+                "count": 2,
+                "missing": None,
+                "seen_at": "2026-05-02T12:00:00+00:00",
+            }
+        ],
+        "row_count": 1,
+    }
+
+
+def test_query_dataset_sql_rejects_pagination_arguments() -> None:
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["query_dataset"](
+            "dataset-1",
+            _ctx(_FakeDatasets()),
+            sql="SELECT * FROM {{table}}",
+            limit=10,
+        )
+    )
+
+    assert result["error"] == "invalid_arguments"
+    assert "limit/offset are not compatible with sql" in result["message"]

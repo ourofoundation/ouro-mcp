@@ -121,6 +121,17 @@ def _resolve_dataset_data(
     return None
 
 
+def _json_records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
+    rows = df.to_dict(orient="records")
+    for row in rows:
+        for k, v in row.items():
+            if pd.isna(v):
+                row[k] = None
+            elif hasattr(v, "isoformat"):
+                row[k] = v.isoformat()
+    return rows
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -129,16 +140,48 @@ def register(mcp: FastMCP) -> None:
     def query_dataset(
         dataset_id: Annotated[str, Field(description="Dataset UUID")],
         ctx: Context,
+        sql: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Optional read-only SQL query. Use `{{table}}` as a placeholder "
+                    "for the dataset table. When provided, include LIMIT/OFFSET in "
+                    "the SQL instead of using the limit/offset parameters."
+                )
+            ),
+        ] = None,
         limit: Annotated[int, Field(description="Max rows to return (1-1000)")] = 100,
         offset: Annotated[int, Field(description="Row offset for pagination")] = 0,
     ) -> str:
         """Query a dataset's contents as JSON records.
 
-        Pages server-side so large datasets don't load fully into memory.
-        Use get_asset(id) first to see the column schema; call with
-        increasing ``offset`` to walk through subsequent pages while
-        ``hasMore`` is true.
+        By default this pages server-side so large datasets don't load fully
+        into memory. Pass ``sql`` to run a read-only PostgreSQL query, mirroring
+        ``ouro.datasets.query(dataset_id, sql=...)`` from ouro-py. Always
+        reference the table as ``{{table}}`` in SQL mode. Writes are rejected
+        server-side and queries time out after 10 seconds.
         """
+        if sql is not None:
+            if not sql.strip():
+                raise ValueError("sql query is required when sql is provided.")
+            if limit != 100 or offset != 0:
+                raise ValueError(
+                    "limit/offset are not compatible with sql; include "
+                    "LIMIT/OFFSET in the SQL query instead."
+                )
+
+            ouro = ctx.request_context.lifespan_context.ouro
+            df = ouro.datasets.query(dataset_id, sql=sql)
+            rows = _json_records_from_dataframe(df)
+            result = dump_json({"rows": rows, "row_count": len(rows)})
+            return truncate_response(
+                result,
+                context=(
+                    "Refine the SQL with LIMIT, WHERE, or aggregations to reduce "
+                    "the response size."
+                ),
+            )
+
         if limit <= 0 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000.")
         if offset < 0:
@@ -155,13 +198,7 @@ def register(mcp: FastMCP) -> None:
         df = page["data"]
         pagination = page.get("pagination") or {}
 
-        rows = df.to_dict(orient="records")
-        for row in rows:
-            for k, v in row.items():
-                if pd.isna(v):
-                    row[k] = None
-                elif hasattr(v, "isoformat"):
-                    row[k] = v.isoformat()
+        rows = _json_records_from_dataframe(df)
 
         result = dump_json(
             {
