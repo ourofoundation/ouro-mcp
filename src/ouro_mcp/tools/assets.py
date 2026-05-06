@@ -12,6 +12,7 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
     format_asset_summary,
+    format_monetization_block,
     list_response,
     optional_kwargs,
     org_summary,
@@ -175,6 +176,10 @@ def register(mcp: FastMCP) -> None:
 
             if item.get("parent_id"):
                 row["parent_id"] = str(item["parent_id"])
+
+            # Surface monetization so agents can rank/filter without N+1
+            # get_asset calls. Free assets contribute nothing.
+            row.update(format_monetization_block(item))
 
             assets.append(row)
 

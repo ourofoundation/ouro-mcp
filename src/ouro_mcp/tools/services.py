@@ -13,6 +13,8 @@ from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
+    format_one_time_cost_summary,
+    format_pay_per_use_cost_summary,
     list_response,
     route_input_assets_summary,
     route_request_body_without_input_assets,
@@ -105,6 +107,122 @@ def _action_error_context(response: Any) -> dict[str, Any]:
     return {k: v for k, v in result.items() if v is not None}
 
 
+def _format_route_cost_preview(route: Any) -> Optional[dict[str, Any]]:
+    """Build a `cost_preview` block for an upcoming route execution.
+
+    Returns None for free routes. For monetized routes, surfaces the
+    structured cost fields plus a human-readable `cost_summary` so the agent
+    can confirm what the user is about to be charged before invoking the
+    route for real.
+    """
+    monetization = getattr(route, "monetization", None)
+    if not monetization or monetization == "none":
+        return None
+    currency = (getattr(route, "price_currency", None) or "usd").lower()
+    preview: dict[str, Any] = {
+        "monetization": monetization,
+        "price_currency": currency,
+        "warning": "This route will charge the caller when executed.",
+    }
+    if monetization == "pay-per-use":
+        unit_cost = getattr(route, "unit_cost", None)
+        cost_unit = getattr(route, "cost_unit", None) or "call"
+        preview["unit_cost"] = unit_cost
+        preview["cost_unit"] = cost_unit
+        preview["cost_accounting"] = getattr(route, "cost_accounting", None)
+        if unit_cost is not None:
+            preview["cost_summary"] = format_pay_per_use_cost_summary(
+                unit_cost,
+                cost_unit,
+                currency,
+            )
+    else:
+        price = getattr(route, "price", None)
+        preview["price"] = price
+        if price is not None:
+            preview["cost_summary"] = format_one_time_cost_summary(price, currency)
+    return preview
+
+
+def _format_action_cost(
+    usage_record: Any = None,
+    btc_charges: Any = None,
+) -> Optional[dict[str, Any]]:
+    """Build a `cost` block for an action.
+
+    USD routes: data comes from the joined `usage_record` row (Stripe meter
+    lifecycle: reserved → confirmed → invoiced).
+
+    BTC routes: data comes from the joined `transactions` rows (Spark wallet
+    transfer settled atomically per call). RLS filters to the rows visible
+    to the caller — usually one of `route_usage` (buyer) or `route_revenue`
+    (creator).
+
+    Returns None for free routes or when RLS hides every billing row from
+    the caller. Always emits a human-readable `cost_summary` so agents that
+    ignore the structured fields still see what the run cost (or earned).
+    """
+    ur = _as_dict(usage_record)
+    if ur:
+        total_cents = ur.get("total_cents")
+        status = ur.get("status")
+        invoice_id = ur.get("stripe_invoice_id")
+        cost: dict[str, Any] = {
+            "currency": "usd",
+            "total_cents": total_cents,
+            "unit_cost_cents": ur.get("unit_cost_cents"),
+            "quantity": ur.get("quantity"),
+            "cost_unit": ur.get("cost_unit"),
+            "status": status,  # "reserved" (in-flight) or "confirmed" (metered)
+            "stripe_invoice_id": invoice_id,
+        }
+        if total_cents is not None:
+            suffix = (
+                " (in-progress)"
+                if status == "reserved"
+                else " (billed on invoice)"
+                if invoice_id
+                else " (pending invoice)"
+            )
+            cost["cost_summary"] = f"${total_cents / 100:.2f}" + suffix
+        return {k: v for k, v in cost.items() if v is not None}
+
+    charges = btc_charges or []
+    if not isinstance(charges, list):
+        charges = [charges]
+    charges = [_as_dict(c) for c in charges if c is not None]
+    if not charges:
+        return None
+
+    # Prefer the buyer's route_usage row (the actual cost). Fall back to
+    # route_revenue for creator viewers who can only see their own row via RLS.
+    usage = next(
+        (c for c in charges if c.get("type") == "route_usage"),
+        None,
+    )
+    revenue = next(
+        (c for c in charges if c.get("type") == "route_revenue"),
+        None,
+    )
+    primary = usage or revenue
+    if not primary:
+        return None
+
+    raw_value = primary.get("value")
+    sats = abs(int(raw_value)) if raw_value is not None else None
+    cost = {
+        "currency": "btc",
+        "value_sats": sats,
+        "status": primary.get("status"),
+        "perspective": "buyer" if usage else "creator",
+        "transfer_id": (primary.get("metadata") or {}).get("transfer_id"),
+    }
+    if sats is not None:
+        suffix = " charged" if usage else " earned"
+        cost["cost_summary"] = f"{sats:,} sats" + suffix
+    return {k: v for k, v in cost.items() if v is not None}
+
+
 def _format_action_result(
     action: Any,
     *,
@@ -141,6 +259,13 @@ def _format_action_result(
             result["output_asset_id"] = output_asset_id
         if output_asset_type:
             result["output_asset_type"] = output_asset_type
+
+    cost = _format_action_cost(
+        usage_record=getattr(action, "usage_record", None),
+        btc_charges=getattr(action, "btc_charges", None),
+    )
+    if cost:
+        result["cost"] = cost
 
     return result
 
@@ -204,6 +329,12 @@ def _format_action_summary(
         result["metadata"] = action.get("metadata")
     if include_response and action.get("response") is not None:
         result["response"] = _serialize_result(action.get("response"))
+    cost = _format_action_cost(
+        usage_record=action.get("usage_record"),
+        btc_charges=action.get("btc_charges"),
+    )
+    if cost:
+        result["cost"] = cost
     if route_id and action_id:
         result["embed_markdown"] = _route_action_embed(route_id, action_id)
 
@@ -332,9 +463,16 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Execute a platform route on Ouro. Use get_asset(route_id) first to see the route's execution schema.
 
+        Billing: monetized routes WILL charge the caller per call. Check the
+        route's `monetization` and `cost_summary` fields (via get_asset) before
+        executing on a user's behalf, or use `dry_run=true` to get a
+        `cost_preview` block in the response. Once the route runs, the
+        returned `cost` block reports the actual charge.
+
         Returns the completed action — data on success, error details on failure —
-        plus `action_id`, `action_status`, and any `output_asset_id/type`. If the
-        route doesn't complete within `timeout`, returns `{status: "pending", action_id}`;
+        plus `action_id`, `action_status`, any `output_asset_id/type`, and a
+        `cost` block for monetized pay-per-use routes. If the route doesn't
+        complete within `timeout`, returns `{status: "pending", action_id}`;
         call `get_action(action_id)` later to check on it. Embed the route with
         `displayConfig.actionId` to render the action inline in Ouro markdown.
 
@@ -367,7 +505,7 @@ def register(mcp: FastMCP) -> None:
         input_assets_dict = _parse_json_param(input_assets, "input_assets")
 
         if dry_run:
-            return dump_json({
+            dry_run_payload: dict[str, Any] = {
                 "dry_run": True,
                 "route_id": str(route.id),
                 "name": route.name,
@@ -383,7 +521,11 @@ def register(mcp: FastMCP) -> None:
                 "expected_input_assets": (
                     route_input_assets_summary(route.route) if route.route else None
                 ),
-            })
+            }
+            cost_preview = _format_route_cost_preview(route)
+            if cost_preview:
+                dry_run_payload["cost_preview"] = cost_preview
+            return dump_json(dry_run_payload)
 
         start = time.time()
 
@@ -438,6 +580,18 @@ def register(mcp: FastMCP) -> None:
                 "embed_markdown": _route_action_embed(str(route.id), str(action.id)),
             }
             return dump_json(result)
+
+        # The sync execution envelope can contain a freshly synthesized action
+        # before joined fields like `usage_record` are reloaded. Refresh once so
+        # monetized route calls can include the same cost block as get_action().
+        try:
+            action = ouro.routes.retrieve_action(str(action.id))
+        except Exception:
+            log.debug(
+                "Failed to refresh action %s after route execution",
+                getattr(action, "id", None),
+                exc_info=True,
+            )
 
         result = _format_action_result(
             action,

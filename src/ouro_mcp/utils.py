@@ -294,11 +294,86 @@ def format_asset_summary(asset: Any) -> dict:
     if parent_id:
         summary["parent_id"] = str(parent_id)
 
-    if getattr(asset, "monetization", None) and asset.monetization != "none":
-        summary["monetization"] = asset.monetization
-        summary["price"] = getattr(asset, "price", None)
+    monetization_block = format_monetization_block(asset)
+    if monetization_block:
+        summary.update(monetization_block)
 
     return summary
+
+
+def _format_compact_number(value: Any) -> str:
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:g}"
+    return str(value)
+
+
+def format_pay_per_use_cost_summary(
+    unit_cost: Any,
+    cost_unit: str,
+    currency: str,
+) -> str:
+    """Human-readable pay-per-use cost summary for agent-facing tools."""
+    currency_upper = str(currency).upper()
+    currency_lower = str(currency).lower()
+    if currency_lower == "usd":
+        return f"${unit_cost:.2f} per {cost_unit} (USD)"
+    if currency_lower == "btc":
+        return f"{_format_compact_number(unit_cost)} sats per {cost_unit} (BTC)"
+    return f"{_format_compact_number(unit_cost)} per {cost_unit} ({currency_upper})"
+
+
+def format_one_time_cost_summary(price: Any, currency: str) -> str:
+    """Human-readable one-time cost summary for agent-facing tools."""
+    currency_upper = str(currency).upper()
+    currency_lower = str(currency).lower()
+    if currency_lower == "usd":
+        return f"${price:.2f} (USD)"
+    if currency_lower == "btc":
+        return f"{_format_compact_number(price)} sats (BTC)"
+    return f"{_format_compact_number(price)} {currency_upper}"
+
+
+def format_monetization_block(asset: Any) -> dict[str, Any]:
+    """Build the monetization fields for an asset (free or paid).
+
+    Returns an empty dict for free assets. For paid assets, returns the
+    structured cost fields PLUS a human-readable `cost_summary` so an agent
+    that ignores structured data still sees that the asset isn't free.
+
+    Accepts either a typed Asset model or a dict (search results).
+    """
+    monetization = _getv(asset, "monetization")
+    if not monetization or monetization == "none":
+        return {}
+
+    block: dict[str, Any] = {"monetization": monetization}
+    currency = _getv(asset, "price_currency") or "usd"
+    block["price_currency"] = currency
+
+    if monetization == "pay-per-use":
+        # `unit_cost` is dollars for USD and sats for BTC. Surface all four
+        # fields so agents can compare costs without N+1 lookups.
+        unit_cost = _getv(asset, "unit_cost")
+        cost_unit = _getv(asset, "cost_unit") or "call"
+        block["unit_cost"] = unit_cost
+        block["cost_unit"] = cost_unit
+        block["cost_accounting"] = _getv(asset, "cost_accounting")
+        if unit_cost is not None:
+            block["cost_summary"] = format_pay_per_use_cost_summary(
+                unit_cost,
+                cost_unit,
+                currency,
+            )
+    else:
+        # pay-to-unlock and any other one-time-price monetization.
+        price = _getv(asset, "price")
+        block["price"] = price
+        if price is not None:
+            block["cost_summary"] = format_one_time_cost_summary(price, currency)
+
+    return {k: v for k, v in block.items() if v is not None}
 
 
 def optional_kwargs(**kw: Any) -> dict:

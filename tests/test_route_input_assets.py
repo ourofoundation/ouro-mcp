@@ -5,8 +5,12 @@ from types import SimpleNamespace
 import pytest
 
 from ouro_mcp.tools.assets import _format_asset_detail
-from ouro_mcp.tools.services import _parse_json_param
-from ouro_mcp.utils import route_input_assets_summary, route_request_body_without_input_assets
+from ouro_mcp.tools.services import _format_route_cost_preview, _parse_json_param
+from ouro_mcp.utils import (
+    format_monetization_block,
+    route_input_assets_summary,
+    route_request_body_without_input_assets,
+)
 
 
 def test_parse_input_assets_allows_keyed_asset_ids() -> None:
@@ -59,18 +63,59 @@ def test_route_request_body_hides_asset_input_schema() -> None:
     }
 
 
-def test_route_input_assets_summary_omits_body_path_metadata() -> None:
+def test_route_input_assets_summary_returns_supported_metadata() -> None:
     route = SimpleNamespace(
         input_type=None,
         input_assets={
             "file": {
                 "asset_type": "file",
-                "body_path": "service_specific_body_field",
+                "input_file_extensions": ["cif"],
             },
         },
     )
 
-    assert route_input_assets_summary(route) == {"file": {"asset_type": "file"}}
+    assert route_input_assets_summary(route) == {
+        "file": {"asset_type": "file", "input_file_extensions": ["cif"]}
+    }
+
+
+def test_btc_pay_per_use_cost_summary_uses_sats() -> None:
+    asset = SimpleNamespace(
+        monetization="pay-per-use",
+        price_currency="btc",
+        unit_cost=100.0,
+        cost_unit="call",
+        cost_accounting="fixed",
+    )
+
+    assert format_monetization_block(asset) == {
+        "monetization": "pay-per-use",
+        "price_currency": "btc",
+        "unit_cost": 100.0,
+        "cost_unit": "call",
+        "cost_accounting": "fixed",
+        "cost_summary": "100 sats per call (BTC)",
+    }
+
+
+def test_btc_route_cost_preview_uses_sats() -> None:
+    route = SimpleNamespace(
+        monetization="pay-per-use",
+        price_currency="btc",
+        unit_cost=100.0,
+        cost_unit="call",
+        cost_accounting="fixed",
+    )
+
+    assert _format_route_cost_preview(route) == {
+        "monetization": "pay-per-use",
+        "price_currency": "btc",
+        "warning": "This route will charge the caller when executed.",
+        "unit_cost": 100.0,
+        "cost_unit": "call",
+        "cost_accounting": "fixed",
+        "cost_summary": "100 sats per call (BTC)",
+    }
 
 
 class _FakeAssets:
