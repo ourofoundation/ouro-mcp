@@ -171,18 +171,37 @@ def list_response(
 
 
 def resolve_local_path(raw: str) -> Path:
-    """Resolve a user-supplied file path, respecting WORKSPACE_ROOT for relative paths.
+    """Resolve a user-supplied file path, sandboxing to WORKSPACE_ROOT when set.
 
     When WORKSPACE_ROOT is set (typically to the calling agent's workspace
-    directory), relative paths are resolved against it instead of the MCP
-    server's CWD.  Absolute and home-relative (~) paths are unaffected.
+    directory) the resolved path MUST stay inside that root: relative paths
+    are joined to it, absolute and ``~``-relative paths are accepted only
+    when they already point inside it, and ``..`` traversal that escapes
+    the root is rejected with ``PermissionError``.
+
+    When WORKSPACE_ROOT is not set (e.g. a desktop user running the MCP
+    standalone) the path is returned as-is after ``~`` expansion and
+    resolution, with no sandboxing.
     """
     p = Path(raw).expanduser()
-    if not p.is_absolute():
-        workspace = os.environ.get(ENV_WORKSPACE_ROOT)
-        if workspace:
-            p = Path(workspace).expanduser() / p
-    return p.resolve()
+    workspace_env = os.environ.get(ENV_WORKSPACE_ROOT)
+
+    if not workspace_env:
+        return p.resolve()
+
+    workspace = Path(workspace_env).expanduser().resolve()
+    candidate = (workspace / p) if not p.is_absolute() else p
+    resolved = candidate.resolve()
+
+    try:
+        resolved.relative_to(workspace)
+    except ValueError as exc:
+        raise PermissionError(
+            f"Path '{raw}' escapes the agent workspace ({workspace}). "
+            "Use a path inside the workspace."
+        ) from exc
+
+    return resolved
 
 
 def _getv(obj: Any, key: str, default: Any = None) -> Any:

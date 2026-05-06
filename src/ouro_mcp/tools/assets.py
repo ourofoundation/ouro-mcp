@@ -237,7 +237,13 @@ def register(mcp: FastMCP) -> None:
         id: Annotated[str, Field(description="UUID of the asset to download")],
         output_path: Annotated[
             str,
-            Field(description="Local file path or existing directory where the asset should be saved"),
+            Field(
+                description=(
+                    "Local file path or existing directory where the asset should be saved. "
+                    "Relative paths resolve against WORKSPACE_ROOT; when WORKSPACE_ROOT is set, "
+                    "the path must stay inside it (no '..' traversal or outside-root absolutes)."
+                )
+            ),
         ],
         ctx: Context,
         asset_type: Annotated[
@@ -249,6 +255,10 @@ def register(mcp: FastMCP) -> None:
 
         Files keep their original bytes, datasets download as CSV, and posts as HTML.
         If output_path is a directory, the server-provided filename is used.
+
+        When WORKSPACE_ROOT is set (agent context), output_path is sandboxed
+        to that workspace; paths that escape via '..' or absolute paths
+        outside the workspace are rejected.
         """
         from ouro_mcp.utils import resolve_local_path
 

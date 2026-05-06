@@ -232,6 +232,14 @@ def _format_ouro_error(e: Exception) -> str:
         return json.dumps({"error": "timeout", "message": raw, "retryable": True})
     if isinstance(e, ValueError):
         return json.dumps({"error": "invalid_arguments", "message": raw, "retryable": False})
+    if isinstance(e, PermissionError):
+        return json.dumps(
+            {
+                "error": "workspace_path_denied",
+                "message": raw or "Path is outside the agent workspace.",
+                "retryable": False,
+            }
+        )
     log.exception("Unexpected error in MCP tool")
     return json.dumps({"error": "unexpected", "message": raw})
 
