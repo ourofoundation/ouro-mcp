@@ -121,7 +121,7 @@ def _format_ouro_error(e: Exception) -> str:
         return json.dumps(
             {
                 "error": "nested_reply_failed",
-                "message": "Nested reply failed. Do not retry repeatedly; post a root-level follow-up and mention the target user as @username.",
+                "message": "Nested reply failed. Do not retry repeatedly; reply under the top-level comment in the thread and mention the target user as inline code, e.g. `@username`.",
                 "retryable": False,
             }
         )
