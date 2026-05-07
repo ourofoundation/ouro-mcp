@@ -17,6 +17,72 @@ log = logging.getLogger(__name__)
 _TIMESTAMP_KEYS = {"created_at", "last_updated", "updated_at", "timestamp"}
 
 
+def slim_connection_graph(connections: Any, current_asset_id: str | None = None) -> Any:
+    """Shrink connection payloads from the Ouro API for MCP tool responses.
+
+    Each edge may include full ``source`` and ``target`` asset records
+    (descriptions, previews, metadata, pricing, etc.). That duplication
+    routinely pushes ``get_asset(detail=\"full\")`` past agent context limits
+    even for modest graphs. Group edges by relationship type and store only
+    the connected asset summary. ``name`` is always present (string or null).
+    ``created_at``, when available, is the connected asset's timestamp, not
+    the edge timestamp.
+    """
+    if not isinstance(connections, list):
+        return connections
+
+    def _slim_endpoint(node: Any) -> dict[str, Any] | None:
+        if not isinstance(node, dict):
+            return None
+        aid = node.get("id")
+        name = node.get("name")
+        out = {
+            "id": str(aid) if aid is not None else None,
+            "name": name,
+            "asset_type": node.get("asset_type"),
+        }
+        if node.get("created_at") is not None:
+            out["created_at"] = node["created_at"]
+        return out
+
+    def _endpoint_from_edge(edge: dict[str, Any], side: str) -> dict[str, Any] | None:
+        endpoint = _slim_endpoint(edge.get(side))
+        if endpoint is not None:
+            return endpoint
+
+        edge_id = edge.get(f"{side}_id")
+        asset_type = edge.get(f"{side}_asset_type")
+        if edge_id is None and asset_type is None:
+            return None
+        return {
+            "id": str(edge_id) if edge_id is not None else None,
+            "name": None,
+            "asset_type": asset_type,
+        }
+
+    current_id = str(current_asset_id) if current_asset_id is not None else None
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for edge in connections:
+        connection_type = "unknown"
+        if not isinstance(edge, dict):
+            grouped.setdefault(connection_type, []).append({"value": edge})
+            continue
+
+        connection_type = str(edge.get("type") or "unknown")
+        source = _endpoint_from_edge(edge, "source")
+        target = _endpoint_from_edge(edge, "target")
+        source_id = str(source["id"]) if source and source.get("id") is not None else None
+        target_id = str(target["id"]) if target and target.get("id") is not None else None
+
+        if current_id and source_id == current_id:
+            row = target or {}
+        else:
+            row = source or {}
+
+        grouped.setdefault(connection_type, []).append(row)
+    return grouped
+
+
 def truncate_response(data: str, context: str = "") -> str:
     """If a JSON response exceeds the size threshold, truncate and flag it."""
     if len(data) <= MAX_RESPONSE_SIZE:

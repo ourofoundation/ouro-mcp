@@ -18,6 +18,7 @@ from ouro_mcp.utils import (
     org_summary,
     route_input_assets_summary,
     route_request_body_without_input_assets,
+    slim_connection_graph,
     team_summary,
     truncate_response,
     user_summary,
@@ -42,7 +43,9 @@ def register(mcp: FastMCP) -> None:
                     '"summary" (default) returns name, description, metadata, and engagement counts. '
                     '"full" also includes type-specific content '
                     "(post body, dataset schema/stats, file download URL, service routes, route execution schemas), "
-                    "plus provenance (creation action), connections, and tags."
+                    "plus provenance (creation action), connections grouped by type with the other asset "
+                    "summarized as id, asset_type, name, and created_at when available, "
+                    "and tags."
                 )
             ),
         ] = "summary",
@@ -55,10 +58,7 @@ def register(mcp: FastMCP) -> None:
         """
         allowed_detail = {"summary", "full"}
         if detail not in allowed_detail:
-            raise ValueError(
-                f"Invalid detail={detail!r}. Must be one of: "
-                f"{sorted(allowed_detail)}."
-            )
+            raise ValueError(f"Invalid detail={detail!r}. Must be one of: " f"{sorted(allowed_detail)}.")
 
         ouro = ctx.request_context.lifespan_context.ouro
         asset = ouro.assets.retrieve(id)
@@ -96,13 +96,15 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         sort: Annotated[
             Optional[str],
-            Field(description='"relevant" (default with query) | "recent" (default without query) | "popular" | "updated"'),
+            Field(
+                description='"relevant" (default with query) | "recent" (default without query) | "popular" | "updated"'
+            ),
         ] = None,
         time_window: Annotated[
             Optional[str],
             Field(description='For sort="popular": "day" | "week" | "month" (default) | "all"'),
         ] = None,
-        limit: Annotated[int, Field(description="Max results to return")] = 20,
+        limit: Annotated[int, Field(description="Max results to return")] = 10,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
         """Search or browse assets on Ouro. Supports hybrid semantic + full-text search.
@@ -282,10 +284,15 @@ def register(mcp: FastMCP) -> None:
 
         Returns relationships like references, components, derivatives,
         and action inputs/outputs. Useful for understanding how assets
-        relate to each other and navigating lineage.
+        relate to each other and navigating lineage. Connections are grouped
+        by relationship type. Each item is the connected asset summary with
+        ``id``, ``name``, ``asset_type``, and asset ``created_at`` when
+        available; connection edge metadata and the current asset side are
+        omitted to keep responses small.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         connections = ouro.assets.connections(id)
+        connections = slim_connection_graph(connections, current_asset_id=id)
         return truncate_response(dump_json({"asset_id": id, "connections": connections}))
 
     @mcp.tool(annotations={"readOnlyHint": True})
@@ -297,7 +304,7 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(description='"popular" (default, most used first) | "recent" | "updated"'),
         ] = "popular",
-        limit: Annotated[int, Field(description="Max routes to return (1-200)")] = 20,
+        limit: Annotated[int, Field(description="Max routes to return (1-200)")] = 10,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
         """Find routes that can operate on this asset.
@@ -308,9 +315,7 @@ def register(mcp: FastMCP) -> None:
         """
         allowed_sort = {"popular", "recent", "updated"}
         if sort not in allowed_sort:
-            raise ValueError(
-                f"Invalid sort={sort!r}. Must be one of: {sorted(allowed_sort)}."
-            )
+            raise ValueError(f"Invalid sort={sort!r}. Must be one of: {sorted(allowed_sort)}.")
         if limit <= 0 or limit > 200:
             raise ValueError("limit must be between 1 and 200.")
         if offset < 0:
@@ -376,7 +381,7 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
     try:
         connections = ouro.assets.connections(asset_id)
         if connections:
-            result["connections"] = connections
+            result["connections"] = slim_connection_graph(connections, current_asset_id=asset_id)
     except Exception:
         log.debug("Failed to fetch connections for %s", asset_id, exc_info=True)
 
