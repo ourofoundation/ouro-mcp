@@ -41,11 +41,42 @@ class TestSlimConnectionGraph(unittest.TestCase):
         self.assertNotIn("target", out["derivative"][0])
         self.assertNotIn("description", json.dumps(out))
 
-    def test_name_key_always_present_on_endpoints(self) -> None:
+    def test_null_name_is_omitted_but_asset_type_is_preserved(self) -> None:
+        # `name` drops out when null (display-only). `asset_type` is the
+        # discriminator agents use to pick the next tool, so it must stay
+        # in the response — even as `null` — to avoid silently changing
+        # the shape based on backend completeness.
         conns = [{"id": "e1", "source": {"id": "x", "asset_type": "file"}}]
         out = slim_connection_graph(conns)
-        self.assertIn("name", out["unknown"][0])
-        self.assertIsNone(out["unknown"][0]["name"])
+        self.assertEqual(out["unknown"][0], {"id": "x", "asset_type": "file"})
+
+    def test_null_asset_type_is_still_emitted(self) -> None:
+        conns = [{"id": "e1", "source": {"id": "x"}}]
+        out = slim_connection_graph(conns)
+        endpoint = out["unknown"][0]
+        self.assertIn("asset_type", endpoint)
+        self.assertIsNone(endpoint["asset_type"])
+        self.assertNotIn("name", endpoint)
+
+    def test_empty_string_name_is_dropped(self) -> None:
+        # Real data: comments come back with `name: ""` from the backend
+        # (nameless asset type). Treat the empty string the same as null
+        # so the slimmed shape doesn't carry purely decorative `, "name": ""`
+        # on every comment edge.
+        conns = [
+            {
+                "id": "e1",
+                "type": "reference",
+                "source": {"id": "c1", "name": "", "asset_type": "comment"},
+            }
+        ]
+        out = slim_connection_graph(conns)
+        self.assertEqual(out["reference"][0], {"id": "c1", "asset_type": "comment"})
+
+    def test_present_name_and_asset_type_are_preserved(self) -> None:
+        conns = [{"id": "e1", "source": {"id": "x", "name": "X", "asset_type": "file"}}]
+        out = slim_connection_graph(conns)
+        self.assertEqual(out["unknown"][0], {"id": "x", "asset_type": "file", "name": "X"})
 
     def test_outgoing_connection_uses_other_endpoint(self) -> None:
         conns = [

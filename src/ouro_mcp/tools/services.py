@@ -252,13 +252,24 @@ def _format_action_result(
     else:
         result["data"] = _serialize_result(action.response)
 
-    if action.output_asset:
-        output_asset_id = action.output_asset.get("id")
-        output_asset_type = action.output_asset.get("asset_type")
-        if output_asset_id:
-            result["output_asset_id"] = output_asset_id
-        if output_asset_type:
-            result["output_asset_type"] = output_asset_type
+    # Surface inputs and outputs exclusively as the modern plural
+    # `input_assets` / `output_assets` lists. Legacy actions with only the
+    # singular `input_asset` / `output_asset` FK columns get synthesized
+    # into a one-row list with `is_primary: True` so there's only one shape
+    # for agents to learn.
+    input_assets = _unified_action_assets(
+        getattr(action, "input_assets", None),
+        getattr(action, "input_asset", None),
+    )
+    if input_assets:
+        result["input_assets"] = input_assets
+
+    output_assets = _unified_action_assets(
+        getattr(action, "output_assets", None),
+        getattr(action, "output_asset", None),
+    )
+    if output_assets:
+        result["output_assets"] = output_assets
 
     cost = _format_action_cost(
         usage_record=getattr(action, "usage_record", None),
@@ -292,6 +303,80 @@ def _compact_asset(asset: Any) -> Optional[dict[str, Any]]:
     return {k: v for k, v in result.items() if v not in (None, "")}
 
 
+def _compact_action_assets(rows: Any) -> Optional[list[dict[str, Any]]]:
+    """Slim a list of action_assets rows for tool responses.
+
+    Routes declare named input and output slots (e.g. a benchmarking route
+    that produces `report` and `raw_results` files). The backend stores
+    those in the `action_assets` join table, surfaced as `input_assets` /
+    `output_assets` lists on the Action with the per-row shape::
+
+        {"name": str, "is_primary": bool, "asset_id": uuid,
+         "asset_type": str, "asset": {full asset record}}
+
+    For the agent we only need the logical slot ``name``, the optional
+    ``is_primary`` marker, and a compact view of the resolved asset.
+    Returns ``None`` when the list is empty/missing so callers can omit the
+    key entirely.
+    """
+    if not isinstance(rows, list) or not rows:
+        return None
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        row = _as_dict(row)
+        if not row:
+            continue
+        entry: dict[str, Any] = {}
+        name = row.get("name")
+        if name:
+            entry["name"] = name
+        # Only emit `is_primary` when True — the default (False) is implicit
+        # and would just be noise on the many non-primary entries.
+        if row.get("is_primary"):
+            entry["is_primary"] = True
+        # Prefer the resolved nested `asset` join; fall back to the FK
+        # columns when the join wasn't selected so the agent still gets
+        # `{id, asset_type}` to follow up on.
+        asset = _compact_asset(row.get("asset"))
+        if asset is None:
+            asset = _compact_asset(
+                {
+                    "id": row.get("asset_id"),
+                    "asset_type": row.get("asset_type"),
+                }
+            )
+        if asset:
+            entry["asset"] = asset
+        if entry:
+            out.append(entry)
+    return out or None
+
+
+def _unified_action_assets(
+    plural_rows: Any,
+    legacy_singular: Any,
+) -> Optional[list[dict[str, Any]]]:
+    """Return the slim plural list, synthesizing from the legacy singular when needed.
+
+    The agent-facing tool response only carries the plural
+    `input_assets` / `output_assets` shape — but the backend still keeps
+    the pre-action_assets FK columns (`input_asset` / `output_asset`)
+    populated for actions that predate the join table. To keep one shape
+    for agents to learn, wrap that legacy single asset into a one-row
+    plural list when no join rows exist. The synthesized entry has no
+    `name` (legacy actions never had a logical slot name) and is marked
+    `is_primary: True` so agents iterating the list can still find the
+    canonical output.
+    """
+    plural = _compact_action_assets(plural_rows)
+    if plural:
+        return plural
+    legacy = _compact_asset(legacy_singular)
+    if legacy:
+        return [{"is_primary": True, "asset": legacy}]
+    return None
+
+
 def _format_action_summary(
     action: Any,
     *,
@@ -316,14 +401,24 @@ def _format_action_summary(
     route = _compact_asset(action.get("route"))
     if route:
         result["route"] = route
-    input_asset = _compact_asset(action.get("input_asset"))
-    if input_asset:
-        result["input_asset"] = input_asset
-    output_asset = _compact_asset(action.get("output_asset"))
-    if output_asset:
-        result["output_asset"] = output_asset
-        result["output_asset_id"] = output_asset.get("id")
-        result["output_asset_type"] = output_asset.get("asset_type")
+
+    # Unified shape: only emit the plural `input_assets` / `output_assets`
+    # lists. Legacy actions whose join rows haven't been backfilled fall
+    # back to a synthesized one-row list from the FK columns so the agent
+    # surface stays uniform. Per-row shape: `{name, is_primary?, asset:
+    # {id, asset_type, name?, description?}}` — discriminate by `name`,
+    # not by position.
+    input_assets = _unified_action_assets(
+        action.get("input_assets"), action.get("input_asset")
+    )
+    if input_assets:
+        result["input_assets"] = input_assets
+
+    output_assets = _unified_action_assets(
+        action.get("output_assets"), action.get("output_asset")
+    )
+    if output_assets:
+        result["output_assets"] = output_assets
 
     if action.get("metadata"):
         result["metadata"] = action.get("metadata")
@@ -469,12 +564,19 @@ def register(mcp: FastMCP) -> None:
         `cost_preview` block in the response. Once the route runs, the
         returned `cost` block reports the actual charge.
 
-        Returns the completed action — data on success, error details on failure —
-        plus `action_id`, `action_status`, any `output_asset_id/type`, and a
-        `cost` block for monetized pay-per-use routes. If the route doesn't
-        complete within `timeout`, returns `{status: "pending", action_id}`;
-        call `get_action(action_id)` later to check on it. Embed the route with
-        `displayConfig.actionId` to render the action inline in Ouro markdown.
+        Returns the completed action — data on success, error details on
+        failure — plus `action_id`, `action_status`, and a `cost` block for
+        monetized pay-per-use routes. Resolved inputs and produced assets
+        come back as `input_assets` / `output_assets`: lists of
+        `{name, is_primary?, asset: {id, asset_type, name?, description?}}`
+        entries, one per named slot the route declared. Discriminate by
+        `name` (the slot name from the route's input/output schema), not
+        by position; `is_primary: true` marks the canonical entry for
+        legacy single-output routes. If the route doesn't complete within
+        `timeout`, returns `{status: "pending", action_id}`; call
+        `get_action(action_id)` later to check on it. Embed the route with
+        `displayConfig.actionId` to render the action inline in Ouro
+        markdown.
 
         Async routes: routes whose `execution_mode == "async"` (or those with a
         large `p95_completion_ms`) typically take a long time. For those, pass

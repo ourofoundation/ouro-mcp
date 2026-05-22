@@ -355,18 +355,29 @@ def register(mcp: FastMCP) -> None:
 
 
 def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
-    """Best-effort merge of engagement counts into an asset result dict."""
+    """Best-effort merge of engagement counts into an asset result dict.
+
+    Zero-valued counters are dropped — most assets have zero of at least one
+    metric (brand-new assets often have zero of all four), and emitting a
+    full `{views:0, comments:0, reactions:0, downloads:0}` block on every
+    summary wastes ~60 chars per asset. Agents can treat a missing key as 0.
+    """
     try:
         counts = ouro.assets.counts(asset_id)
-        if counts:
-            result["counts"] = {
-                "views": counts.get("views", 0),
-                "comments": counts.get("comments", 0),
-                "reactions": counts.get("reactions", 0),
-                "downloads": counts.get("downloads", 0),
-            }
     except Exception:
         log.debug("Failed to fetch counts for asset %s", asset_id, exc_info=True)
+        return
+
+    if not counts:
+        return
+
+    nonzero = {
+        k: counts.get(k, 0)
+        for k in ("views", "comments", "reactions", "downloads")
+        if counts.get(k, 0)
+    }
+    if nonzero:
+        result["counts"] = nonzero
 
 
 def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:

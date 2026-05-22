@@ -104,6 +104,13 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - Use create_conversation(member_user_ids=...) to start a new conversation.
 - Use send_message(conversation_id, text) and list_messages(conversation_id, ...) for chat.
 
+**Quests and entries**:
+- Use get_asset(quest_id, detail="full") or list_quest_items(quest_id=...) to inspect quest work before acting.
+- Use submit_quest_entry(quest_id, item_id=..., asset_id=..., asset_type=...) to contribute an asset to a quest item.
+- Use list_quest_entries(quest_id=..., status=...) to review submitted, accepted, or rejected entries.
+- Use review_quest_entry(quest_id, entry_id, status="accepted"|"rejected") only when the caller has authority to review the quest.
+- Use complete_quest_item only for owner/admin self-completion; normal contributors should submit entries.
+
 **Route actions**:
 - Use get_asset(route_id, detail="full") to inspect a route's schema before execution.
 - For asset inputs, pass asset IDs via execute_route(input_assets={...}) keyed by

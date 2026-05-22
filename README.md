@@ -10,7 +10,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 - **Discover and execute API routes** — call any user-published API on the platform
 - **Delete assets** they own
 
-## Tools (52)
+## Tools (55)
 
 ### Assets & Discovery
 
@@ -91,6 +91,9 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `update_quest_item` | Update an item's metadata or status |
 | `complete_quest_item` | Self-complete a quest item (creates an auto-accepted entry) |
 | `delete_quest_item` | Remove an item from a quest |
+| `submit_quest_entry` | Submit an entry to a quest, optionally for a specific item |
+| `list_quest_entries` | List quest entries with status filtering and pagination |
+| `review_quest_entry` | Accept or reject a quest entry |
 
 ### Organizations & Teams
 

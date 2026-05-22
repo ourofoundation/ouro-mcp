@@ -14,7 +14,18 @@ from ouro_mcp.constants import ENV_OURO_MCP_TIMEZONE, ENV_WORKSPACE_ROOT, MAX_RE
 
 log = logging.getLogger(__name__)
 
-_TIMESTAMP_KEYS = {"created_at", "last_updated", "updated_at", "timestamp"}
+_TIMESTAMP_KEYS = {
+    "created_at",
+    "last_updated",
+    "updated_at",
+    "timestamp",
+    # Action lifecycle (services.py / ouro-py Action model)
+    "started_at",
+    "finished_at",
+    # Notifications / quest reviews
+    "read_at",
+    "reviewed_at",
+}
 
 
 def slim_connection_graph(connections: Any, current_asset_id: str | None = None) -> Any:
@@ -23,10 +34,11 @@ def slim_connection_graph(connections: Any, current_asset_id: str | None = None)
     Each edge may include full ``source`` and ``target`` asset records
     (descriptions, previews, metadata, pricing, etc.). That duplication
     routinely pushes ``get_asset(detail=\"full\")`` past agent context limits
-    even for modest graphs. Group edges by relationship type and store only
-    the connected asset summary. ``name`` is always present (string or null).
-    ``created_at``, when available, is the connected asset's timestamp, not
-    the edge timestamp.
+    even for modest graphs.     Group edges by relationship type and store only
+    the connected asset summary. ``id`` and ``asset_type`` are always
+    present; ``name`` is omitted when null (display-only). ``created_at``,
+    when available, is the connected asset's timestamp, not the edge
+    timestamp.
     """
     if not isinstance(connections, list):
         return connections
@@ -35,12 +47,20 @@ def slim_connection_graph(connections: Any, current_asset_id: str | None = None)
         if not isinstance(node, dict):
             return None
         aid = node.get("id")
-        name = node.get("name")
-        out = {
+        out: dict[str, Any] = {
             "id": str(aid) if aid is not None else None,
-            "name": name,
+            # `asset_type` is the discriminator agents need to decide which
+            # follow-up tool to call — always emit it (possibly null when the
+            # backend has no record), never drop it.
             "asset_type": node.get("asset_type"),
         }
+        # `name` is the only field we drop when missing — it's display-only
+        # and frequently absent for endpoint stubs. Treat both `null` and the
+        # empty string the same; the backend stores `""` for nameless types
+        # like comments and we don't want either form to bloat the payload.
+        name = node.get("name")
+        if name:
+            out["name"] = name
         if node.get("created_at") is not None:
             out["created_at"] = node["created_at"]
         return out
@@ -128,7 +148,13 @@ def _parse_timestamp_value(value: Any) -> datetime | None:
     return dt
 
 
-def _local_timestamp_fields(value: Any, tz_name: str) -> dict[str, str] | None:
+def _localize_timestamp(value: Any, tz_name: str) -> str | None:
+    """Render a UTC timestamp as a compact local ISO string (offset preserved).
+
+    Microseconds are dropped — Ouro timestamps don't carry meaningful
+    sub-second precision for agents, and stripping them shaves ~7 chars
+    off every timestamp in tool responses.
+    """
     dt = _parse_timestamp_value(value)
     if dt is None:
         return None
@@ -138,14 +164,20 @@ def _local_timestamp_fields(value: Any, tz_name: str) -> dict[str, str] | None:
     except Exception:
         return None
 
-    return {
-        "local": local_dt.isoformat(),
-        "local_label": local_dt.strftime("%Y-%m-%d %I:%M %p %Z"),
-    }
+    return local_dt.replace(microsecond=0).isoformat()
 
 
 def enrich_timestamps(data: Any, tz_name: str | None = None) -> Any:
-    """Recursively add local-time siblings for common UTC timestamp fields."""
+    """Recursively rewrite common UTC timestamp fields as compact local ISO.
+
+    With ``OURO_MCP_TIMEZONE`` set, every recognized timestamp key is
+    replaced *in place* with a single offset-bearing local ISO string
+    (e.g. ``2026-04-06T21:02:19-05:00``). The offset preserves the absolute
+    instant, and using one field instead of a UTC value plus ``_local`` /
+    ``_local_label`` siblings keeps tool responses small enough for agents
+    listing many assets at once. Existing ``_local`` / ``_local_label``
+    fields on the input are dropped so older callers don't double up.
+    """
     active_tz = tz_name or _configured_timezone_name()
     if not active_tz:
         return data
@@ -158,28 +190,25 @@ def enrich_timestamps(data: Any, tz_name: str | None = None) -> Any:
 
     enriched: dict[str, Any] = {}
     for key, value in data.items():
-        transformed = enrich_timestamps(value, active_tz)
-        enriched[key] = transformed
-        if (
-            key in _TIMESTAMP_KEYS
-            and value is not None
-            and f"{key}_local" not in data
-            and f"{key}_local_label" not in data
-        ):
-            local_fields = _local_timestamp_fields(value, active_tz)
-            if local_fields:
-                enriched[f"{key}_local"] = local_fields["local"]
-                enriched[f"{key}_local_label"] = local_fields["local_label"]
+        if key.endswith("_local") or key.endswith("_local_label"):
+            base = key.rsplit("_local", 1)[0]
+            if base in _TIMESTAMP_KEYS:
+                continue
+        if key in _TIMESTAMP_KEYS and value is not None:
+            localized = _localize_timestamp(value, active_tz)
+            enriched[key] = localized if localized is not None else value
+            continue
+        enriched[key] = enrich_timestamps(value, active_tz)
 
     return enriched
 
 
 def dump_json(data: Any, **kwargs: Any) -> str:
-    """JSON-encode a payload after enriching timestamp fields for local display.
+    """JSON-encode a payload after rewriting timestamps to local ISO.
 
     This is the canonical tool-response serializer. Prefer it over
-    ``json.dumps`` so every response picks up local-time siblings when
-    ``OURO_MCP_TIMEZONE`` is set.
+    ``json.dumps`` so every response gets compact local-timezone timestamps
+    when ``OURO_MCP_TIMEZONE`` is set (see ``enrich_timestamps``).
     """
     return json.dumps(enrich_timestamps(data), default=str, **kwargs)
 
@@ -356,9 +385,16 @@ def format_asset_summary(asset: Any) -> dict:
         "visibility": asset.visibility,
         "created_at": asset.created_at.isoformat() if asset.created_at else None,
         "last_updated": asset.last_updated.isoformat() if asset.last_updated else None,
-        "state": getattr(asset, "state", None),
-        "source": getattr(asset, "source", None),
     }
+    # `state` / `source` are nullable per asset type and emit as `null` for most
+    # rows (posts, files, comments, etc.). Skip them when absent to keep summary
+    # rows compact in list/search responses.
+    state = getattr(asset, "state", None)
+    if state is not None:
+        summary["state"] = state
+    source = getattr(asset, "source", None)
+    if source is not None:
+        summary["source"] = source
 
     if asset.description:
         summary["description"] = description_to_markdown(asset.description, max_length=500)
