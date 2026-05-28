@@ -28,6 +28,56 @@ _TIMESTAMP_KEYS = {
 }
 
 
+_HEAVY_RESPONSE_KEYS = frozenset({"embedding", "fts"})
+
+
+def strip_heavy_fields(value: Any) -> Any:
+    """Recursively drop vector/search fields that waste agent context.
+
+    Tag catalogue rows and nested ``tag:tags(*)`` joins include 768-dim
+    ``embedding`` vectors (and generated ``fts``). Those are for search
+    indexing only — agents never need them in tool responses.
+    """
+    if isinstance(value, list):
+        return [strip_heavy_fields(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    cleaned: dict[str, Any] = {}
+    for key, item in value.items():
+        if key in _HEAVY_RESPONSE_KEYS:
+            continue
+        cleaned[key] = strip_heavy_fields(item)
+    return cleaned
+
+
+def slim_asset_tags(tags: Any) -> list[dict[str, Any]] | None:
+    """Shrink asset tag rows for MCP — metadata only, no vectors."""
+    if not isinstance(tags, list) or not tags:
+        return None
+
+    slimmed: list[dict[str, Any]] = []
+    for row in tags:
+        if not isinstance(row, dict):
+            continue
+        tag = row.get("tag") if isinstance(row.get("tag"), dict) else {}
+        tag_summary = optional_kwargs(
+            id=str(tag["id"]) if tag.get("id") is not None else None,
+            name=tag.get("name"),
+            slug=tag.get("slug"),
+            type=tag.get("type"),
+            description=tag.get("description"),
+        )
+        entry = optional_kwargs(
+            source=row.get("source"),
+            confidence=row.get("confidence"),
+            tag=tag_summary or None,
+        )
+        if entry:
+            slimmed.append(entry)
+    return slimmed or None
+
+
 def slim_connection_graph(connections: Any, current_asset_id: str | None = None) -> Any:
     """Shrink connection payloads from the Ouro API for MCP tool responses.
 
@@ -503,7 +553,13 @@ def optional_kwargs(**kw: Any) -> dict:
 
 
 def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
-    """Return the simple keyed asset-input contract an agent should use."""
+    """Return the simple keyed asset-input contract an agent should use.
+
+    Prefers ``input_assets`` (plural keyed declarations). Falls back to a
+    single-entry summary synthesized from the legacy ``input_type`` column
+    when the route hasn't been migrated yet. The result is keyed by the
+    request body field name the route expects.
+    """
     raw = _getv(route, "input_assets") or {}
     result: dict[str, Any] = {}
 
@@ -512,16 +568,64 @@ def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
             config = config if isinstance(config, dict) else {}
             result[name] = optional_kwargs(
                 asset_type=config.get("asset_type") or config.get("assetType"),
+                primary=config.get("primary"),
                 input_filter=config.get("input_filter") or config.get("inputFilter"),
-                input_file_extension=config.get("input_file_extension")
-                or config.get("inputFileExtension"),
-                input_file_extensions=config.get("input_file_extensions")
+                file_extensions=config.get("file_extensions")
+                or config.get("fileExtensions")
+                or config.get("input_file_extensions")
                 or config.get("inputFileExtensions"),
+                contains_file_extensions=config.get("contains_file_extensions")
+                or config.get("containsFileExtensions"),
             )
 
     input_type = _getv(route, "input_type")
     if input_type and not result:
-        result[str(input_type)] = {"asset_type": input_type}
+        legacy_extensions = (
+            _getv(route, "input_file_extensions")
+            or ([_getv(route, "input_file_extension")] if _getv(route, "input_file_extension") else None)
+        )
+        result[str(input_type)] = optional_kwargs(
+            asset_type=input_type,
+            primary=True,
+            input_filter=_getv(route, "input_filter"),
+            file_extensions=legacy_extensions,
+        )
+
+    return result or None
+
+
+def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
+    """Return the keyed asset-output contract a route will produce.
+
+    Mirrors :func:`route_input_assets_summary`. Prefers plural keyed
+    ``output_assets`` and falls back to a single-entry summary synthesized
+    from the legacy ``output_type`` and ``output_file_extension`` columns.
+    The result tells the agent which response body fields will resolve to
+    Ouro assets, and what each declared asset looks like.
+    """
+    raw = _getv(route, "output_assets") or {}
+    result: dict[str, Any] = {}
+
+    if isinstance(raw, dict):
+        for name, config in raw.items():
+            config = config if isinstance(config, dict) else {}
+            result[name] = optional_kwargs(
+                asset_type=config.get("asset_type") or config.get("assetType"),
+                primary=config.get("primary"),
+                file_extensions=config.get("file_extensions")
+                or config.get("fileExtensions")
+                or config.get("output_file_extensions")
+                or config.get("outputFileExtensions"),
+            )
+
+    output_type = _getv(route, "output_type")
+    if output_type and not result:
+        legacy_extension = _getv(route, "output_file_extension")
+        result[str(output_type)] = optional_kwargs(
+            asset_type=output_type,
+            primary=True,
+            file_extensions=[legacy_extension] if legacy_extension else None,
+        )
 
     return result or None
 

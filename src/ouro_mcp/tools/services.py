@@ -17,6 +17,7 @@ from ouro_mcp.utils import (
     format_pay_per_use_cost_summary,
     list_response,
     route_input_assets_summary,
+    route_output_assets_summary,
     route_request_body_without_input_assets,
     truncate_response,
 )
@@ -622,6 +623,9 @@ def register(mcp: FastMCP) -> None:
                 ),
                 "expected_input_assets": (
                     route_input_assets_summary(route.route) if route.route else None
+                ),
+                "expected_output_assets": (
+                    route_output_assets_summary(route.route) if route.route else None
                 ),
             }
             cost_preview = _format_route_cost_preview(route)

@@ -84,14 +84,14 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 
 | Tool | Description |
 |---|---|
-| `create_quest` | Create a new quest with optional task items |
+| `create_quest` | Create a quest (`type`: `closable` or `continuous`) with optional task items |
 | `update_quest` | Update a quest's description or metadata |
 | `list_quest_items` | List items for a quest with status and progress |
 | `create_quest_items` | Batch-add items to an existing quest |
 | `update_quest_item` | Update an item's metadata or status |
 | `complete_quest_item` | Self-complete a quest item (creates an auto-accepted entry) |
 | `delete_quest_item` | Remove an item from a quest |
-| `submit_quest_entry` | Submit an entry to a quest, optionally for a specific item |
+| `submit_quest_entry` | Submit an entry (closable: one active per item per user; continuous: unlimited) |
 | `list_quest_entries` | List quest entries with status filtering and pagination |
 | `review_quest_entry` | Accept or reject a quest entry |
 
@@ -126,6 +126,12 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 |---|---|
 | `get_notifications` | List notifications (supports filtering by org, unread) |
 | `read_notification` | Mark a notification as read |
+
+## Prompts
+
+- `quest_authoring_guide` — Helps agents draft clear, reviewable quests by choosing an org/team,
+  selecting draft vs open, picking closable vs continuous, writing acceptance criteria, and attaching
+  rewards only when the budget and payout policy are clear.
 
 ## Setup
 

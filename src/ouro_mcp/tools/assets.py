@@ -17,8 +17,11 @@ from ouro_mcp.utils import (
     optional_kwargs,
     org_summary,
     route_input_assets_summary,
+    route_output_assets_summary,
     route_request_body_without_input_assets,
+    slim_asset_tags,
     slim_connection_graph,
+    strip_heavy_fields,
     team_summary,
     truncate_response,
     user_summary,
@@ -63,7 +66,7 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
         asset = ouro.assets.retrieve(id)
         if detail == "full":
-            result = _format_asset_detail(asset, ouro)
+            result = strip_heavy_fields(_format_asset_detail(asset, ouro))
         else:
             result = format_asset_summary(asset)
         _enrich_counts(result, ouro, id)
@@ -385,7 +388,7 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
     try:
         creation_action = ouro.assets.creation_actions(asset_id)
         if creation_action:
-            result["creation_action"] = creation_action
+            result["creation_action"] = strip_heavy_fields(creation_action)
     except Exception:
         log.debug("Failed to fetch creation action for %s", asset_id, exc_info=True)
 
@@ -397,7 +400,7 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
         log.debug("Failed to fetch connections for %s", asset_id, exc_info=True)
 
     try:
-        tags = ouro.assets.tags(asset_id)
+        tags = slim_asset_tags(ouro.assets.tags(asset_id))
         if tags:
             result["tags"] = tags
     except Exception:
@@ -464,6 +467,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             base["parameters"] = asset.route.parameters
             base["request_body"] = route_request_body_without_input_assets(asset.route)
             base["input_assets"] = route_input_assets_summary(asset.route)
+            base["output_assets"] = route_output_assets_summary(asset.route)
             base["output_type"] = asset.route.output_type
 
     elif asset_type == "quest":

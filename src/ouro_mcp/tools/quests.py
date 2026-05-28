@@ -38,16 +38,26 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         items: Annotated[
-            Optional[List[str]],
+            Optional[List[Union[str, Dict[str, Any]]]],
             Field(
                 description=(
                     "List of task descriptions to create as quest items. "
-                    "Each string becomes an item with status 'pending'."
+                    "Each string becomes an item with status 'pending'. "
+                    "Objects may include item fields such as description, assignee_id, "
+                    "reward_amount, eval_route_id, or submission_assets."
                 )
             ),
         ] = None,
         visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "public",
-        type: Annotated[str, Field(description='"closable" | "continuous"')] = "closable",
+        type: Annotated[
+            str,
+            Field(
+                description=(
+                    '"closable" | "continuous". Closable: one active entry per '
+                    "contributor per item. Continuous: unlimited entries per item."
+                )
+            ),
+        ] = "closable",
         status: Annotated[
             str,
             Field(description='"draft" | "open" | "closed" | "cancelled"'),
@@ -57,6 +67,9 @@ def register(mcp: FastMCP) -> None:
 
         The description is prose context. Items are the structured work plan —
         each item becomes a trackable task that can be completed or assigned.
+
+        Quest type controls entry limits: closable allows one active submission per
+        contributor per item; continuous allows unlimited submissions per item.
 
         Asset references in description:
         - Inline links: prefer [label](post:|file:|dataset:|route:|service:<uuid>).
@@ -81,7 +94,19 @@ def register(mcp: FastMCP) -> None:
 
         result = format_asset_summary(quest)
         if quest.items:
-            result["items"] = [{"id": str(i.id), "description": i.description, "status": i.status} for i in quest.items]
+            result["items"] = [
+                {
+                    "id": str(i.id),
+                    "description": i.description,
+                    "status": i.status,
+                    **(
+                        {"assignee_id": str(getattr(i, "assignee_id"))}
+                        if getattr(i, "assignee_id", None)
+                        else {}
+                    ),
+                }
+                for i in quest.items
+            ]
         return dump_json(result)
 
     @mcp.tool(annotations={"idempotentHint": True})
@@ -140,6 +165,46 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
+    def list_assigned_quest_items(
+        ctx: Context,
+        status: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Comma-separated item statuses to include. Defaults to "
+                    "'pending,in_progress'. Pass 'all' to include terminal items."
+                )
+            ),
+        ] = None,
+        assignee_id: Annotated[
+            Optional[str],
+            Field(description="User UUID to filter by; defaults to the authenticated user"),
+        ] = None,
+        org_id: Annotated[Optional[str], Field(description="Organization UUID filter")] = None,
+        team_id: Annotated[Optional[str], Field(description="Team UUID filter")] = None,
+        limit: Annotated[int, Field(description="Page size, 1-100")] = 20,
+        offset: Annotated[int, Field(description="Offset for pagination")] = 0,
+    ) -> str:
+        """List actionable quest items assigned to the authenticated user.
+
+        Use this as an agent work inbox for quests planned by someone else.
+        The returned item IDs can be used with list_quest_items, update_quest_item,
+        submit_quest_entry, or complete_quest_item depending on permissions.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        result = ouro.quests.list_assigned_items(
+            status=status,
+            assignee_id=assignee_id,
+            org_id=org_id,
+            team_id=team_id,
+            limit=limit,
+            offset=offset,
+            with_pagination=True,
+        )
+        return dump_json(result)
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    @handle_ouro_errors
     def list_quest_items(
         quest_id: Annotated[str, Field(description="Quest UUID")],
         ctx: Context,
@@ -179,10 +244,11 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Items to add. Each element is either a plain description "
                     "string or a full item object with any of: description, "
+                    "assignee_id, "
                     "expected_asset_type, reward_currency ('btc'|'usd'), "
                     "reward_amount (sats for btc, cents for usd), reward_xp, "
                     "eval_route_id, eval_score_path, eval_pass_min, "
-                    "eval_pass_max, eval_input_key."
+                    "eval_pass_max, submission_assets, eval_static_inputs."
                 )
             ),
         ],
@@ -198,6 +264,11 @@ def register(mcp: FastMCP) -> None:
                     "description": i.description,
                     "status": i.status,
                     "sort_order": i.sort_order,
+                    "assignee_id": (
+                        str(getattr(i, "assignee_id"))
+                        if getattr(i, "assignee_id", None)
+                        else None
+                    ),
                     "expected_asset_type": getattr(i, "expected_asset_type", None),
                     "reward_currency": i.reward_currency,
                     "reward_amount": i.reward_amount,
@@ -206,7 +277,8 @@ def register(mcp: FastMCP) -> None:
                     "eval_score_path": getattr(i, "eval_score_path", None),
                     "eval_pass_min": getattr(i, "eval_pass_min", None),
                     "eval_pass_max": getattr(i, "eval_pass_max", None),
-                    "eval_input_key": getattr(i, "eval_input_key", None),
+                    "submission_assets": getattr(i, "submission_assets", None),
+                    "eval_static_inputs": getattr(i, "eval_static_inputs", None),
                 }
                 for i in created
             ]
@@ -224,6 +296,10 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         description: Annotated[Optional[str], Field(description="Updated task description")] = None,
         notes: Annotated[Optional[str], Field(description="Internal notes on this item")] = None,
+        assignee_id: Annotated[
+            Optional[str],
+            Field(description="User UUID assigned to this item"),
+        ] = None,
         sort_order: Annotated[
             Optional[int],
             Field(description="1-indexed display order for the item in quest lists"),
@@ -244,13 +320,13 @@ def register(mcp: FastMCP) -> None:
             Optional[float],
             Field(description="Inclusive maximum passing score"),
         ] = None,
-        eval_input_key: Annotated[
-            Optional[str],
-            Field(description="Route input_assets key to bind the submitted asset to"),
+        submission_assets: Annotated[
+            Optional[Dict[str, Any]],
+            Field(description="Keyed submission declarations for non-eval items"),
         ] = None,
-        expected_asset_type: Annotated[
-            Optional[str],
-            Field(description="Asset type expected on submitted entries"),
+        eval_static_inputs: Annotated[
+            Optional[Dict[str, str]],
+            Field(description="Pinned route inputs: key → asset UUID"),
         ] = None,
         reward_currency: Annotated[
             Optional[str],
@@ -280,13 +356,14 @@ def register(mcp: FastMCP) -> None:
                 status=status,
                 description=description,
                 notes=notes,
+                assignee_id=assignee_id,
                 sort_order=sort_order,
                 eval_route_id=eval_route_id,
                 eval_score_path=eval_score_path,
                 eval_pass_min=eval_pass_min,
                 eval_pass_max=eval_pass_max,
-                eval_input_key=eval_input_key,
-                expected_asset_type=expected_asset_type,
+                submission_assets=submission_assets,
+                eval_static_inputs=eval_static_inputs,
                 reward_currency=reward_currency,
                 reward_amount=reward_amount,
                 reward_xp=reward_xp,
@@ -298,6 +375,11 @@ def register(mcp: FastMCP) -> None:
                 "description": updated.description,
                 "status": updated.status,
                 "sort_order": updated.sort_order,
+                "assignee_id": (
+                    str(getattr(updated, "assignee_id"))
+                    if getattr(updated, "assignee_id", None)
+                    else None
+                ),
                 "reward_currency": updated.reward_currency,
                 "reward_amount": updated.reward_amount,
             }
@@ -320,28 +402,24 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
-        asset_id: Annotated[
-            Optional[str],
-            Field(description="UUID of the produced asset (post, file, dataset, etc.)"),
-        ] = None,
-        asset_type: Annotated[
-            Optional[str],
-            Field(description="Asset type of the produced asset (required if asset_id is set)"),
+        assets: Annotated[
+            Optional[Dict[str, Union[str, Dict[str, str]]]],
+            Field(
+                description='Optional keyed assets, e.g. {"file": "<uuid>"}.'
+            ),
         ] = None,
     ) -> str:
         """Self-complete an item. Creates an auto-accepted entry and marks the item done.
 
-        Provide either an asset_id (for items that produce an asset) or a description (for items that
-        don't), or both. The description accepts extended markdown and should explain
-        what was done and why.
+        Provide ``assets`` when linking produced files or other inputs, and/or a
+        substantive ``description`` markdown note.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         content = content_from_markdown(ouro, description) if description else None
         result = ouro.quests.complete_item(
             quest_id,
             item_id,
-            asset_id=asset_id,
-            asset_type=asset_type,
+            assets=assets,
             description=content,
         )
         return dump_json(result)
@@ -365,35 +443,48 @@ def register(mcp: FastMCP) -> None:
     def submit_quest_entry(
         quest_id: Annotated[str, Field(description="Quest UUID")],
         ctx: Context,
-        item_id: Annotated[
-            Optional[str],
-            Field(description="Optional quest item UUID this entry addresses"),
-        ] = None,
-        asset_id: Annotated[
-            Optional[str],
-            Field(description="Optional submitted asset UUID"),
-        ] = None,
-        asset_type: Annotated[
-            Optional[str],
-            Field(description="Asset type of asset_id, required when asset_id is set"),
-        ] = None,
+        item_id: Annotated[str, Field(description="Quest item UUID to submit against")],
         description_markdown: Annotated[
-            Optional[str],
-            Field(description="Extended markdown describing the submission"),
+            str,
+            Field(
+                description=(
+                    "Required markdown explanation of the submission for the "
+                    "reviewer to read before accepting."
+                )
+            ),
+        ],
+        assets: Annotated[
+            Optional[Dict[str, Union[str, Dict[str, str]]]],
+            Field(
+                description=(
+                    'Asset submissions: {"<input_key>": "<uuid>"} '
+                    "(e.g. {\"file\": \"<cif-uuid>\"} on eval items)."
+                )
+            ),
         ] = None,
     ) -> str:
-        """Submit an entry to a quest. Use item_id when addressing a specific quest item."""
+        """Submit an entry to a quest item.
+
+        Pass ``item_id`` and ``assets`` (one UUID per submission input key from the
+        item's submission_assets / eval route). Example: ``assets={"file": "<cif-uuid>"}``.
+
+        Provide ``description_markdown`` with the contributor's explanation. For
+        paid items, the quest author reviews that description and deterministic
+        judge signals, not the underlying asset contents, until they accept the
+        entry. Private assets stay private until accept.
+
+        Closable quests: one active (submitted/accepted) entry per contributor per
+        item — a second submit for the same item_id fails until the prior entry is
+        rejected. Continuous quests: unlimited entries per item. Each asset can
+        only be on one active entry per quest. Check quest type via get_asset(quest_id)
+        before retrying.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
-        content = (
-            content_from_markdown(ouro, description_markdown)
-            if description_markdown
-            else None
-        )
+        content = content_from_markdown(ouro, description_markdown)
         entry = ouro.quests.create_entry(
             quest_id,
             item_id=item_id,
-            asset_id=asset_id,
-            asset_type=asset_type,
+            assets=assets,
             description=content,
         )
         return dump_json(entry.model_dump(mode="json"))

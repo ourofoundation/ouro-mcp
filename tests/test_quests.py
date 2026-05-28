@@ -23,6 +23,14 @@ class _FakeModel(SimpleNamespace):
         return dict(self.__dict__)
 
 
+class _FakeContent:
+    def __init__(self) -> None:
+        self.text = ""
+
+    def from_markdown(self, markdown: str) -> None:
+        self.text = markdown
+
+
 class _FakeQuests:
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -76,6 +84,20 @@ class _FakeQuests:
             for idx, item in enumerate(items)
         ]
 
+    def list_assigned_items(self, **kwargs):
+        self.calls.append({"method": "list_assigned_items", **kwargs})
+        return {
+            "data": [
+                {
+                    "id": "item-1",
+                    "quest_id": "quest-1",
+                    "description": "Assigned task",
+                    "status": "pending",
+                }
+            ],
+            "pagination": {"hasMore": False},
+        }
+
     def update_item(self, quest_id: str, item_id: str, **kwargs):
         self.calls.append(
             {
@@ -120,7 +142,12 @@ class _FakeQuests:
 def _ctx(quests: _FakeQuests) -> SimpleNamespace:
     return SimpleNamespace(
         request_context=SimpleNamespace(
-            lifespan_context=SimpleNamespace(ouro=SimpleNamespace(quests=quests))
+            lifespan_context=SimpleNamespace(
+                ouro=SimpleNamespace(
+                    quests=quests,
+                    posts=SimpleNamespace(Content=_FakeContent),
+                )
+            )
         )
     )
 
@@ -131,6 +158,59 @@ def _quest_tools() -> dict[str, object]:
     return mcp.tools
 
 
+def test_list_assigned_quest_items_calls_sdk() -> None:
+    quests = _FakeQuests()
+    result = json.loads(
+        _quest_tools()["list_assigned_quest_items"](
+            _ctx(quests),
+            status="pending,in_progress",
+            assignee_id="user-1",
+            org_id="org-1",
+            team_id="team-1",
+            limit=5,
+            offset=10,
+        )
+    )
+
+    assert result["data"][0]["description"] == "Assigned task"
+    assert quests.calls == [
+        {
+            "method": "list_assigned_items",
+            "status": "pending,in_progress",
+            "assignee_id": "user-1",
+            "org_id": "org-1",
+            "team_id": "team-1",
+            "limit": 5,
+            "offset": 10,
+            "with_pagination": True,
+        }
+    ]
+
+
+def test_submit_quest_entry_passes_keyed_assets() -> None:
+    quests = _FakeQuests()
+    json.loads(
+        _quest_tools()["submit_quest_entry"](
+            "quest-1",
+            _ctx(quests),
+            item_id="item-1",
+            description_markdown="Submission notes",
+            assets={"file": "asset-1"},
+        )
+    )
+
+    assert quests.calls == [
+        {
+            "method": "create_entry",
+            "quest_id": "quest-1",
+            "item_id": "item-1",
+            "assets": {"file": "asset-1"},
+            "description": quests.calls[0]["description"],
+        }
+    ]
+    assert quests.calls[0]["description"].text == "Submission notes"
+
+
 def test_submit_quest_entry_calls_sdk() -> None:
     quests = _FakeQuests()
     result = json.loads(
@@ -138,8 +218,8 @@ def test_submit_quest_entry_calls_sdk() -> None:
             "quest-1",
             _ctx(quests),
             item_id="item-1",
-            asset_id="asset-1",
-            asset_type="dataset",
+            description_markdown="Dataset submission notes",
+            assets={"dataset": "asset-1"},
         )
     )
 
@@ -149,15 +229,34 @@ def test_submit_quest_entry_calls_sdk() -> None:
             "method": "create_entry",
             "quest_id": "quest-1",
             "item_id": "item-1",
-            "asset_id": "asset-1",
-            "asset_type": "dataset",
-            "description": None,
+            "assets": {"dataset": "asset-1"},
+            "description": quests.calls[0]["description"],
         }
     ]
+    assert quests.calls[0]["description"].text == "Dataset submission notes"
 
 
 def test_list_quest_entries_returns_list_envelope() -> None:
     quests = _FakeQuests()
+
+    def list_entries(quest_id: str, **kwargs):
+        quests.calls.append(
+            {"method": "list_entries", "quest_id": quest_id, **kwargs}
+        )
+        return {
+            "data": [
+                _FakeModel(
+                    id="entry-1",
+                    status="accepted",
+                    assets={"file": {"asset_id": "asset-1", "asset_type": "file"}},
+                    embedded_assets=[],
+                    users=[],
+                )
+            ],
+            "pagination": {"hasMore": False, "limit": kwargs["limit"]},
+        }
+
+    quests.list_entries = list_entries
     result = json.loads(
         _quest_tools()["list_quest_entries"](
             "quest-1",
@@ -168,7 +267,10 @@ def test_list_quest_entries_returns_list_envelope() -> None:
         )
     )
 
-    assert result["results"] == [{"id": "entry-1", "status": "accepted"}]
+    assert result["results"][0]["assets"] == {
+        "file": {"asset_id": "asset-1", "asset_type": "file"}
+    }
+    assert result["results"][0]["embedded_assets"] == []
     assert result["hasMore"] is False
     assert quests.calls == [
         {
@@ -218,7 +320,6 @@ def test_create_quest_items_accepts_strings_and_dicts() -> None:
     assert result[1]["reward_amount"] == 1500
     assert result[1]["eval_route_id"] == "route-1"
     assert result[1]["eval_pass_min"] == 0.7
-    assert result[1]["eval_input_key"] == "submission"
     assert result[1]["expected_asset_type"] == "dataset"
 
 
@@ -234,11 +335,10 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
             reward_amount=2500,
             reward_xp=15,
             eval_route_id="route-2",
-            eval_pass_min=0.5,
-            eval_pass_max=1.0,
-            expected_asset_type="post",
-        )
+        eval_pass_min=0.5,
+        eval_pass_max=1.0,
     )
+)
 
     assert quests.calls == [
         {
@@ -252,7 +352,6 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
             "eval_route_id": "route-2",
             "eval_pass_min": 0.5,
             "eval_pass_max": 1.0,
-            "expected_asset_type": "post",
         }
     ]
 

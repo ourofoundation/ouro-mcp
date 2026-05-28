@@ -9,6 +9,7 @@ from ouro_mcp.tools.services import _format_route_cost_preview, _parse_json_para
 from ouro_mcp.utils import (
     format_monetization_block,
     route_input_assets_summary,
+    route_output_assets_summary,
     route_request_body_without_input_assets,
 )
 
@@ -75,8 +76,67 @@ def test_route_input_assets_summary_returns_supported_metadata() -> None:
     )
 
     assert route_input_assets_summary(route) == {
-        "file": {"asset_type": "file", "input_file_extensions": ["cif"]}
+        "file": {"asset_type": "file", "file_extensions": ["cif"]}
     }
+
+
+def test_route_input_assets_summary_synthesizes_legacy_input_type() -> None:
+    route = SimpleNamespace(
+        input_type="file",
+        input_assets=None,
+        input_filter=None,
+        input_file_extension="cif",
+        input_file_extensions=None,
+    )
+
+    assert route_input_assets_summary(route) == {
+        "file": {
+            "asset_type": "file",
+            "primary": True,
+            "file_extensions": ["cif"],
+        }
+    }
+
+
+def test_route_output_assets_summary_prefers_plural_declarations() -> None:
+    route = SimpleNamespace(
+        output_type="file",
+        output_assets={
+            "primary_file": {
+                "asset_type": "file",
+                "primary": True,
+                "file_extensions": ["cif"],
+            },
+            "audit_log": {"asset_type": "post"},
+        },
+        output_file_extension=None,
+    )
+
+    assert route_output_assets_summary(route) == {
+        "primary_file": {
+            "asset_type": "file",
+            "primary": True,
+            "file_extensions": ["cif"],
+        },
+        "audit_log": {"asset_type": "post"},
+    }
+
+
+def test_route_output_assets_summary_synthesizes_legacy_output_type() -> None:
+    route = SimpleNamespace(
+        output_type="post",
+        output_assets=None,
+        output_file_extension=None,
+    )
+
+    assert route_output_assets_summary(route) == {
+        "post": {"asset_type": "post", "primary": True}
+    }
+
+
+def test_route_output_assets_summary_returns_none_when_no_outputs() -> None:
+    route = SimpleNamespace(output_type=None, output_assets=None)
+    assert route_output_assets_summary(route) is None
 
 
 def test_btc_pay_per_use_cost_summary_uses_sats() -> None:

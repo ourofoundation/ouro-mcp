@@ -106,7 +106,8 @@ These values are always resolved (never null) in get_teams/get_team responses:
 
 **Quests and entries**:
 - Use get_asset(quest_id, detail="full") or list_quest_items(quest_id=...) to inspect quest work before acting.
-- Use submit_quest_entry(quest_id, item_id=..., asset_id=..., asset_type=...) to contribute an asset to a quest item.
+- Quest type: closable = one active entry per contributor per item (submitted/accepted); continuous = unlimited entries per item. Set type on create_quest.
+- Use submit_quest_entry(quest_id, item_id=..., description_markdown=..., assets={"<input_key>": "<uuid>"}) to contribute (e.g. {"file": "<cif-uuid>"} on eval items). On closable quests, reject the prior entry before resubmitting the same item.
 - Use list_quest_entries(quest_id=..., status=...) to review submitted, accepted, or rejected entries.
 - Use review_quest_entry(quest_id, entry_id, status="accepted"|"rejected") only when the caller has authority to review the quest.
 - Use complete_quest_item only for owner/admin self-completion; normal contributors should submit entries.
@@ -134,12 +135,14 @@ mcp = FastMCP(
 
 apply_ouro_mcp_logging(_mcp_log_level)
 
-# Register all tools and resources
+# Register all tools, resources, and prompts
+from ouro_mcp.prompts import register_all_prompts  # noqa: E402
 from ouro_mcp.resources import register_all_resources  # noqa: E402
 from ouro_mcp.tools import register_all_tools  # noqa: E402
 
 register_all_tools(mcp)
 register_all_resources(mcp)
+register_all_prompts(mcp)
 
 
 def main():
