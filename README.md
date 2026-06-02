@@ -89,9 +89,9 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `list_quest_items` | List items for a quest with status and progress |
 | `create_quest_items` | Batch-add items to an existing quest |
 | `update_quest_item` | Update an item's metadata or status |
-| `complete_quest_item` | Self-complete a quest item (creates an auto-accepted entry) |
+| `complete_quest_item` | Self-complete an open quest item (creates an auto-accepted entry) |
 | `delete_quest_item` | Remove an item from a quest |
-| `submit_quest_entry` | Submit an entry (closable: one active per item per user; continuous: unlimited) |
+| `submit_quest_entry` | Submit an entry to an open quest (closable: one active per item per user; continuous: unlimited) |
 | `list_quest_entries` | List quest entries with status filtering and pagination |
 | `review_quest_entry` | Accept or reject a quest entry |
 

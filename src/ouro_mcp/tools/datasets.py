@@ -14,6 +14,7 @@ from ouro_mcp.utils import (
     format_asset_summary,
     optional_kwargs,
     resolve_local_path,
+    slim_connection_graph,
     truncate_response,
 )
 from pydantic import BeforeValidator, Field
@@ -83,6 +84,27 @@ def _coerce_data(data: Any) -> Any:
     raise ValueError(f"data must be a JSON string, list, or dict — got {type(data).__name__}")
 
 
+def _coerce_string_list(value: Any, *, parameter_name: str) -> Optional[list[str]]:
+    """Accept a list of strings or a JSON array string and return a list."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            # Allow a bare comma-separated list as a convenience.
+            return [part.strip() for part in text.split(",") if part.strip()]
+        value = parsed
+    if isinstance(value, list):
+        if any(not isinstance(item, str) for item in value):
+            raise ValueError(f"{parameter_name} must be a list of column-name strings.")
+        return list(value)
+    raise ValueError(f"{parameter_name} must be a JSON array of column-name strings.")
+
+
 def _coerce_json_object(value: Any, *, parameter_name: str) -> Optional[dict[str, Any]]:
     if value is None:
         return None
@@ -132,6 +154,91 @@ def _json_records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
     return rows
 
 
+def _asset_refs_from_schema(schema: Any) -> dict[str, dict[str, Any]]:
+    refs: dict[str, dict[str, Any]] = {}
+    for field in schema or []:
+        if not isinstance(field, dict) or field.get("semantic_type") != "asset_ref":
+            continue
+        column = field.get("column_name")
+        if not column:
+            continue
+        entry: dict[str, Any] = {}
+        if field.get("asset_type"):
+            entry["asset_type"] = field["asset_type"]
+        refs[str(column)] = entry
+    return refs
+
+
+def _normalize_asset_refs_for_result(value: Optional[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    refs: dict[str, dict[str, Any]] = {}
+    for column, hint in (value or {}).items():
+        if hint is None:
+            refs[str(column)] = {}
+        elif isinstance(hint, str):
+            refs[str(column)] = {"asset_type": hint}
+        elif isinstance(hint, dict):
+            entry: dict[str, Any] = {}
+            if hint.get("asset_type"):
+                entry["asset_type"] = hint["asset_type"]
+            refs[str(column)] = entry
+    return refs
+
+
+def _merge_asset_ref_hints(
+    refs: dict[str, dict[str, Any]],
+    hints: Optional[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    merged = {column: dict(value) for column, value in refs.items()}
+    for column, hint in _normalize_asset_refs_for_result(hints).items():
+        current = merged.get(column, {})
+        if hint.get("asset_type") and not current.get("asset_type"):
+            current["asset_type"] = hint["asset_type"]
+        merged[column] = current
+    return merged
+
+
+def _dataset_proof(
+    ouro: Any,
+    dataset_id: str,
+    declared_asset_refs: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Collect lightweight verification data after create/update."""
+    proof: dict[str, Any] = {}
+
+    try:
+        schema = ouro.datasets.schema(dataset_id)
+        proof["schema"] = schema
+        proof["asset_refs"] = _merge_asset_ref_hints(
+            _asset_refs_from_schema(schema),
+            declared_asset_refs,
+        )
+    except Exception:
+        proof["schema"] = None
+        proof["asset_refs"] = _merge_asset_ref_hints({}, declared_asset_refs)
+
+    try:
+        page = ouro.datasets.query(
+            dataset_id,
+            limit=5,
+            with_pagination=True,
+            resolve_asset_refs=True,
+        )
+        proof["resolved_asset_refs_preview"] = page.get("resolved_asset_refs") or {}
+    except Exception:
+        proof["resolved_asset_refs_preview"] = {}
+
+    try:
+        if hasattr(ouro, "assets"):
+            proof["connections"] = slim_connection_graph(
+                ouro.assets.connections(dataset_id),
+                current_asset_id=dataset_id,
+            )
+    except Exception:
+        proof["connections"] = {}
+
+    return proof
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -152,6 +259,19 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         limit: Annotated[int, Field(description="Max rows to return (1-1000)")] = 100,
         offset: Annotated[int, Field(description="Row offset for pagination")] = 0,
+        resolve_asset_refs: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Resolve asset-reference columns (columns with "
+                    'semantic_type "asset_ref" in the schema, which hold Ouro '
+                    "asset ids) into names/types/URLs. Returns a "
+                    "`resolved_asset_refs` sidecar map (column -> id -> "
+                    "{asset_id, asset_type, name, web_url}). Permission-aware: "
+                    "ids you can't see are omitted. Not supported with sql."
+                )
+            ),
+        ] = False,
     ) -> str:
         """Query a dataset's contents as JSON records.
 
@@ -160,6 +280,10 @@ def register(mcp: FastMCP) -> None:
         ``ouro.datasets.query(dataset_id, sql=...)`` from ouro-py. Always
         reference the table as ``{{table}}`` in SQL mode. Writes are rejected
         server-side and queries time out after 10 seconds.
+
+        Inspect the schema first (``ouro://datasets/{id}/schema``): columns with
+        ``semantic_type: "asset_ref"`` hold Ouro asset ids. Pass
+        ``resolve_asset_refs=true`` when you need their names, types, or URLs.
         """
         if sql is not None:
             if not sql.strip():
@@ -168,6 +292,11 @@ def register(mcp: FastMCP) -> None:
                 raise ValueError(
                     "limit/offset are not compatible with sql; include "
                     "LIMIT/OFFSET in the SQL query instead."
+                )
+            if resolve_asset_refs:
+                raise ValueError(
+                    "resolve_asset_refs is not supported with sql; use the "
+                    "paginated (non-sql) query mode instead."
                 )
 
             ouro = ctx.request_context.lifespan_context.ouro
@@ -194,20 +323,23 @@ def register(mcp: FastMCP) -> None:
             limit=limit,
             offset=offset,
             with_pagination=True,
+            resolve_asset_refs=resolve_asset_refs,
         )
         df = page["data"]
         pagination = page.get("pagination") or {}
 
         rows = _json_records_from_dataframe(df)
 
-        result = dump_json(
-            {
-                "rows": rows,
-                "offset": offset,
-                "limit": limit,
-                "hasMore": bool(pagination.get("hasMore")),
-            }
-        )
+        payload: dict[str, Any] = {
+            "rows": rows,
+            "offset": offset,
+            "limit": limit,
+            "hasMore": bool(pagination.get("hasMore")),
+        }
+        if resolve_asset_refs:
+            payload["resolved_asset_refs"] = page.get("resolved_asset_refs") or {}
+
+        result = dump_json(payload)
 
         return truncate_response(
             result,
@@ -236,8 +368,25 @@ def register(mcp: FastMCP) -> None:
             str, Field(description='"public" | "private" | "organization"')
         ] = "private",
         description: Annotated[Optional[str], Field(description="Dataset description")] = None,
+        asset_refs: Annotated[
+            Optional[str | dict[str, Any]],
+            Field(
+                description=(
+                    "Columns that hold Ouro asset ids, keyed by column name. "
+                    "Each backend-promoted column becomes a real FK to "
+                    "public.assets(id) with ON DELETE SET NULL. Example: "
+                    '\'{"file_id": {"asset_type": "file"}}\'.'
+                )
+            ),
+        ] = None,
     ) -> str:
-        """Create a new dataset on Ouro. Provide data or data_path (one required)."""
+        """Create a new dataset on Ouro. Provide data or data_path (one required).
+
+        To make a column reference Ouro assets, pass ``asset_refs``. Asset-ref
+        columns get a real DB foreign key, show up as
+        ``semantic_type: "asset_ref"`` in the schema, and resolve to names/URLs
+        via ``query_dataset(resolve_asset_refs=true)``.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
 
         df = _resolve_dataset_data(data=data, data_path=data_path)
@@ -246,6 +395,10 @@ def register(mcp: FastMCP) -> None:
         if df.empty or len(df.columns) == 0:
             raise ValueError("Dataset data must include at least one column and one row.")
 
+        declared_asset_refs = _coerce_json_object(
+            asset_refs, parameter_name="asset_refs"
+        )
+
         dataset = ouro.datasets.create(
             name=name,
             visibility=visibility,
@@ -253,10 +406,12 @@ def register(mcp: FastMCP) -> None:
             description=description,
             org_id=org_id,
             team_id=team_id,
+            **optional_kwargs(asset_refs=declared_asset_refs),
         )
 
         result = format_asset_summary(dataset)
         result["table_name"] = dataset.metadata.get("table_name") if dataset.metadata else None
+        result.update(_dataset_proof(ouro, str(dataset.id), declared_asset_refs))
         return dump_json(result)
 
     @mcp.tool(annotations={"idempotentHint": False})
@@ -283,6 +438,16 @@ def register(mcp: FastMCP) -> None:
         description: Annotated[Optional[str], Field(description="New description")] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
+        asset_refs: Annotated[
+            Optional[str | dict[str, Any]],
+            Field(
+                description=(
+                    "Promote existing columns to asset references. Every value "
+                    "in each column must already be a valid asset id or null. "
+                    'Example: \'{"file_id": {"asset_type": "file"}}\'.'
+                )
+            ),
+        ] = None,
     ) -> str:
         """Update a dataset's data or metadata.
 
@@ -290,12 +455,19 @@ def register(mcp: FastMCP) -> None:
         - append (default): add rows
         - overwrite: replace existing rows
         - upsert: merge rows by id
+
+        Pass asset_refs to promote existing columns to native asset references
+        (adds a DB foreign key to public.assets).
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
         df = _resolve_dataset_data(data=data, data_path=data_path)
         if df is not None and (df.empty or len(df.columns) == 0):
             raise ValueError("Dataset row updates must include at least one column and one row.")
+
+        declared_asset_refs = _coerce_json_object(
+            asset_refs, parameter_name="asset_refs"
+        )
 
         dataset = ouro.datasets.update(
             id,
@@ -307,10 +479,13 @@ def register(mcp: FastMCP) -> None:
                 description=description,
                 org_id=org_id,
                 team_id=team_id,
+                asset_refs=declared_asset_refs,
             ),
         )
 
-        return dump_json(format_asset_summary(dataset))
+        result = format_asset_summary(dataset)
+        result.update(_dataset_proof(ouro, str(dataset.id), declared_asset_refs))
+        return dump_json(result)
 
     @mcp.tool(
         annotations={"readOnlyHint": True},

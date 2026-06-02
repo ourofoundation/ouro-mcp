@@ -98,6 +98,18 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - **Standard markdown**: headings, **bold**, *italic*, lists, code blocks, tables, links
 - **Math**: $inline$ and $$display$$ LaTeX
 
+**Datasets**:
+- Inspect a dataset's schema first (resource `ouro://datasets/{id}/schema` or `get_dataset`).
+- Columns with `semantic_type: "asset_ref"` hold Ouro asset ids backed by a real
+  foreign key to public.assets; an optional `asset_type` names the intended target.
+- When you need names, types, or URLs for those ids, call
+  query_dataset(dataset_id, resolve_asset_refs=true) — it returns a
+  `resolved_asset_refs` sidecar (column -> id -> {asset_id, asset_type, name, web_url}).
+  It is permission-aware: ids you can't see are simply omitted.
+- To create a dataset that references assets, pass asset_refs to create_dataset,
+  e.g. {"file_id": {"asset_type": "file"}}. To promote an existing column,
+  pass asset_refs to update_dataset (all values must already be valid asset ids or null).
+
 **Conversations and messages**:
 - Use list_conversations() to see conversations you belong to.
 - Use get_conversation(conversation_id=...) to inspect conversation details and members.
@@ -110,7 +122,8 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - Use submit_quest_entry(quest_id, item_id=..., description_markdown=..., assets={"<input_key>": "<uuid>"}) to contribute (e.g. {"file": "<cif-uuid>"} on eval items). On closable quests, reject the prior entry before resubmitting the same item.
 - Use list_quest_entries(quest_id=..., status=...) to review submitted, accepted, or rejected entries.
 - Use review_quest_entry(quest_id, entry_id, status="accepted"|"rejected") only when the caller has authority to review the quest.
-- Use complete_quest_item only for owner/admin self-completion; normal contributors should submit entries.
+- Draft quests do not accept entries. Publish the quest with update_quest(status="open") before submit_quest_entry or complete_quest_item.
+- Use complete_quest_item only for owner/admin self-completion on open quests; normal contributors should submit entries.
 
 **Route actions**:
 - Use get_asset(route_id, detail="full") to inspect a route's schema before execution.

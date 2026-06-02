@@ -23,9 +23,14 @@ class _CaptureMCP:
 
 
 class _FakeDatasets:
-    def __init__(self, query_page: dict | None = None) -> None:
+    def __init__(
+        self,
+        query_page: dict | None = None,
+        schema_response: list[dict] | None = None,
+    ) -> None:
         self.created: list[dict] = []
         self.query_page = query_page
+        self.schema_response = schema_response
         self.query_calls: list[dict] = []
 
     def create(self, **kwargs):
@@ -51,6 +56,7 @@ class _FakeDatasets:
         limit: int | None = None,
         offset: int = 0,
         with_pagination: bool = False,
+        resolve_asset_refs: bool = False,
     ):
         call = {"dataset_id": dataset_id}
         if sql is not None:
@@ -63,14 +69,35 @@ class _FakeDatasets:
                     "with_pagination": with_pagination,
                 }
             )
+            # Only record when set so existing assertions stay stable.
+            if resolve_asset_refs:
+                call["resolve_asset_refs"] = resolve_asset_refs
         self.query_calls.append(call)
         return self.query_page
+
+    def schema(self, dataset_id: str):
+        return self.schema_response or []
+
+
+class _FakeAssets:
+    def connections(self, dataset_id: str):
+        return [
+            {
+                "type": "reference",
+                "source_id": dataset_id,
+                "target_id": "file-1",
+                "target_asset_type": "file",
+                "target": {"id": "file-1", "asset_type": "file", "name": "sample.cif"},
+            }
+        ]
 
 
 def _ctx(datasets: _FakeDatasets) -> SimpleNamespace:
     return SimpleNamespace(
         request_context=SimpleNamespace(
-            lifespan_context=SimpleNamespace(ouro=SimpleNamespace(datasets=datasets))
+            lifespan_context=SimpleNamespace(
+                ouro=SimpleNamespace(datasets=datasets, assets=_FakeAssets())
+            )
         )
     )
 
@@ -263,6 +290,126 @@ def test_query_dataset_runs_optional_sql_query() -> None:
         ],
         "row_count": 1,
     }
+
+
+def test_create_dataset_forwards_asset_refs() -> None:
+    sidecar = {
+        "file_id": {
+            "019df875-7957-7888-888f-f8140ff62564": {
+                "asset_id": "019df875-7957-7888-888f-f8140ff62564",
+                "asset_type": "file",
+                "name": "sample.cif",
+                "web_url": "https://ouro.foundation/files/a/sample-cif",
+            }
+        }
+    }
+    datasets = _FakeDatasets(
+        query_page={
+            "data": pd.DataFrame(
+                [{"file_id": "019df875-7957-7888-888f-f8140ff62564"}]
+            ),
+            "pagination": {"hasMore": False},
+            "resolved_asset_refs": sidecar,
+        },
+        schema_response=[
+            {
+                "column_name": "file_id",
+                "data_type": "uuid",
+                "semantic_type": "asset_ref",
+                "asset_type": "file",
+            }
+        ],
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["create_dataset"](
+            name="refs",
+            org_id="org-1",
+            team_id="team-1",
+            ctx=_ctx(datasets),
+            data='[{"file_id":"019df875-7957-7888-888f-f8140ff62564"}]',
+            asset_refs='{"file_id": {"asset_type": "file"}}',
+        )
+    )
+
+    created = datasets.created[0]
+    assert created["asset_refs"] == {"file_id": {"asset_type": "file"}}
+    assert result["asset_refs"] == {"file_id": {"asset_type": "file"}}
+    assert result["resolved_asset_refs_preview"] == sidecar
+    assert result["connections"]["reference"][0]["id"] == "file-1"
+
+
+def test_create_dataset_preserves_declared_asset_type_when_schema_omits_hint() -> None:
+    datasets = _FakeDatasets(
+        query_page={"data": pd.DataFrame([]), "resolved_asset_refs": {}},
+        schema_response=[
+            {
+                "column_name": "post_id",
+                "data_type": "uuid",
+                "semantic_type": "asset_ref",
+            }
+        ],
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["create_dataset"](
+            name="refs",
+            org_id="org-1",
+            team_id="team-1",
+            ctx=_ctx(datasets),
+            data='[{"post_id":"019df875-7957-7888-888f-f8140ff62564"}]',
+            asset_refs='{"post_id": {"asset_type": "post"}}',
+        )
+    )
+
+    assert result["asset_refs"] == {"post_id": {"asset_type": "post"}}
+
+
+def test_query_dataset_resolve_asset_refs_passes_flag_and_returns_sidecar() -> None:
+    sidecar = {
+        "file_id": {
+            "019df875-7957-7888-888f-f8140ff62564": {
+                "asset_id": "019df875-7957-7888-888f-f8140ff62564",
+                "asset_type": "file",
+                "name": "sample.cif",
+                "web_url": "https://ouro.foundation/files/a/sample-cif",
+            }
+        }
+    }
+    page = {
+        "data": pd.DataFrame([{"file_id": "019df875-7957-7888-888f-f8140ff62564"}]),
+        "pagination": {"hasMore": False},
+        "resolved_asset_refs": sidecar,
+    }
+    datasets = _FakeDatasets(query_page=page)
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["query_dataset"](
+            "dataset-1", _ctx(datasets), limit=10, resolve_asset_refs=True
+        )
+    )
+
+    assert datasets.query_calls[0]["resolve_asset_refs"] is True
+    assert result["resolved_asset_refs"] == sidecar
+
+
+def test_query_dataset_resolve_asset_refs_rejected_with_sql() -> None:
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["query_dataset"](
+            "dataset-1",
+            _ctx(_FakeDatasets()),
+            sql="SELECT * FROM {{table}}",
+            resolve_asset_refs=True,
+        )
+    )
+
+    assert result["error"] == "invalid_arguments"
+    assert "not supported with sql" in result["message"]
 
 
 def test_query_dataset_sql_rejects_pagination_arguments() -> None:

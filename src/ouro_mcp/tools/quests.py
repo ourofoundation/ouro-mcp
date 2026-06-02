@@ -411,6 +411,9 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Self-complete an item. Creates an auto-accepted entry and marks the item done.
 
+        The quest must be open; draft quests reject entry-producing actions until
+        they are published.
+
         Provide ``assets`` when linking produced files or other inputs, and/or a
         substantive ``description`` markdown note.
         """
@@ -464,6 +467,9 @@ def register(mcp: FastMCP) -> None:
         ] = None,
     ) -> str:
         """Submit an entry to a quest item.
+
+        The quest must be open. Draft quests are not accepting submissions until
+        the owner publishes them.
 
         Pass ``item_id`` and ``assets`` (one UUID per submission input key from the
         item's submission_assets / eval route). Example: ``assets={"file": "<cif-uuid>"}``.

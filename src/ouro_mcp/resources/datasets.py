@@ -47,7 +47,14 @@ def register(mcp: FastMCP) -> None:
     @mcp.resource(
         "ouro://datasets/{id}/schema",
         name="Dataset Schema",
-        description="Column schema for a dataset — names, types, and nullability.",
+        description=(
+            "Column schema for a dataset — names, types, and foreign keys. "
+            'Columns with semantic_type "asset_ref" hold Ouro asset ids '
+            "(backed by a foreign key to public.assets); asset_refs maps those "
+            "columns to optional target types. Use "
+            "query_dataset(resolve_asset_refs=true) to resolve those ids to "
+            "names, types, and URLs."
+        ),
         mime_type="application/json",
         annotations={"readOnlyHint": True, "idempotentHint": True},
     )
@@ -55,4 +62,23 @@ def register(mcp: FastMCP) -> None:
     def get_dataset_schema(id: str, ctx: Context) -> str:
         ouro = ctx.request_context.lifespan_context.ouro
         schema = ouro.datasets.schema(id)
-        return dump_json({"dataset_id": id, "schema": schema})
+        # The backend already enriches FK-to-public.assets columns with
+        # semantic_type="asset_ref" (+ optional target asset_type), so this is
+        # surfaced verbatim.
+        asset_refs = {}
+        for field in schema or []:
+            if not isinstance(field, dict) or field.get("semantic_type") != "asset_ref":
+                continue
+            column = field.get("column_name")
+            if not column:
+                continue
+            asset_refs[column] = (
+                {"asset_type": field["asset_type"]} if field.get("asset_type") else {}
+            )
+        return dump_json(
+            {
+                "dataset_id": id,
+                "schema": schema,
+                "asset_refs": asset_refs,
+            }
+        )
