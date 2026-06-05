@@ -475,7 +475,6 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             base["quest"] = {
                 "type": asset.quest.type,
                 "status": asset.quest.status,
-                "max_xp_per_contributor": asset.quest.max_xp_per_contributor,
             }
         if asset.items:
             base["items"] = [

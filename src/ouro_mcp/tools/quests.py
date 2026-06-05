@@ -246,7 +246,7 @@ def register(mcp: FastMCP) -> None:
                     "string or a full item object with any of: description, "
                     "assignee_id, "
                     "expected_asset_type, reward_currency ('btc'|'usd'), "
-                    "reward_amount (sats for btc, cents for usd), reward_xp, "
+                    "reward_amount (sats for btc, cents for usd), "
                     "eval_route_id, eval_score_path, eval_pass_min, "
                     "eval_pass_max, submission_assets, eval_static_inputs."
                 )
@@ -272,7 +272,6 @@ def register(mcp: FastMCP) -> None:
                     "expected_asset_type": getattr(i, "expected_asset_type", None),
                     "reward_currency": i.reward_currency,
                     "reward_amount": i.reward_amount,
-                    "reward_xp": getattr(i, "reward_xp", None),
                     "eval_route_id": getattr(i, "eval_route_id", None),
                     "eval_score_path": getattr(i, "eval_score_path", None),
                     "eval_pass_min": getattr(i, "eval_pass_min", None),
@@ -342,10 +341,6 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
-        reward_xp: Annotated[
-            Optional[int],
-            Field(description="XP awarded to the contributor when the entry is accepted"),
-        ] = None,
     ) -> str:
         """Update an item's metadata, status, reward, or auto-eval config. For completions with provenance, use complete_quest_item instead."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -366,7 +361,6 @@ def register(mcp: FastMCP) -> None:
                 eval_static_inputs=eval_static_inputs,
                 reward_currency=reward_currency,
                 reward_amount=reward_amount,
-                reward_xp=reward_xp,
             ),
         )
         return dump_json(

@@ -62,9 +62,6 @@ class _FakeQuests:
                     if isinstance(item, str)
                     else int(item.get("reward_amount", 0))
                 ),
-                reward_xp=(
-                    None if isinstance(item, str) else item.get("reward_xp")
-                ),
                 eval_route_id=(
                     None if isinstance(item, str) else item.get("eval_route_id")
                 ),
@@ -292,7 +289,6 @@ def test_create_quest_items_accepts_strings_and_dicts() -> None:
             "description": "Paid eval task",
             "reward_currency": "btc",
             "reward_amount": 1500,
-            "reward_xp": 30,
             "eval_route_id": "route-1",
             "eval_score_path": "$.eval.score",
             "eval_pass_min": 0.7,
@@ -333,7 +329,6 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
             description="patched",
             reward_currency="usd",
             reward_amount=2500,
-            reward_xp=15,
             eval_route_id="route-2",
         eval_pass_min=0.5,
         eval_pass_max=1.0,
@@ -348,7 +343,6 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
             "description": "patched",
             "reward_currency": "usd",
             "reward_amount": 2500,
-            "reward_xp": 15,
             "eval_route_id": "route-2",
             "eval_pass_min": 0.5,
             "eval_pass_max": 1.0,
