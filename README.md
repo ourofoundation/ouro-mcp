@@ -222,6 +222,10 @@ Examples:
 
 - `data`: JSON row array as a string or parsed value: `[{"col": "val"}]`
 - `data_path`: local file path (`.csv`, `.json`, `.jsonl`/`.ndjson`, `.parquet`)
+- `enum_columns`: optional categorical columns with known values, e.g.
+  `{"status": {"values": ["todo", "done"]}}`. These are enforced with a
+  database check constraint and show up in schema reads as
+  `semantic_type: "enum"` with `enum_values`.
 
 ### Dataset views
 

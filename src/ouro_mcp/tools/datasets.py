@@ -169,6 +169,19 @@ def _asset_refs_from_schema(schema: Any) -> dict[str, dict[str, Any]]:
     return refs
 
 
+def _enum_columns_from_schema(schema: Any) -> dict[str, dict[str, list[str]]]:
+    columns: dict[str, dict[str, list[str]]] = {}
+    for field in schema or []:
+        if not isinstance(field, dict) or field.get("semantic_type") != "enum":
+            continue
+        column = field.get("column_name")
+        values = field.get("enum_values")
+        if not column or not isinstance(values, list):
+            continue
+        columns[str(column)] = {"values": [str(value) for value in values]}
+    return columns
+
+
 def _normalize_asset_refs_for_result(value: Optional[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     refs: dict[str, dict[str, Any]] = {}
     for column, hint in (value or {}).items():
@@ -184,6 +197,15 @@ def _normalize_asset_refs_for_result(value: Optional[dict[str, Any]]) -> dict[st
     return refs
 
 
+def _normalize_enum_columns_for_result(value: Optional[dict[str, Any]]) -> dict[str, dict[str, list[str]]]:
+    columns: dict[str, dict[str, list[str]]] = {}
+    for column, declaration in (value or {}).items():
+        raw_values = declaration.get("values") if isinstance(declaration, dict) else None
+        if isinstance(raw_values, list):
+            columns[str(column)] = {"values": [str(v) for v in raw_values]}
+    return columns
+
+
 def _merge_asset_ref_hints(
     refs: dict[str, dict[str, Any]],
     hints: Optional[dict[str, Any]],
@@ -197,10 +219,22 @@ def _merge_asset_ref_hints(
     return merged
 
 
+def _merge_enum_column_hints(
+    columns: dict[str, dict[str, list[str]]],
+    hints: Optional[dict[str, Any]],
+) -> dict[str, dict[str, list[str]]]:
+    merged = {column: {"values": list(value["values"])} for column, value in columns.items()}
+    for column, hint in _normalize_enum_columns_for_result(hints).items():
+        if column not in merged:
+            merged[column] = hint
+    return merged
+
+
 def _dataset_proof(
     ouro: Any,
     dataset_id: str,
     declared_asset_refs: Optional[dict[str, Any]] = None,
+    declared_enum_columns: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Collect lightweight verification data after create/update."""
     proof: dict[str, Any] = {}
@@ -212,9 +246,14 @@ def _dataset_proof(
             _asset_refs_from_schema(schema),
             declared_asset_refs,
         )
+        proof["enum_columns"] = _merge_enum_column_hints(
+            _enum_columns_from_schema(schema),
+            declared_enum_columns,
+        )
     except Exception:
         proof["schema"] = None
         proof["asset_refs"] = _merge_asset_ref_hints({}, declared_asset_refs)
+        proof["enum_columns"] = _merge_enum_column_hints({}, declared_enum_columns)
 
     try:
         page = ouro.datasets.query(
@@ -379,6 +418,17 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        enum_columns: Annotated[
+            Optional[str | dict[str, Any]],
+            Field(
+                description=(
+                    "Columns with a closed set of string values, keyed by "
+                    "column name. Each column gets a DB CHECK constraint and "
+                    'schema metadata. Example: \'{"status": {"values": '
+                    '["todo", "done"]}}\'.'
+                )
+            ),
+        ] = None,
     ) -> str:
         """Create a new dataset on Ouro. Provide data or data_path (one required).
 
@@ -386,6 +436,9 @@ def register(mcp: FastMCP) -> None:
         columns get a real DB foreign key, show up as
         ``semantic_type: "asset_ref"`` in the schema, and resolve to names/URLs
         via ``query_dataset(resolve_asset_refs=true)``.
+
+        To make a column categorical, pass ``enum_columns``. Enum columns show
+        up as ``semantic_type: "enum"`` with ``enum_values`` in the schema.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -398,6 +451,9 @@ def register(mcp: FastMCP) -> None:
         declared_asset_refs = _coerce_json_object(
             asset_refs, parameter_name="asset_refs"
         )
+        declared_enum_columns = _coerce_json_object(
+            enum_columns, parameter_name="enum_columns"
+        )
 
         dataset = ouro.datasets.create(
             name=name,
@@ -406,12 +462,22 @@ def register(mcp: FastMCP) -> None:
             description=description,
             org_id=org_id,
             team_id=team_id,
-            **optional_kwargs(asset_refs=declared_asset_refs),
+            **optional_kwargs(
+                asset_refs=declared_asset_refs,
+                enum_columns=declared_enum_columns,
+            ),
         )
 
         result = format_asset_summary(dataset)
         result["table_name"] = dataset.metadata.get("table_name") if dataset.metadata else None
-        result.update(_dataset_proof(ouro, str(dataset.id), declared_asset_refs))
+        result.update(
+            _dataset_proof(
+                ouro,
+                str(dataset.id),
+                declared_asset_refs,
+                declared_enum_columns,
+            )
+        )
         return dump_json(result)
 
     @mcp.tool(annotations={"idempotentHint": False})
@@ -448,6 +514,16 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        enum_columns: Annotated[
+            Optional[str | dict[str, Any]],
+            Field(
+                description=(
+                    "Promote existing columns to enum columns. Existing values "
+                    "must be null or in the declared values list. Example: "
+                    '\'{"status": {"values": ["todo", "done"]}}\'.'
+                )
+            ),
+        ] = None,
     ) -> str:
         """Update a dataset's data or metadata.
 
@@ -458,6 +534,9 @@ def register(mcp: FastMCP) -> None:
 
         Pass asset_refs to promote existing columns to native asset references
         (adds a DB foreign key to public.assets).
+
+        Pass enum_columns to promote existing columns to categorical enum
+        columns (adds a DB CHECK constraint and schema metadata).
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -467,6 +546,9 @@ def register(mcp: FastMCP) -> None:
 
         declared_asset_refs = _coerce_json_object(
             asset_refs, parameter_name="asset_refs"
+        )
+        declared_enum_columns = _coerce_json_object(
+            enum_columns, parameter_name="enum_columns"
         )
 
         dataset = ouro.datasets.update(
@@ -480,11 +562,19 @@ def register(mcp: FastMCP) -> None:
                 org_id=org_id,
                 team_id=team_id,
                 asset_refs=declared_asset_refs,
+                enum_columns=declared_enum_columns,
             ),
         )
 
         result = format_asset_summary(dataset)
-        result.update(_dataset_proof(ouro, str(dataset.id), declared_asset_refs))
+        result.update(
+            _dataset_proof(
+                ouro,
+                str(dataset.id),
+                declared_asset_refs,
+                declared_enum_columns,
+            )
+        )
         return dump_json(result)
 
     @mcp.tool(

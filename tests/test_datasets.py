@@ -367,6 +367,37 @@ def test_create_dataset_preserves_declared_asset_type_when_schema_omits_hint() -
     assert result["asset_refs"] == {"post_id": {"asset_type": "post"}}
 
 
+def test_create_dataset_forwards_enum_columns() -> None:
+    datasets = _FakeDatasets(
+        query_page={"data": pd.DataFrame([]), "resolved_asset_refs": {}},
+        schema_response=[
+            {
+                "column_name": "status",
+                "data_type": "text",
+                "semantic_type": "enum",
+                "enum_values": ["todo", "done"],
+            }
+        ],
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["create_dataset"](
+            name="statuses",
+            org_id="org-1",
+            team_id="team-1",
+            ctx=_ctx(datasets),
+            data='[{"status":"todo"}]',
+            enum_columns='{"status": {"values": ["todo", "done"]}}',
+        )
+    )
+
+    created = datasets.created[0]
+    assert created["enum_columns"] == {"status": {"values": ["todo", "done"]}}
+    assert result["enum_columns"] == {"status": {"values": ["todo", "done"]}}
+    assert result["schema"][0]["enum_values"] == ["todo", "done"]
+
+
 def test_query_dataset_resolve_asset_refs_passes_flag_and_returns_sidecar() -> None:
     sidecar = {
         "file_id": {

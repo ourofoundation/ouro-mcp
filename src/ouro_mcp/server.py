@@ -109,6 +109,10 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - To create a dataset that references assets, pass asset_refs to create_dataset,
   e.g. {"file_id": {"asset_type": "file"}}. To promote an existing column,
   pass asset_refs to update_dataset (all values must already be valid asset ids or null).
+- To create categorical columns with known values, pass enum_columns to
+  create_dataset, e.g. {"status": {"values": ["todo", "done"]}}. The schema
+  returns semantic_type "enum" and enum_values so agents can query with
+  explicit WHERE values.
 
 **Conversations and messages**:
 - Use list_conversations() to see conversations you belong to.
