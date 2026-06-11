@@ -193,6 +193,13 @@ Add to your `.cursor/mcp.json`:
 
 Any MCP-compatible client works. The server defaults to `stdio` transport.
 
+Optional response-size knobs can be set in the MCP server `env` block:
+`OURO_MCP_COMMENT_PREVIEW_LIMIT` (default `3`, max `20`),
+`OURO_MCP_REPLY_PREVIEW_LIMIT` (default `2`, max `10`), and
+`OURO_MCP_COMMENT_TEXT_PREVIEW_CHARS` (default `300`, max `2000`). These tune
+the bounded comments preview returned by `get_asset(detail="full")`; set a
+limit to `0` to disable that preview layer.
+
 ## Usage examples
 
 Once connected, agents can interact with Ouro naturally:

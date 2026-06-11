@@ -7,6 +7,18 @@ ENV_OURO_BASE_URL = "OURO_BASE_URL"
 ENV_OURO_MCP_TIMEZONE = "OURO_MCP_TIMEZONE"
 ENV_WORKSPACE_ROOT = "WORKSPACE_ROOT"
 
+# Asset detail comment previews. These defaults keep `get_asset(detail="full")`
+# useful for agents without turning it into a full discussion-thread dump.
+ENV_OURO_MCP_COMMENT_PREVIEW_LIMIT = "OURO_MCP_COMMENT_PREVIEW_LIMIT"
+ENV_OURO_MCP_REPLY_PREVIEW_LIMIT = "OURO_MCP_REPLY_PREVIEW_LIMIT"
+ENV_OURO_MCP_COMMENT_TEXT_PREVIEW_CHARS = "OURO_MCP_COMMENT_TEXT_PREVIEW_CHARS"
+DEFAULT_COMMENT_PREVIEW_LIMIT = 3
+DEFAULT_REPLY_PREVIEW_LIMIT = 2
+DEFAULT_COMMENT_TEXT_PREVIEW_CHARS = 300
+MAX_COMMENT_PREVIEW_LIMIT = 20
+MAX_REPLY_PREVIEW_LIMIT = 10
+MAX_COMMENT_TEXT_PREVIEW_CHARS = 2_000
+
 # Logging (read by clients via MCP server env, e.g. ouro-agents config.json)
 ENV_OURO_MCP_LOG_LEVEL = "OURO_MCP_LOG_LEVEL"
 # plain: one-line stderr logs (good when merged with a host process). rich: FastMCP default handler.

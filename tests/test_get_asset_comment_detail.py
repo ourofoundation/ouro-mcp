@@ -15,6 +15,7 @@ def _load_assets_module():
     if "ouro" not in sys.modules:
         ouro_module = types.ModuleType("ouro")
         for name in (
+            "APIStatusError",
             "AuthenticationError",
             "BadRequestError",
             "InternalServerError",
@@ -94,6 +95,92 @@ class TestGetAssetCommentDetail(unittest.TestCase):
 
         self.assertEqual(detail["asset_type"], "comment")
         self.assertEqual(detail["content_text"], "hello from a comment")
+
+    def test_comment_detail_includes_reply_preview(self) -> None:
+        now = datetime.now(UTC)
+        comment = _asset(
+            asset_type="comment",
+            id="comment-1",
+            name="",
+            content=SimpleNamespace(text="cc: @hermes"),
+        )
+        reply = _asset(
+            asset_type="comment",
+            id="reply-1",
+            name="",
+            created_at=now,
+            user=SimpleNamespace(username="hermes"),
+            content=SimpleNamespace(text="Already replied here."),
+        )
+
+        detail = self.assets_module._format_asset_detail(
+            comment,
+            ouro=SimpleNamespace(comments=_FakeComments({"comment-1": [reply]})),
+        )
+
+        self.assertEqual(detail["comments"][0]["id"], "reply-1")
+        self.assertEqual(detail["comments"][0]["author"], "hermes")
+        self.assertEqual(detail["comments"][0]["text"], "Already replied here.")
+
+    def test_post_detail_includes_top_level_comments_with_reply_preview(self) -> None:
+        post = _asset(asset_type="post", id="post-1", content=SimpleNamespace(text="Feature post"))
+        mention = _asset(
+            asset_type="comment",
+            id="comment-1",
+            name="",
+            user=SimpleNamespace(username="mmoderwell"),
+            content=SimpleNamespace(text="cc: @hermes"),
+        )
+        reply = _asset(
+            asset_type="comment",
+            id="reply-1",
+            name="",
+            user=SimpleNamespace(username="hermes"),
+            content=SimpleNamespace(text="This is great to see."),
+        )
+
+        detail = self.assets_module._format_asset_detail(
+            post,
+            ouro=SimpleNamespace(
+                comments=_FakeComments(
+                    {
+                        "post-1": [mention],
+                        "comment-1": [reply],
+                    }
+                )
+            ),
+        )
+
+        comment_preview = detail["comments"][0]
+        self.assertEqual(comment_preview["id"], "comment-1")
+        self.assertEqual(comment_preview["text"], "cc: @hermes")
+        self.assertEqual(comment_preview["replies"][0]["id"], "reply-1")
+        self.assertEqual(comment_preview["replies"][0]["author"], "hermes")
+
+
+def _asset(**overrides):
+    now = datetime.now(UTC)
+    base = {
+        "id": "asset-1",
+        "name": "Asset",
+        "asset_type": "post",
+        "visibility": "public",
+        "created_at": now,
+        "last_updated": now,
+        "description": None,
+        "user": SimpleNamespace(username="mmoderwell"),
+        "content": None,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+class _FakeComments:
+    def __init__(self, by_parent):
+        self.by_parent = by_parent
+
+    def list_by_parent(self, parent_id):
+        return self.by_parent.get(str(parent_id), [])
 
 
 if __name__ == "__main__":

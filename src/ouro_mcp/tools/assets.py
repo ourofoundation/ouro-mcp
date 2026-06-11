@@ -8,6 +8,7 @@ from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.utils.content import description_to_markdown
+from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
@@ -48,7 +49,7 @@ def register(mcp: FastMCP) -> None:
                     "(post body, dataset schema/stats, file download URL, service routes, route execution schemas), "
                     "plus provenance (creation action), connections grouped by type with the other asset "
                     "summarized as id, asset_type, name, and created_at when available, "
-                    "and tags."
+                    "tags, and a bounded comments/replies preview when present."
                 )
             ),
         ] = "summary",
@@ -58,6 +59,7 @@ def register(mcp: FastMCP) -> None:
         Use detail="summary" (default) when you only need to identify an asset.
         Use detail="full" to read its content (e.g. post body, dataset schema).
         Both levels include engagement counts (views, comments, reactions, downloads).
+        Full detail also includes a small comments preview when comments exist.
         """
         allowed_detail = {"summary", "full"}
         if detail not in allowed_detail:
@@ -407,6 +409,74 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
         log.debug("Failed to fetch tags for %s", asset_id, exc_info=True)
 
 
+def _comment_text(comment: Any, config: CommentPreviewConfig) -> str | None:
+    content = getattr(comment, "content", None)
+    text = getattr(content, "text", None) if content else None
+    if not text or config.text_chars <= 0:
+        return None
+    return str(text)[: config.text_chars]
+
+
+def _format_comment_preview(comment: Any, config: CommentPreviewConfig) -> dict[str, Any]:
+    entry: dict[str, Any] = {"id": str(comment.id)}
+    if getattr(comment, "created_at", None):
+        entry["created_at"] = comment.created_at.isoformat()
+    user = user_summary(comment)
+    if user:
+        entry["author"] = user["username"]
+    text = _comment_text(comment, config)
+    if text:
+        entry["text"] = text
+    return entry
+
+
+def _enrich_comments_preview(result: dict, ouro: Any, asset_id: str) -> None:
+    """Attach a small comment/reply preview to full asset details.
+
+    This is intentionally bounded. It gives agents enough context to notice
+    existing replies without turning `get_asset(detail="full")` into a full
+    thread dump; callers can still use `get_comments` for complete threads.
+    """
+    comments_client = getattr(ouro, "comments", None)
+    if not comments_client:
+        return
+    config = get_comment_preview_config()
+    if config.comment_limit <= 0:
+        return
+
+    try:
+        comments = list(comments_client.list_by_parent(asset_id) or [])
+    except Exception:
+        log.debug("Failed to fetch comments for %s", asset_id, exc_info=True)
+        return
+
+    if not comments:
+        return
+
+    preview: list[dict[str, Any]] = []
+    for comment in comments[: config.comment_limit]:
+        entry = _format_comment_preview(comment, config)
+        comment_id = entry.get("id")
+        if comment_id and config.reply_limit > 0:
+            try:
+                replies = list(comments_client.list_by_parent(comment_id) or [])
+            except Exception:
+                log.debug("Failed to fetch replies for comment %s", comment_id, exc_info=True)
+                replies = []
+            if replies:
+                entry["replies"] = [
+                    _format_comment_preview(reply, config)
+                    for reply in replies[: config.reply_limit]
+                ]
+                if len(replies) > config.reply_limit:
+                    entry["reply_has_more"] = True
+        preview.append(entry)
+
+    result["comments"] = preview
+    if len(comments) > config.comment_limit:
+        result["comments_has_more"] = True
+
+
 def _format_asset_detail(asset: Any, ouro: Any) -> dict:
     """Build a type-appropriate detail response for any asset."""
     base = format_asset_summary(asset)
@@ -495,5 +565,6 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             }
 
     _enrich_provenance(base, ouro, asset_id)
+    _enrich_comments_preview(base, ouro, asset_id)
 
     return base
