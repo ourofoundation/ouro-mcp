@@ -102,32 +102,38 @@ def register(mcp: FastMCP) -> None:
         id: Annotated[Optional[str], Field(description="Team UUID for single team detail")] = None,
         org_id: Annotated[Optional[str], Field(description="Filter by organization UUID")] = None,
         discover: Annotated[bool, Field(description="Browse public teams you could join")] = False,
+        include_members: Annotated[
+            bool,
+            Field(description="Include member roster (single-team detail only)"),
+        ] = False,
     ) -> str:
         """List teams, discover public teams, or get detail for a single team.
 
-        Pass id for a single team with members and gating policies.
+        Pass id for single-team detail with gating policies and member_count.
+        Set include_members=True to also return the member roster.
         Otherwise lists teams (joined by default, or discoverable with discover=True).
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
         if id:
-            team = ouro.teams.retrieve(id)
+            team = ouro.teams.retrieve(id, include_members=include_members)
             result = _team_summary(team)
             org = team.get("organization")
             if org:
                 result["organization_name"] = org.get("name") or org.get("display_name")
             members = team.get("members", [])
-            result["members"] = [
-                {
-                    "user_id": str(m.get("user_id", "")),
-                    "role": m.get("role"),
-                    "username": (
-                        m.get("user", {}).get("username") if m.get("user") else None
-                    ),
-                }
-                for m in members
-            ]
             result["member_count"] = team.get("memberCount", len(members))
+            if include_members:
+                result["members"] = [
+                    {
+                        "user_id": str(m.get("user_id", "")),
+                        "role": m.get("role"),
+                        "username": (
+                            m.get("user", {}).get("username") if m.get("user") else None
+                        ),
+                    }
+                    for m in members
+                ]
             return dump_json(result)
 
         if discover:
