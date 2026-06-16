@@ -27,15 +27,19 @@ class _FakeDatasets:
         self,
         query_page: dict | None = None,
         schema_response: list[dict] | None = None,
+        ingest: dict | None = None,
+        ingest_warning: dict | None = None,
     ) -> None:
         self.created: list[dict] = []
         self.query_page = query_page
         self.schema_response = schema_response
         self.query_calls: list[dict] = []
+        self.ingest = ingest
+        self.ingest_warning = ingest_warning
 
     def create(self, **kwargs):
         self.created.append(kwargs)
-        return SimpleNamespace(
+        dataset = SimpleNamespace(
             id="dataset-1",
             name=kwargs["name"],
             asset_type="dataset",
@@ -47,6 +51,12 @@ class _FakeDatasets:
             description=None,
             metadata={"table_name": "table_1"},
         )
+        # ouro-py stashes partial-success ingest info out-of-band on the model.
+        if self.ingest is not None:
+            dataset.row_ingest = self.ingest
+        if self.ingest_warning is not None:
+            dataset.ingest_warning = self.ingest_warning
+        return dataset
 
     def query(
         self,
@@ -56,7 +66,7 @@ class _FakeDatasets:
         limit: int | None = None,
         offset: int = 0,
         with_pagination: bool = False,
-        resolve_asset_refs: bool = False,
+        resolve_refs: bool = False,
     ):
         call = {"dataset_id": dataset_id}
         if sql is not None:
@@ -70,8 +80,8 @@ class _FakeDatasets:
                 }
             )
             # Only record when set so existing assertions stay stable.
-            if resolve_asset_refs:
-                call["resolve_asset_refs"] = resolve_asset_refs
+            if resolve_refs:
+                call["resolve_refs"] = resolve_refs
         self.query_calls.append(call)
         return self.query_page
 
@@ -292,11 +302,12 @@ def test_query_dataset_runs_optional_sql_query() -> None:
     }
 
 
-def test_create_dataset_forwards_asset_refs() -> None:
+def test_create_dataset_forwards_refs() -> None:
     sidecar = {
         "file_id": {
             "019df875-7957-7888-888f-f8140ff62564": {
-                "asset_id": "019df875-7957-7888-888f-f8140ff62564",
+                "kind": "asset",
+                "id": "019df875-7957-7888-888f-f8140ff62564",
                 "asset_type": "file",
                 "name": "sample.cif",
                 "web_url": "https://ouro.foundation/files/a/sample-cif",
@@ -309,13 +320,14 @@ def test_create_dataset_forwards_asset_refs() -> None:
                 [{"file_id": "019df875-7957-7888-888f-f8140ff62564"}]
             ),
             "pagination": {"hasMore": False},
-            "resolved_asset_refs": sidecar,
+            "resolved_refs": sidecar,
         },
         schema_response=[
             {
                 "column_name": "file_id",
                 "data_type": "uuid",
-                "semantic_type": "asset_ref",
+                "semantic_type": "reference",
+                "ref_kind": "asset",
                 "asset_type": "file",
             }
         ],
@@ -329,25 +341,106 @@ def test_create_dataset_forwards_asset_refs() -> None:
             team_id="team-1",
             ctx=_ctx(datasets),
             data='[{"file_id":"019df875-7957-7888-888f-f8140ff62564"}]',
-            asset_refs='{"file_id": {"asset_type": "file"}}',
+            refs='{"file_id": {"kind": "asset", "asset_type": "file"}}',
         )
     )
 
     created = datasets.created[0]
-    assert created["asset_refs"] == {"file_id": {"asset_type": "file"}}
-    assert result["asset_refs"] == {"file_id": {"asset_type": "file"}}
-    assert result["resolved_asset_refs_preview"] == sidecar
+    assert created["refs"] == {"file_id": {"kind": "asset", "asset_type": "file"}}
+    assert result["refs"] == {"file_id": {"kind": "asset", "asset_type": "file"}}
+    assert result["resolved_refs_preview"] == sidecar
     assert result["connections"]["reference"][0]["id"] == "file-1"
+
+
+def test_create_dataset_forwards_action_refs() -> None:
+    datasets = _FakeDatasets(
+        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
+        schema_response=[
+            {
+                "column_name": "run_id",
+                "data_type": "uuid",
+                "semantic_type": "reference",
+                "ref_kind": "action",
+            }
+        ],
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["create_dataset"](
+            name="refs",
+            org_id="org-1",
+            team_id="team-1",
+            ctx=_ctx(datasets),
+            data='[{"run_id":"019df875-7957-7888-888f-f8140ff62565"}]',
+            refs='{"run_id": "action"}',
+        )
+    )
+
+    created = datasets.created[0]
+    assert created["refs"] == {"run_id": "action"}
+    assert result["refs"] == {"run_id": {"kind": "action"}}
+
+
+def test_create_dataset_surfaces_partial_ingest_warning() -> None:
+    warning = {
+        "message": "1 rows were skipped because a reference value was missing.",
+        "refs": {
+            "missing_count": 1,
+            "type_mismatch_count": 0,
+            "malformed_count": 0,
+            "skipped_row_count": 1,
+            "columns": [
+                {
+                    "column": "run_id",
+                    "kind": "action",
+                    "missing": ["00000000-0000-0000-0000-000000000099"],
+                }
+            ],
+        },
+    }
+    datasets = _FakeDatasets(
+        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
+        schema_response=[
+            {
+                "column_name": "run_id",
+                "data_type": "uuid",
+                "semantic_type": "reference",
+                "ref_kind": "action",
+            }
+        ],
+        ingest={"inserted": 1, "skipped": 1},
+        ingest_warning=warning,
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["create_dataset"](
+            name="refs",
+            org_id="org-1",
+            team_id="team-1",
+            ctx=_ctx(datasets),
+            data=(
+                '[{"run_id":"019df875-7957-7888-888f-f8140ff62565"},'
+                '{"run_id":"00000000-0000-0000-0000-000000000099"}]'
+            ),
+            refs='{"run_id": "action"}',
+        )
+    )
+
+    assert result["row_ingest"] == {"inserted": 1, "skipped": 1}
+    assert result["ingest_warning"] == warning
 
 
 def test_create_dataset_preserves_declared_asset_type_when_schema_omits_hint() -> None:
     datasets = _FakeDatasets(
-        query_page={"data": pd.DataFrame([]), "resolved_asset_refs": {}},
+        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
         schema_response=[
             {
                 "column_name": "post_id",
                 "data_type": "uuid",
-                "semantic_type": "asset_ref",
+                "semantic_type": "reference",
+                "ref_kind": "asset",
             }
         ],
     )
@@ -360,16 +453,16 @@ def test_create_dataset_preserves_declared_asset_type_when_schema_omits_hint() -
             team_id="team-1",
             ctx=_ctx(datasets),
             data='[{"post_id":"019df875-7957-7888-888f-f8140ff62564"}]',
-            asset_refs='{"post_id": {"asset_type": "post"}}',
+            refs='{"post_id": {"kind": "asset", "asset_type": "post"}}',
         )
     )
 
-    assert result["asset_refs"] == {"post_id": {"asset_type": "post"}}
+    assert result["refs"] == {"post_id": {"kind": "asset", "asset_type": "post"}}
 
 
 def test_create_dataset_forwards_enum_columns() -> None:
     datasets = _FakeDatasets(
-        query_page={"data": pd.DataFrame([]), "resolved_asset_refs": {}},
+        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
         schema_response=[
             {
                 "column_name": "status",
@@ -398,11 +491,12 @@ def test_create_dataset_forwards_enum_columns() -> None:
     assert result["schema"][0]["enum_values"] == ["todo", "done"]
 
 
-def test_query_dataset_resolve_asset_refs_passes_flag_and_returns_sidecar() -> None:
+def test_query_dataset_resolve_refs_passes_flag_and_returns_sidecar() -> None:
     sidecar = {
         "file_id": {
             "019df875-7957-7888-888f-f8140ff62564": {
-                "asset_id": "019df875-7957-7888-888f-f8140ff62564",
+                "kind": "asset",
+                "id": "019df875-7957-7888-888f-f8140ff62564",
                 "asset_type": "file",
                 "name": "sample.cif",
                 "web_url": "https://ouro.foundation/files/a/sample-cif",
@@ -412,22 +506,22 @@ def test_query_dataset_resolve_asset_refs_passes_flag_and_returns_sidecar() -> N
     page = {
         "data": pd.DataFrame([{"file_id": "019df875-7957-7888-888f-f8140ff62564"}]),
         "pagination": {"hasMore": False},
-        "resolved_asset_refs": sidecar,
+        "resolved_refs": sidecar,
     }
     datasets = _FakeDatasets(query_page=page)
     tools = _dataset_tools()
 
     result = json.loads(
         tools["query_dataset"](
-            "dataset-1", _ctx(datasets), limit=10, resolve_asset_refs=True
+            "dataset-1", _ctx(datasets), limit=10, resolve_refs=True
         )
     )
 
-    assert datasets.query_calls[0]["resolve_asset_refs"] is True
-    assert result["resolved_asset_refs"] == sidecar
+    assert datasets.query_calls[0]["resolve_refs"] is True
+    assert result["resolved_refs"] == sidecar
 
 
-def test_query_dataset_resolve_asset_refs_rejected_with_sql() -> None:
+def test_query_dataset_resolve_refs_rejected_with_sql() -> None:
     tools = _dataset_tools()
 
     result = json.loads(
@@ -435,7 +529,7 @@ def test_query_dataset_resolve_asset_refs_rejected_with_sql() -> None:
             "dataset-1",
             _ctx(_FakeDatasets()),
             sql="SELECT * FROM {{table}}",
-            resolve_asset_refs=True,
+            resolve_refs=True,
         )
     )
 

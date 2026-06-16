@@ -49,10 +49,11 @@ def register(mcp: FastMCP) -> None:
         name="Dataset Schema",
         description=(
             "Column schema for a dataset — names, types, and foreign keys. "
-            'Columns with semantic_type "asset_ref" hold Ouro asset ids '
-            "(backed by a foreign key to public.assets); asset_refs maps those "
-            "columns to optional target types. Use "
-            "query_dataset(resolve_asset_refs=true) to resolve those ids to "
+            'Columns with semantic_type "reference" hold Ouro object ids '
+            "(backed by a foreign key); ref_kind names the kind (asset -> "
+            "public.assets, action -> public.actions) and refs maps those "
+            "columns to {kind, asset_type?}. Use "
+            "query_dataset(resolve_refs=true) to resolve those ids to "
             "names, types, and URLs. Columns with semantic_type \"enum\" include "
             "enum_values for agent-friendly categorical queries."
         ),
@@ -63,21 +64,23 @@ def register(mcp: FastMCP) -> None:
     def get_dataset_schema(id: str, ctx: Context) -> str:
         ouro = ctx.request_context.lifespan_context.ouro
         schema = ouro.datasets.schema(id)
-        # The backend already enriches FK-to-public.assets columns with
-        # semantic_type="asset_ref" (+ optional target asset_type), so this is
-        # surfaced verbatim.
-        asset_refs = {}
+        # The backend already enriches FK-to-referenceable-table columns with
+        # semantic_type="reference" (+ ref_kind and optional target asset_type),
+        # so this is surfaced verbatim.
+        refs = {}
         enum_columns = {}
         for field in schema or []:
             if not isinstance(field, dict):
                 continue
-            if field.get("semantic_type") == "asset_ref":
+            if field.get("semantic_type") == "reference":
                 column = field.get("column_name")
                 if not column:
                     continue
-                asset_refs[column] = (
-                    {"asset_type": field["asset_type"]} if field.get("asset_type") else {}
-                )
+                kind = field.get("ref_kind") or "asset"
+                entry = {"kind": kind}
+                if kind == "asset" and field.get("asset_type"):
+                    entry["asset_type"] = field["asset_type"]
+                refs[column] = entry
             elif field.get("semantic_type") == "enum":
                 column = field.get("column_name")
                 values = field.get("enum_values")
@@ -87,7 +90,7 @@ def register(mcp: FastMCP) -> None:
             {
                 "dataset_id": id,
                 "schema": schema,
-                "asset_refs": asset_refs,
+                "refs": refs,
                 "enum_columns": enum_columns,
             }
         )

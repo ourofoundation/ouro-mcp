@@ -100,15 +100,17 @@ These values are always resolved (never null) in get_teams/get_team responses:
 
 **Datasets**:
 - Inspect a dataset's schema first (resource `ouro://datasets/{id}/schema` or `get_dataset`).
-- Columns with `semantic_type: "asset_ref"` hold Ouro asset ids backed by a real
-  foreign key to public.assets; an optional `asset_type` names the intended target.
+- Columns with `semantic_type: "reference"` hold Ouro object ids backed by a real
+  foreign key; `ref_kind` names the kind ("asset" -> public.assets, "action" ->
+  public.actions) and an optional `asset_type` names the intended target (asset kind).
 - When you need names, types, or URLs for those ids, call
-  query_dataset(dataset_id, resolve_asset_refs=true) — it returns a
-  `resolved_asset_refs` sidecar (column -> id -> {asset_id, asset_type, name, web_url}).
+  query_dataset(dataset_id, resolve_refs=true) — it returns a
+  `resolved_refs` sidecar (column -> id -> {kind, id, name, web_url, ...}).
   It is permission-aware: ids you can't see are simply omitted.
-- To create a dataset that references assets, pass asset_refs to create_dataset,
-  e.g. {"file_id": {"asset_type": "file"}}. To promote an existing column,
-  pass asset_refs to update_dataset (all values must already be valid asset ids or null).
+- To create a dataset that references objects, pass refs to create_dataset,
+  e.g. {"file_id": {"kind": "asset", "asset_type": "file"}, "run_id": {"kind": "action"}}.
+  To promote an existing column, pass refs to update_dataset (all values must
+  already be valid ids of that kind or null).
 - To create categorical columns with known values, pass enum_columns to
   create_dataset, e.g. {"status": {"values": ["todo", "done"]}}. The schema
   returns semantic_type "enum" and enum_values so agents can query with
