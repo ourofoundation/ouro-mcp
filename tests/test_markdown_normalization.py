@@ -57,6 +57,30 @@ class TestNormalizeMarkdownInput(unittest.TestCase):
         text = "hello @feynman"
         self.assertEqual(self.utils.normalize_markdown_input(text), "hello `{@feynman}`")
 
+    def test_normalizes_at_brace_form(self) -> None:
+        text = "@{mmoderwell} hi"
+        self.assertEqual(
+            self.utils.normalize_markdown_input(text), "`{@mmoderwell}` hi"
+        )
+
+    def test_normalizes_unbackticked_brace_at_form(self) -> None:
+        text = "{@reviewer} ready"
+        self.assertEqual(
+            self.utils.normalize_markdown_input(text), "`{@reviewer}` ready"
+        )
+
+    def test_preserves_canonical_form(self) -> None:
+        text = "ping `{@feynman}` please"
+        self.assertEqual(
+            self.utils.normalize_markdown_input(text), "ping `{@feynman}` please"
+        )
+
+    def test_does_not_touch_email_addresses(self) -> None:
+        text = "email foo@bar.com here"
+        self.assertEqual(
+            self.utils.normalize_markdown_input(text), "email foo@bar.com here"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

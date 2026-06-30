@@ -678,14 +678,33 @@ def normalize_markdown_input(markdown: str) -> str:
         normalized = normalized.replace("\\r\\n", "\n")
     if "\\n" in normalized:
         normalized = normalized.replace("\\n", "\n")
-    # Agents should send mentions as @username. Convert that single input form
-    # into the parser's canonical mention syntax before conversion.
-    normalized = re.sub(
-        r"(?<![\w`{])@([A-Za-z0-9_]{1,64})\b",
-        r"`{@\1}`",
-        normalized,
-    )
+    normalized = _normalize_mentions(normalized)
     return normalized
+
+
+# Ouro's markdown parser only recognizes one mention spelling: the
+# backtick-wrapped brace-at form `{@username}`. Models reliably get this wrong,
+# emitting @username, @{username}, {@username}, or `@username` instead, none of
+# which notify the user. Normalize every supported spelling to the canonical
+# form so a mention works regardless of how the agent wrote it.
+_MENTION_USER = r"([A-Za-z0-9_]{1,64})"
+_MENTION_REDUCERS = (
+    re.compile(r"`\{@" + _MENTION_USER + r"\}`"),  # `{@u}` (already canonical)
+    re.compile(r"`@" + _MENTION_USER + r"`"),  # `@u`
+    re.compile(r"\{@" + _MENTION_USER + r"\}"),  # {@u}
+    re.compile(r"@\{" + _MENTION_USER + r"\}"),  # @{u}
+)
+# Bare @username, but not mid-word, not an email local part, and not already
+# wrapped in a brace or backtick.
+_MENTION_BARE = re.compile(r"(?<![\w`{])@" + _MENTION_USER + r"\b")
+
+
+def _normalize_mentions(text: str) -> str:
+    # Phase 1: strip any wrapping spelling back down to a bare @username token.
+    for pattern in _MENTION_REDUCERS:
+        text = pattern.sub(r"@\1", text)
+    # Phase 2: wrap bare @username uniformly into the canonical mention syntax.
+    return _MENTION_BARE.sub(r"`{@\1}`", text)
 
 
 def content_from_markdown(ouro: Any, markdown: str) -> Any:
