@@ -350,6 +350,42 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
     ]
 
 
+def test_update_quest_item_passes_waiting_fields() -> None:
+    quests = _FakeQuests()
+    result = json.loads(
+        _quest_tools()["update_quest_item"](
+            "quest-1",
+            "item-1",
+            _ctx(quests),
+            waiting_on="reply from authors",
+            waiting_until="2026-07-07T14:00:00Z",
+            waiting_check_every="1d",
+        )
+    )
+
+    assert quests.calls == [
+        {
+            "method": "update_item",
+            "quest_id": "quest-1",
+            "item_id": "item-1",
+            "waiting_on": "reply from authors",
+            "waiting_until": "2026-07-07T14:00:00Z",
+            "waiting_check_every": "1d",
+        }
+    ]
+    # Empty strings are preserved so callers can clear the fields.
+    quests.calls.clear()
+    _quest_tools()["update_quest_item"](
+        "quest-1",
+        "item-1",
+        _ctx(quests),
+        waiting_on="",
+        waiting_until="",
+    )
+    assert quests.calls[0]["waiting_on"] == ""
+    assert quests.calls[0]["waiting_until"] == ""
+
+
 def test_review_quest_entry_calls_sdk() -> None:
     quests = _FakeQuests()
     result = json.loads(

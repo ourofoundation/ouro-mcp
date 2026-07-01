@@ -226,6 +226,9 @@ def register(mcp: FastMCP) -> None:
                     "reward_currency": i.reward_currency,
                     "reward_amount": i.reward_amount,
                     **({"notes": i.notes} if i.notes else {}),
+                    **({"waiting_on": i.waiting_on} if getattr(i, "waiting_on", None) else {}),
+                    **({"waiting_until": i.waiting_until} if getattr(i, "waiting_until", None) else {}),
+                    **({"waiting_check_every": i.waiting_check_every} if getattr(i, "waiting_check_every", None) else {}),
                     **({"assignee_id": str(i.assignee_id)} if i.assignee_id else {}),
                     **({"child_quest_id": str(i.child_quest_id)} if i.child_quest_id else {}),
                 }
@@ -295,6 +298,42 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         description: Annotated[Optional[str], Field(description="Updated task description")] = None,
         notes: Annotated[Optional[str], Field(description="Internal notes on this item")] = None,
+        waiting_on: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "What this item is parked/blocked on (e.g. 'reply from the "
+                    "authors', 'sponsor decision'). The item stays 'in_progress' — "
+                    "this just records why it is waiting. Pass an empty string to "
+                    "clear it."
+                )
+            ),
+        ] = None,
+        waiting_until: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "ISO 8601 timestamp for when to reconsider a waiting item "
+                    "(e.g. '2026-07-07T14:00:00Z'). Until this passes the item is "
+                    "treated as non-actionable, so it will not block starting new "
+                    "work. Pass an empty string to clear it."
+                )
+            ),
+        ] = None,
+        waiting_check_every: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Interval shorthand ('1d', '6h', '30m') that turns this into a "
+                    "recurring check. Each time `waiting_until` comes due the item "
+                    "surfaces for one work session and `waiting_until` is advanced "
+                    "by this interval automatically, so it polls on a cadence "
+                    "(e.g. scan for a reply once a day) without taking up every "
+                    "heartbeat. Complete the item to stop the recurrence. Pass an "
+                    "empty string to clear it."
+                )
+            ),
+        ] = None,
         assignee_id: Annotated[
             Optional[str],
             Field(description="User UUID assigned to this item"),
@@ -351,6 +390,9 @@ def register(mcp: FastMCP) -> None:
                 status=status,
                 description=description,
                 notes=notes,
+                waiting_on=waiting_on,
+                waiting_until=waiting_until,
+                waiting_check_every=waiting_check_every,
                 assignee_id=assignee_id,
                 sort_order=sort_order,
                 eval_route_id=eval_route_id,
@@ -374,6 +416,9 @@ def register(mcp: FastMCP) -> None:
                     if getattr(updated, "assignee_id", None)
                     else None
                 ),
+                "waiting_on": getattr(updated, "waiting_on", None),
+                "waiting_until": getattr(updated, "waiting_until", None),
+                "waiting_check_every": getattr(updated, "waiting_check_every", None),
                 "reward_currency": updated.reward_currency,
                 "reward_amount": updated.reward_amount,
             }
