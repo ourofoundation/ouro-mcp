@@ -115,6 +115,11 @@ These values are always resolved (never null) in get_teams/get_team responses:
   create_dataset, e.g. {"status": {"values": ["todo", "done"]}}. The schema
   returns semantic_type "enum" and enum_values so agents can query with
   explicit WHERE values.
+- To change a dataset's shape after creation, use edit_dataset_columns with an
+  ordered operations list: add, update, rename, or drop columns. Pass
+  enum_values on an add/update op to make a column categorical (and to extend
+  an existing enum's allowed values). update_dataset stays for row ingest and
+  whole-dataset metadata; edit_dataset_columns is for column structure.
 
 **Conversations and messages**:
 - Use list_conversations() to see conversations you belong to.

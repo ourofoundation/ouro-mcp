@@ -34,6 +34,7 @@ class _FakeDatasets:
         self.query_page = query_page
         self.schema_response = schema_response
         self.query_calls: list[dict] = []
+        self.column_calls: list[dict] = []
         self.ingest = ingest
         self.ingest_warning = ingest_warning
 
@@ -84,6 +85,58 @@ class _FakeDatasets:
                 call["resolve_refs"] = resolve_refs
         self.query_calls.append(call)
         return self.query_page
+
+    def add_column(
+        self,
+        dataset_id: str,
+        name: str,
+        *,
+        type: str = "text",
+        nullable: bool = True,
+        label: str | None = None,
+        enum_values: list[str] | None = None,
+    ):
+        self.column_calls.append(
+            {
+                "method": "add",
+                "dataset_id": dataset_id,
+                "name": name,
+                "type": type,
+                "nullable": nullable,
+                "label": label,
+                "enum_values": enum_values,
+            }
+        )
+        return {"name": name}
+
+    def update_column(
+        self,
+        dataset_id: str,
+        column: str,
+        *,
+        new_name: str | None = None,
+        type: str | None = None,
+        label: str | None = None,
+        enum_values: list[str] | None = None,
+    ):
+        self.column_calls.append(
+            {
+                "method": "update",
+                "dataset_id": dataset_id,
+                "column": column,
+                "new_name": new_name,
+                "type": type,
+                "label": label,
+                "enum_values": enum_values,
+            }
+        )
+        return {"name": new_name or column}
+
+    def drop_column(self, dataset_id: str, column: str):
+        self.column_calls.append(
+            {"method": "drop", "dataset_id": dataset_id, "column": column}
+        )
+        return {"dropped": column}
 
     def schema(self, dataset_id: str):
         return self.schema_response or []
@@ -551,3 +604,103 @@ def test_query_dataset_sql_rejects_pagination_arguments() -> None:
 
     assert result["error"] == "invalid_arguments"
     assert "limit/offset are not compatible with sql" in result["message"]
+
+
+def test_edit_dataset_columns_applies_operations_in_order() -> None:
+    datasets = _FakeDatasets(
+        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
+        schema_response=[
+            {
+                "column_name": "priority",
+                "data_type": "text",
+                "semantic_type": "enum",
+                "enum_values": ["low", "high"],
+            }
+        ],
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["edit_dataset_columns"](
+            "dataset-1",
+            [
+                {
+                    "op": "add",
+                    "name": "priority",
+                    "type": "enum",
+                    "enum_values": ["low", "high"],
+                },
+                {"op": "rename", "name": "qty", "new_name": "quantity"},
+                {"op": "drop", "name": "scratch"},
+            ],
+            _ctx(datasets),
+        )
+    )
+
+    assert [c["method"] for c in datasets.column_calls] == ["add", "update", "drop"]
+    add_call = datasets.column_calls[0]
+    assert add_call["type"] == "enum"
+    assert add_call["enum_values"] == ["low", "high"]
+    assert add_call["nullable"] is True  # default supplied by ouro-py, not the op
+    rename_call = datasets.column_calls[1]
+    assert rename_call["column"] == "qty"
+    assert rename_call["new_name"] == "quantity"
+    assert result["operations"][0]["op"] == "add"
+    assert result["schema"][0]["enum_values"] == ["low", "high"]
+
+
+def test_edit_dataset_columns_accepts_json_string() -> None:
+    datasets = _FakeDatasets(query_page={"data": pd.DataFrame([])})
+    tools = _dataset_tools()
+
+    json.loads(
+        tools["edit_dataset_columns"](
+            "dataset-1",
+            '[{"op": "update", "name": "status", "enum_values": ["todo", "done"]}]',
+            _ctx(datasets),
+        )
+    )
+
+    assert datasets.column_calls == [
+        {
+            "method": "update",
+            "dataset_id": "dataset-1",
+            "column": "status",
+            "new_name": None,
+            "type": None,
+            "label": None,
+            "enum_values": ["todo", "done"],
+        }
+    ]
+
+
+def test_edit_dataset_columns_rejects_unknown_op() -> None:
+    datasets = _FakeDatasets()
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["edit_dataset_columns"](
+            "dataset-1",
+            [{"op": "frobnicate", "name": "status"}],
+            _ctx(datasets),
+        )
+    )
+
+    assert result["error"] == "invalid_arguments"
+    assert datasets.column_calls == []
+
+
+def test_edit_dataset_columns_rename_requires_new_name() -> None:
+    datasets = _FakeDatasets()
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["edit_dataset_columns"](
+            "dataset-1",
+            [{"op": "rename", "name": "status"}],
+            _ctx(datasets),
+        )
+    )
+
+    assert result["error"] == "invalid_arguments"
+    assert "new_name" in result["message"]

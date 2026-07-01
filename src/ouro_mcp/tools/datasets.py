@@ -121,6 +121,64 @@ def _coerce_json_object(value: Any, *, parameter_name: str) -> Optional[dict[str
     raise ValueError(f"{parameter_name} must be a JSON object or JSON string.")
 
 
+_COLUMN_OPS = ("add", "update", "rename", "drop")
+
+
+def _coerce_column_operations(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"operations must be valid JSON: {e}") from e
+    if not isinstance(value, list):
+        raise ValueError("operations must be a JSON array of column operations.")
+    if not value:
+        raise ValueError("operations must contain at least one column operation.")
+    if any(not isinstance(op, dict) for op in value):
+        raise ValueError("each operation must be a JSON object.")
+    return value
+
+
+def _apply_column_op(ouro: Any, dataset_id: str, op: dict[str, Any]) -> dict[str, Any]:
+    kind = op.get("op")
+    if kind not in _COLUMN_OPS:
+        raise ValueError(f"operation.op must be one of: {', '.join(_COLUMN_OPS)}.")
+
+    name = str(op.get("name") or "").strip()
+    if not name:
+        raise ValueError("operation.name is required.")
+
+    datasets = ouro.datasets
+    if kind == "drop":
+        return datasets.drop_column(dataset_id, name)
+
+    if kind == "add":
+        return datasets.add_column(
+            dataset_id,
+            name,
+            **optional_kwargs(
+                type=op.get("type"),
+                nullable=op.get("nullable"),
+                label=op.get("label"),
+                enum_values=op.get("enum_values"),
+            ),
+        )
+
+    new_name = op.get("new_name")
+    if kind == "rename" and not (isinstance(new_name, str) and new_name.strip()):
+        raise ValueError("rename requires a non-empty new_name.")
+    return datasets.update_column(
+        dataset_id,
+        name,
+        **optional_kwargs(
+            new_name=new_name,
+            type=op.get("type"),
+            label=op.get("label"),
+            enum_values=op.get("enum_values"),
+        ),
+    )
+
+
 def _resolve_dataset_data(
     data: Any = None,
     data_path: Optional[str] = None,
@@ -609,6 +667,52 @@ def register(mcp: FastMCP) -> None:
         result.update(_ingest_summary(dataset))
         return dump_json(result)
 
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def edit_dataset_columns(
+        dataset_id: Annotated[str, Field(description="Dataset UUID")],
+        operations: Annotated[
+            str | list[dict[str, Any]],
+            Field(
+                description=(
+                    "Column operations applied in order. A JSON array (or "
+                    "array string) of objects, each with an `op` field:\n"
+                    '- {"op": "add", "name": "...", "type": "text"|"numeric"|'
+                    '"boolean"|"timestamptz"|"enum", "nullable": true, '
+                    '"label": "...", "enum_values": ["..."]}\n'
+                    '- {"op": "update", "name": "...", "new_name": "...", '
+                    '"type": "...", "label": "...", "enum_values": ["..."]}\n'
+                    '- {"op": "rename", "name": "...", "new_name": "..."}\n'
+                    '- {"op": "drop", "name": "..."}'
+                )
+            ),
+        ],
+        ctx: Context,
+    ) -> str:
+        """Add, update, rename, or drop columns on an existing dataset's table.
+
+        This is the structural counterpart to ``update_dataset`` (which handles
+        row ingest and whole-dataset metadata). Operations run in the given
+        order against the live table.
+
+        Pass ``enum_values`` on an add/update op to make a column categorical:
+        ``type`` defaults to ``"enum"``, a DB CHECK constraint is added, and the
+        column reads back as ``semantic_type: "enum"`` with ``enum_values`` in
+        the schema. For an existing column, every current value must be null or
+        in the supplied list.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        ops = _coerce_column_operations(operations)
+
+        applied: list[dict[str, Any]] = []
+        for op in ops:
+            result = _apply_column_op(ouro, dataset_id, op)
+            applied.append({"op": op.get("op"), "result": result})
+
+        payload: dict[str, Any] = {"dataset_id": dataset_id, "operations": applied}
+        payload.update(_dataset_proof(ouro, dataset_id))
+        return dump_json(payload)
+
     @mcp.tool(
         annotations={"readOnlyHint": True},
     )
@@ -636,10 +740,6 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="Read-only PostgreSQL query using {{table}} as the dataset table name"),
         ] = None,
-        engine_type: Annotated[
-            str,
-            Field(description='"auto" | "recharts_json"'),
-        ] = "auto",
         config: Annotated[
             Optional[Any],
             Field(description="Chart config as a JSON object or JSON string"),
@@ -651,8 +751,8 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Create a saved view for a dataset.
 
-        Views are stored visualizations with an optional SQL query and chart configuration.
-        Pass a prompt to let the API auto-generate the SQL and config via AI.
+        A view is a (sql_query, config) pair: it runs the SQL and renders the chart
+        config. Provide both, or pass a prompt to have the API generate them via AI.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         created = ouro.datasets.create_view(
@@ -660,7 +760,6 @@ def register(mcp: FastMCP) -> None:
             name=name,
             description=description,
             sql_query=sql_query,
-            engine_type=engine_type,
             config=_coerce_json_object(config, parameter_name="config"),
             prompt=prompt,
         )
@@ -677,10 +776,6 @@ def register(mcp: FastMCP) -> None:
         sql_query: Annotated[
             Optional[str],
             Field(description="Updated read-only SQL query using {{table}}"),
-        ] = None,
-        engine_type: Annotated[
-            Optional[str],
-            Field(description='"auto" | "recharts_json"'),
         ] = None,
         config: Annotated[
             Optional[Any],
@@ -699,7 +794,6 @@ def register(mcp: FastMCP) -> None:
             name=name,
             description=description,
             sql_query=sql_query,
-            engine_type=engine_type,
             config=_coerce_json_object(config, parameter_name="config"),
             prompt=prompt,
         )

@@ -10,7 +10,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 - **Discover and execute API routes** — call any user-published API on the platform
 - **Delete assets** they own
 
-## Tools (55)
+## Tools (56)
 
 ### Assets & Discovery
 
@@ -37,6 +37,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `query_dataset` | Query a dataset's rows as JSON with pagination |
 | `create_dataset` | Create a dataset from JSON records or a local path (CSV / JSON / JSONL / Parquet) |
 | `update_dataset` | Update a dataset's data or metadata |
+| `edit_dataset_columns` | Add, update, rename, or drop columns on an existing dataset (batch operations) |
 | `list_dataset_views` | List saved views for a dataset |
 | `create_dataset_view` | Create a saved dataset view (chart, table, etc.) |
 | `update_dataset_view` | Update a saved dataset view |
@@ -234,12 +235,26 @@ Examples:
   database check constraint and show up in schema reads as
   `semantic_type: "enum"` with `enum_values`.
 
+### Dataset columns
+
+`edit_dataset_columns(dataset_id, operations)` restructures an existing
+dataset's table. `operations` is an ordered list; each entry has an `op`:
+
+- `{"op": "add", "name": "priority", "type": "enum", "enum_values": ["low", "high"]}`
+- `{"op": "update", "name": "status", "enum_values": ["todo", "done", "cancelled"]}`
+- `{"op": "rename", "name": "qty", "new_name": "quantity"}`
+- `{"op": "drop", "name": "scratch"}`
+
+Passing `enum_values` makes a column categorical (or extends an existing
+enum's allowed values). Use `update_dataset` for row ingest and whole-dataset
+metadata; `edit_dataset_columns` is for column structure.
+
 ### Dataset views
 
 Saved dataset views expose the same visualization objects used by the Ouro UI.
 
 - `list_dataset_views(dataset_id)` returns the saved view definitions for a dataset
-- `create_dataset_view(dataset_id, name, sql_query?, engine_type?, config?)` stores a new saved view
+- `create_dataset_view(dataset_id, name, sql_query?, config?)` stores a new saved view
 - `update_dataset_view(dataset_id, view_id, ...)` edits an existing saved view
 - `delete_dataset_view(dataset_id, view_id)` removes a saved view
 
