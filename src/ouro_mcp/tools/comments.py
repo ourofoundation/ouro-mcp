@@ -81,8 +81,8 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(
                 description=(
-                    "Extended markdown. Supports @mentions, LaTeX ($inline$, "
-                    "$$display$$), "
+                    "Extended markdown. Supports @mentions, LaTeX (\\(inline\\), "
+                    "\\[display\\]), "
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent```."
@@ -104,7 +104,7 @@ def register(mcp: FastMCP) -> None:
         - User mentions: @username
         - Asset links: prefer [text](post:|file:|dataset:|route:|service:<uuid>) shorthands; use [text](asset:<uuid>) only when the asset type is unknown
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
-        - LaTeX: $inline$, $$display$$
+        - LaTeX: \\(inline\\), \\[display\\]
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -121,8 +121,8 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(
                 description=(
-                    "Replacement extended markdown. Supports @mentions, LaTeX ($inline$, "
-                    "$$display$$), "
+                    "Replacement extended markdown. Supports @mentions, LaTeX (\\(inline\\), "
+                    "\\[display\\]), "
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent```."
@@ -137,7 +137,7 @@ def register(mcp: FastMCP) -> None:
         - User mentions: @username
         - Asset links: prefer [text](post:|file:|dataset:|route:|service:<uuid>) shorthands; use [text](asset:<uuid>) only when the asset type is unknown
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
-        - LaTeX: $inline$, $$display$$
+        - LaTeX: \\(inline\\), \\[display\\]
         """
         ouro = ctx.request_context.lifespan_context.ouro
 

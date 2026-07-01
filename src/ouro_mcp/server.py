@@ -96,7 +96,7 @@ These values are always resolved (never null) in get_teams/get_team responses:
   {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card", "displayConfig": {"visualizationId": "<uuid>|null", "actionId": "<uuid>|null"}}
   ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets. `displayConfig` is optional and carries type-specific display settings: for datasets, set `visualizationId` to render a specific saved dataset view; for routes, set `actionId` to preview a specific action's status, logs, and output. Legacy flat `visualizationId` is still supported but prefer `displayConfig`. Use the exact keys `id`, `assetType`, and `viewMode` here; do not use legacy embed keys like `asset_id`, `asset_type`, or `type`.
 - **Standard markdown**: headings, **bold**, *italic*, lists, code blocks, tables, links
-- **Math**: $inline$ and $$display$$ LaTeX
+- **Math**: \\(inline\\) and \\[display\\] LaTeX
 
 **Datasets**:
 - Inspect a dataset's schema first (resource `ouro://datasets/{id}/schema` or `get_dataset`).

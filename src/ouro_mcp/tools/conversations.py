@@ -178,7 +178,7 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(
                 description=(
-                    "Message body as extended Ouro markdown: @mentions, LaTeX ($inline$, $$display$$), "
+                    "Message body as extended Ouro markdown: @mentions, LaTeX (\\(inline\\), \\[display\\]), "
                     "typed asset link shorthands [label](post:|file:|dataset:|route:|service:<uuid>). "
                     "Use [label](asset:<uuid>) only when the asset type is unknown. "
                     "```assetComponent``` blocks for embeds, etc."

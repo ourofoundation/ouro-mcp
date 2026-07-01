@@ -29,7 +29,7 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Extended markdown body for the quest description. Supports "
-                    "@mentions, LaTeX ($inline$, $$display$$), "
+                    "@mentions, LaTeX (\\(inline\\), \\[display\\]), "
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
@@ -120,7 +120,7 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Replacement extended markdown body for the quest description. Supports "
-                    "@mentions, LaTeX ($inline$, $$display$$), "
+                    "@mentions, LaTeX (\\(inline\\), \\[display\\]), "
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "

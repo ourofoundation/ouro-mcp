@@ -56,8 +56,8 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(
                 description=(
-                    "Extended markdown body. Supports @mentions, LaTeX ($inline$, "
-                    "$$display$$), "
+                    "Extended markdown body. Supports @mentions, LaTeX (\\(inline\\), "
+                    "\\[display\\]), "
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
@@ -112,8 +112,8 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(
                 description=(
-                    "Replacement extended markdown body. Supports @mentions, LaTeX ($inline$, "
-                    "$$display$$), "
+                    "Replacement extended markdown body. Supports @mentions, LaTeX (\\(inline\\), "
+                    "\\[display\\]), "
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
