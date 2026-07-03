@@ -78,6 +78,10 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 
 | Tool | Description |
 |---|---|
+| `create_service` | Publish an external API as a service, optionally parsing routes from an OpenAPI spec |
+| `update_service` | Update a service's metadata, or re-sync its routes from an OpenAPI spec |
+| `create_route` | Add a route (single API endpoint) to a service |
+| `update_route` | Update a route's method, path, schema, or metadata |
 | `execute_route` | Execute an API route on Ouro (supports `dry_run`, async polling, `timeout`) |
 | `get_action` | Check the status of a route action (poll when `execute_route` returns `pending`) |
 

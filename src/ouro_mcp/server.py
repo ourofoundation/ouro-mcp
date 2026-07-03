@@ -65,7 +65,7 @@ Content is organized into **organizations** and **teams**:
 2. Call get_teams(org_id=...) to see teams within that org.
 3. Check the `agent_can_create` field on each team — if false, this agent cannot create assets there.
 4. If the user hasn't specified where to publish, ask them to pick an org and team.
-5. Pass org_id and team_id to create_post, create_dataset, or create_file.
+5. Pass org_id and team_id to create_post, create_dataset, create_file, or create_service.
    Pass org_id to create_team.
 
 Omitting org_id/team_id defaults to the user's global organization and "All" team,
@@ -135,6 +135,20 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - Use review_quest_entry(quest_id, entry_id, status="accepted"|"rejected") only when the caller has authority to review the quest.
 - Draft quests do not accept entries. Publish the quest with update_quest(status="open") before submit_quest_entry or complete_quest_item.
 - Use complete_quest_item only for owner/admin self-completion on open quests; normal contributors should submit entries.
+
+**Services** — publish an external API as an Ouro asset:
+- Use create_service(name, org_id, team_id, base_url, ...) to register a service.
+  `base_url` must be unique across Ouro; `authentication` is one of "None",
+  "Ouro", "Personal Access Token", or "OAuth 2.0".
+- Pass `spec_url` (or `spec_path`) to create_service/update_service to parse an
+  OpenAPI spec and auto-create/sync the service's routes. Omit both to create a
+  bare service with no routes.
+- Use update_service(id, ...) to change metadata (merged with existing values).
+- Use create_route(service_id, method, path, ...) to add an endpoint to a service
+  (e.g. for a service created without a spec); `method` + `path` must be unique
+  within the service. Use update_route(id, ...) to change a route.
+- Discover and run services with search_assets(asset_type="service") →
+  get_asset(service_id) → get_asset(route_id) → execute_route(...).
 
 **Route actions**:
 - Use get_asset(route_id, detail="full") to inspect a route's schema before execution.

@@ -13,9 +13,11 @@ from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
+    format_asset_summary,
     format_one_time_cost_summary,
     format_pay_per_use_cost_summary,
     list_response,
+    optional_kwargs,
     route_input_assets_summary,
     route_output_assets_summary,
     route_request_body_without_input_assets,
@@ -54,6 +56,31 @@ def _parse_json_param(value: Any, name: str) -> Optional[dict]:
         return parsed
     raise ValueError(
         f"{name} must be a JSON object or JSON-encoded string "
+        f"(got {type(value).__name__})."
+    )
+
+
+def _parse_json_arg(value: Any, name: str) -> Optional[Any]:
+    """Coerce a JSON object/array param into a Python value or fail loudly.
+
+    Like :func:`_parse_json_param` but accepts both objects and arrays — used
+    for route fields such as ``parameters`` (array) and ``request_body`` /
+    ``input_assets`` (object). Returns ``None`` when omitted.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ValueError(
+                f"{name} is not valid JSON: {exc}. Pass a JSON object/array or "
+                "omit the parameter."
+            ) from exc
+    raise ValueError(
+        f"{name} must be a JSON object/array or JSON-encoded string "
         f"(got {type(value).__name__})."
     )
 
@@ -496,6 +523,263 @@ def _get_action_logs_payload(
 
 
 def register(mcp: FastMCP) -> None:
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def create_service(
+        name: Annotated[str, Field(description="Service name")],
+        org_id: Annotated[str, Field(description="Organization UUID")],
+        team_id: Annotated[str, Field(description="Team UUID")],
+        base_url: Annotated[
+            str,
+            Field(description="Base URL of the upstream API, e.g. 'https://api.example.com'"),
+        ],
+        ctx: Context,
+        authentication: Annotated[
+            str,
+            Field(
+                description=(
+                    'Upstream auth scheme: "None" | "Ouro" | '
+                    '"Personal Access Token" | "OAuth 2.0"'
+                )
+            ),
+        ] = "None",
+        spec_url: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "URL to an OpenAPI (Swagger) spec. When provided, the "
+                    "service's routes are parsed and created automatically."
+                )
+            ),
+        ] = None,
+        spec_path: Annotated[
+            Optional[str],
+            Field(description="Storage path to an already-uploaded OpenAPI spec file."),
+        ] = None,
+        visibility: Annotated[
+            str, Field(description='"public" | "private" | "organization"')
+        ] = "public",
+        description: Annotated[
+            Optional[str], Field(description="Short description of the service")
+        ] = None,
+        version: Annotated[Optional[str], Field(description="Optional version string")] = None,
+        auth_url: Annotated[
+            Optional[str],
+            Field(description="OAuth authorization URL (only for 'OAuth 2.0' auth)"),
+        ] = None,
+    ) -> str:
+        """Publish an external API as a service on Ouro.
+
+        `base_url` must be unique across Ouro. Pass `spec_url` (or `spec_path`
+        for an already-uploaded file) to register from an OpenAPI spec — routes
+        are parsed and created automatically. Omit both to create a service
+        with no routes yet, then add routes from the web UI.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+
+        service = ouro.services.create(
+            name=name,
+            base_url=base_url,
+            authentication=authentication,
+            visibility=visibility,
+            description=description,
+            org_id=org_id,
+            team_id=team_id,
+            **optional_kwargs(
+                spec_url=spec_url,
+                spec_path=spec_path,
+                version=version,
+                auth_url=auth_url,
+            ),
+        )
+
+        return dump_json(format_asset_summary(service))
+
+    @mcp.tool(annotations={"idempotentHint": True})
+    @handle_ouro_errors
+    def update_service(
+        id: Annotated[str, Field(description="Service UUID")],
+        ctx: Context,
+        name: Annotated[Optional[str], Field(description="New name")] = None,
+        base_url: Annotated[
+            Optional[str], Field(description="New upstream base URL (must be unique)")
+        ] = None,
+        authentication: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    'Upstream auth scheme: "None" | "Ouro" | '
+                    '"Personal Access Token" | "OAuth 2.0"'
+                )
+            ),
+        ] = None,
+        spec_url: Annotated[
+            Optional[str],
+            Field(description="URL to an OpenAPI spec; re-parses and syncs the service's routes."),
+        ] = None,
+        spec_path: Annotated[
+            Optional[str],
+            Field(description="Storage path to an uploaded OpenAPI spec; re-parses routes."),
+        ] = None,
+        visibility: Annotated[
+            Optional[str], Field(description='"public" | "private" | "organization"')
+        ] = None,
+        description: Annotated[Optional[str], Field(description="New description")] = None,
+        version: Annotated[Optional[str], Field(description="New version string")] = None,
+        auth_url: Annotated[Optional[str], Field(description="OAuth authorization URL")] = None,
+        org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
+        team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
+    ) -> str:
+        """Update a service's metadata (name, base_url, auth, visibility, ...).
+
+        Metadata is merged with the service's existing values, so pass only
+        what changes. Providing `spec_url` or `spec_path` re-parses the OpenAPI
+        spec and syncs the service's routes.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+
+        service = ouro.services.update(
+            id,
+            **optional_kwargs(
+                name=name,
+                base_url=base_url,
+                authentication=authentication,
+                spec_url=spec_url,
+                spec_path=spec_path,
+                visibility=visibility,
+                description=description,
+                version=version,
+                auth_url=auth_url,
+                org_id=org_id,
+                team_id=team_id,
+            ),
+        )
+
+        return dump_json(format_asset_summary(service))
+
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def create_route(
+        service_id: Annotated[str, Field(description="UUID of the service to add the route to")],
+        method: Annotated[
+            str, Field(description='HTTP method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"')
+        ],
+        path: Annotated[str, Field(description="Route path on the upstream API, e.g. '/predict'")],
+        ctx: Context,
+        name: Annotated[
+            Optional[str],
+            Field(description="Display name; defaults to '{method} {path}' when omitted"),
+        ] = None,
+        description: Annotated[Optional[str], Field(description="Route description")] = None,
+        visibility: Annotated[
+            Optional[str],
+            Field(description='"public" | "private" | "organization"; defaults to the service\'s'),
+        ] = None,
+        parameters: Annotated[
+            Optional[Any],
+            Field(description="OpenAPI-style parameters as a JSON array (object or string)"),
+        ] = None,
+        request_body: Annotated[
+            Optional[Any],
+            Field(description="Request body schema as a JSON object (object or string)"),
+        ] = None,
+        input_assets: Annotated[
+            Optional[Any],
+            Field(
+                description=(
+                    "Keyed Ouro asset inputs as a JSON object, e.g. "
+                    '\'{"structure": {"asset_type": "file"}}\''
+                )
+            ),
+        ] = None,
+        output_assets: Annotated[
+            Optional[Any],
+            Field(description="Keyed Ouro asset outputs as a JSON object"),
+        ] = None,
+        execution_mode: Annotated[
+            str, Field(description='"sync" (default) or "async" for long-running upstreams')
+        ] = "sync",
+    ) -> str:
+        """Add a route (a single API endpoint) to a service.
+
+        `method` + `path` must be unique within the service. Use this after
+        `create_service` to expose individual endpoints, or when a service was
+        created without an OpenAPI spec. `org_id`, `team_id`, and `visibility`
+        default to the parent service's values.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+
+        route = ouro.routes.create(
+            service_id,
+            method=method,
+            path=path,
+            execution_mode=execution_mode,
+            **optional_kwargs(
+                name=name,
+                description=description,
+                visibility=visibility,
+                parameters=_parse_json_arg(parameters, "parameters"),
+                request_body=_parse_json_arg(request_body, "request_body"),
+                input_assets=_parse_json_arg(input_assets, "input_assets"),
+                output_assets=_parse_json_arg(output_assets, "output_assets"),
+            ),
+        )
+
+        return dump_json(format_asset_summary(route))
+
+    @mcp.tool(annotations={"idempotentHint": True})
+    @handle_ouro_errors
+    def update_route(
+        id: Annotated[str, Field(description='Route UUID or "entity_name/route_name"')],
+        ctx: Context,
+        method: Annotated[Optional[str], Field(description="New HTTP method")] = None,
+        path: Annotated[Optional[str], Field(description="New route path")] = None,
+        name: Annotated[Optional[str], Field(description="New display name")] = None,
+        description: Annotated[Optional[str], Field(description="New description")] = None,
+        visibility: Annotated[
+            Optional[str], Field(description='"public" | "private" | "organization"')
+        ] = None,
+        parameters: Annotated[
+            Optional[Any], Field(description="Parameters as a JSON array (object or string)")
+        ] = None,
+        request_body: Annotated[
+            Optional[Any], Field(description="Request body schema as a JSON object (object or string)")
+        ] = None,
+        input_assets: Annotated[
+            Optional[Any], Field(description="Keyed Ouro asset inputs as a JSON object")
+        ] = None,
+        output_assets: Annotated[
+            Optional[Any], Field(description="Keyed Ouro asset outputs as a JSON object")
+        ] = None,
+        execution_mode: Annotated[
+            Optional[str], Field(description='"sync" or "async"')
+        ] = None,
+    ) -> str:
+        """Update a route's method, path, schema, or metadata.
+
+        Only the fields you pass are changed; the route's name is preserved
+        when `name` is omitted.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+
+        route = ouro.routes.update(
+            id,
+            **optional_kwargs(
+                method=method,
+                path=path,
+                name=name,
+                description=description,
+                visibility=visibility,
+                execution_mode=execution_mode,
+                parameters=_parse_json_arg(parameters, "parameters"),
+                request_body=_parse_json_arg(request_body, "request_body"),
+                input_assets=_parse_json_arg(input_assets, "input_assets"),
+                output_assets=_parse_json_arg(output_assets, "output_assets"),
+            ),
+        )
+
+        return dump_json(format_asset_summary(route))
+
     @mcp.tool(
         annotations={"destructiveHint": True, "openWorldHint": True},
     )

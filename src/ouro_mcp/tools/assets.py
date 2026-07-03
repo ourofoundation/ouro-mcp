@@ -221,6 +221,8 @@ def register(mcp: FastMCP) -> None:
             ouro.files.delete(id)
         elif asset_type == "quest":
             ouro.quests.delete(id)
+        elif asset_type == "service":
+            ouro.services.delete(id)
         else:
             return dump_json(
                 {
