@@ -731,10 +731,17 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
-    def create_dataset_view(
+    def write_dataset_view(
         dataset_id: Annotated[str, Field(description="Dataset UUID")],
-        name: Annotated[str, Field(description="View name")],
         ctx: Context,
+        view_id: Annotated[
+            Optional[str],
+            Field(description="Omit to create a new view; pass a view UUID to update that view."),
+        ] = None,
+        name: Annotated[
+            Optional[str],
+            Field(description="View name. Required when creating (view_id omitted)."),
+        ] = None,
         description: Annotated[Optional[str], Field(description="Short view description")] = None,
         sql_query: Annotated[
             Optional[str],
@@ -749,55 +756,37 @@ def register(mcp: FastMCP) -> None:
             Field(description="Natural-language prompt to guide AI generation of the view's SQL and chart config"),
         ] = None,
     ) -> str:
-        """Create a saved view for a dataset.
+        """Create or update a saved dataset view.
 
+        Omit view_id to create a new view; pass view_id to update an existing one.
         A view is a (sql_query, config) pair: it runs the SQL and renders the chart
         config. Provide both, or pass a prompt to have the API generate them via AI.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        created = ouro.datasets.create_view(
-            dataset_id,
-            name=name,
-            description=description,
-            sql_query=sql_query,
-            config=_coerce_json_object(config, parameter_name="config"),
-            prompt=prompt,
-        )
-        return dump_json(created)
+        cfg = _coerce_json_object(config, parameter_name="config")
 
-    @mcp.tool(annotations={"idempotentHint": False})
-    @handle_ouro_errors
-    def update_dataset_view(
-        dataset_id: Annotated[str, Field(description="Dataset UUID")],
-        view_id: Annotated[str, Field(description="Dataset view UUID")],
-        ctx: Context,
-        name: Annotated[Optional[str], Field(description="Updated view name")] = None,
-        description: Annotated[Optional[str], Field(description="Updated description")] = None,
-        sql_query: Annotated[
-            Optional[str],
-            Field(description="Updated read-only SQL query using {{table}}"),
-        ] = None,
-        config: Annotated[
-            Optional[Any],
-            Field(description="Updated chart config as a JSON object or JSON string"),
-        ] = None,
-        prompt: Annotated[
-            Optional[str],
-            Field(description="Natural-language prompt to guide AI re-generation of the view's SQL and chart config"),
-        ] = None,
-    ) -> str:
-        """Update a saved dataset view."""
-        ouro = ctx.request_context.lifespan_context.ouro
-        updated = ouro.datasets.update_view(
-            dataset_id,
-            view_id,
-            name=name,
-            description=description,
-            sql_query=sql_query,
-            config=_coerce_json_object(config, parameter_name="config"),
-            prompt=prompt,
-        )
-        return dump_json(updated)
+        if view_id is None:
+            if not name:
+                raise ValueError("name is required when creating a dataset view (omit view_id to create).")
+            result = ouro.datasets.create_view(
+                dataset_id,
+                name=name,
+                description=description,
+                sql_query=sql_query,
+                config=cfg,
+                prompt=prompt,
+            )
+        else:
+            result = ouro.datasets.update_view(
+                dataset_id,
+                view_id,
+                name=name,
+                description=description,
+                sql_query=sql_query,
+                config=cfg,
+                prompt=prompt,
+            )
+        return dump_json(result)
 
     @mcp.tool(annotations={"destructiveHint": True})
     @handle_ouro_errors

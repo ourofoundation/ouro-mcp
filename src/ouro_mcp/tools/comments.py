@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
@@ -75,8 +75,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
-    def create_comment(
-        parent_id: Annotated[str, Field(description="Asset ID or comment ID to reply to")],
+    def write_comment(
         content_markdown: Annotated[
             str,
             Field(
@@ -90,14 +89,23 @@ def register(mcp: FastMCP) -> None:
             ),
         ],
         ctx: Context,
+        parent_id: Annotated[
+            Optional[str],
+            Field(description="Asset ID or comment ID to comment on / reply to. Provide to create a new comment."),
+        ] = None,
+        id: Annotated[
+            Optional[str],
+            Field(description="Comment UUID to edit. Provide to replace an existing comment's content."),
+        ] = None,
     ) -> str:
-        """Create a comment on an asset or reply to an existing comment.
+        """Create a comment/reply, or edit an existing comment.
 
-        parent_id is the ID of the asset being commented on, or the ID of a
-        comment being replied to.
+        Provide exactly one of:
+        - parent_id — the asset or comment to comment on / reply to (creates a comment).
+        - id — the comment to edit (replaces its content).
 
         If you are creating an asset and want to reference it in a comment, you MUST
-        wait for the asset creation tool to return the ID before calling create_comment.
+        wait for the asset creation tool to return the ID before calling write_comment.
         Do not use placeholder IDs or call them in parallel.
 
         content_markdown supports extended markdown:
@@ -106,42 +114,15 @@ def register(mcp: FastMCP) -> None:
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
         - LaTeX: \\(inline\\), \\[display\\]
         """
+        if (parent_id is None) == (id is None):
+            raise ValueError("Provide exactly one of parent_id (to create) or id (to edit).")
+
         ouro = ctx.request_context.lifespan_context.ouro
-
         content = content_from_markdown(ouro, content_markdown)
-        comment = ouro.comments.create(content=content, parent_id=parent_id)
 
-        return dump_json(format_asset_summary(comment))
-
-    @mcp.tool(annotations={"idempotentHint": True})
-    @handle_ouro_errors
-    def update_comment(
-        id: Annotated[str, Field(description="Comment UUID")],
-        content_markdown: Annotated[
-            str,
-            Field(
-                description=(
-                    "Replacement extended markdown. Supports @mentions, LaTeX (\\(inline\\), "
-                    "\\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
-                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
-                    "and block-level asset embeds via ```assetComponent```."
-                )
-            ),
-        ],
-        ctx: Context,
-    ) -> str:
-        """Update a comment's content.
-
-        content_markdown supports extended markdown:
-        - User mentions: @username
-        - Asset links: prefer [text](post:|file:|dataset:|route:|service:<uuid>) shorthands; use [text](asset:<uuid>) only when the asset type is unknown
-        - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
-        - LaTeX: \\(inline\\), \\[display\\]
-        """
-        ouro = ctx.request_context.lifespan_context.ouro
-
-        content = content_from_markdown(ouro, content_markdown)
-        comment = ouro.comments.update(id, content=content)
+        if id is not None:
+            comment = ouro.comments.update(id, content=content)
+        else:
+            comment = ouro.comments.create(content=content, parent_id=parent_id)
 
         return dump_json(format_asset_summary(comment))

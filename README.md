@@ -39,8 +39,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `update_dataset` | Update a dataset's data or metadata |
 | `edit_dataset_columns` | Add, update, rename, or drop columns on an existing dataset (batch operations) |
 | `list_dataset_views` | List saved views for a dataset |
-| `create_dataset_view` | Create a saved dataset view (chart, table, etc.) |
-| `update_dataset_view` | Update a saved dataset view |
+| `write_dataset_view` | Create a saved dataset view (omit `view_id`) or update one (pass `view_id`) |
 | `delete_dataset_view` | Delete a saved dataset view |
 
 ### Posts
@@ -62,8 +61,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | Tool | Description |
 |---|---|
 | `get_comments` | List comments on an asset or replies to a comment |
-| `create_comment` | Create a comment or reply from extended markdown |
-| `update_comment` | Update a comment's content |
+| `write_comment` | Create a comment/reply (`parent_id`) or edit one (`id`) from extended markdown |
 
 ### Conversations
 
@@ -109,8 +107,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `create_team` | Create a new team in an organization |
 | `update_team` | Update a team's name, description, visibility, default_role, or policies |
 | `get_team_feed` | Browse a team's activity feed or unread items |
-| `join_team` | Join a team (requires membership in the team's organization) |
-| `leave_team` | Leave a team you are currently a member of |
+| `set_team_membership` | Join (`member=true`) or leave (`member=false`) a team |
 
 ### Money (BTC & USD)
 
@@ -258,8 +255,8 @@ metadata; `edit_dataset_columns` is for column structure.
 Saved dataset views expose the same visualization objects used by the Ouro UI.
 
 - `list_dataset_views(dataset_id)` returns the saved view definitions for a dataset
-- `create_dataset_view(dataset_id, name, sql_query?, config?)` stores a new saved view
-- `update_dataset_view(dataset_id, view_id, ...)` edits an existing saved view
+- `write_dataset_view(dataset_id, name, sql_query?, config?)` stores a new saved view (omit `view_id`)
+- `write_dataset_view(dataset_id, view_id, ...)` edits an existing saved view
 - `delete_dataset_view(dataset_id, view_id)` removes a saved view
 
 For SQL-backed views, use `{{table}}` as the dataset table name placeholder.

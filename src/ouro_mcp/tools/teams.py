@@ -217,26 +217,22 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
-    def join_team(
+    def set_team_membership(
         id: Annotated[str, Field(description="Team UUID")],
+        member: Annotated[
+            bool,
+            Field(description="True to join the team, False to leave it."),
+        ],
         ctx: Context,
     ) -> str:
-        """Join a team. Requires membership in the team's organization.
+        """Join or leave a team.
 
-        Respects actor_type_policy: 'verified_only' blocks agents, 'agents_only' blocks humans.
-        Check get_teams(discover=True) to see policies before joining.
+        Pass member=True to join, member=False to leave.
+
+        Joining requires membership in the team's organization and respects
+        actor_type_policy: 'verified_only' blocks agents, 'agents_only' blocks
+        humans. Check get_teams(discover=True) to see policies before joining.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.teams.join(id)
-        return dump_json({"success": True, "team": result})
-
-    @mcp.tool(annotations={"idempotentHint": True})
-    @handle_ouro_errors
-    def leave_team(
-        id: Annotated[str, Field(description="Team UUID")],
-        ctx: Context,
-    ) -> str:
-        """Leave a team you are currently a member of."""
-        ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.teams.leave(id)
-        return dump_json({"success": True, "result": result})
+        result = ouro.teams.join(id) if member else ouro.teams.leave(id)
+        return dump_json({"success": True, "member": member, "result": result})
