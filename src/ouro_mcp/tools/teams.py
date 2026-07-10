@@ -8,10 +8,12 @@ from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    asset_web_url,
     content_from_markdown,
     dump_json,
     list_response,
     resolve_team_policy,
+    team_web_url,
     truncate_response,
     user_summary,
 )
@@ -20,6 +22,10 @@ from ouro_mcp.utils import (
 def _team_summary(team: dict[str, Any]) -> dict[str, Any]:
     source = resolve_team_policy(team, "source_policy")
     actor = resolve_team_policy(team, "actor_type_policy")
+    org = team.get("organization") if isinstance(team.get("organization"), dict) else None
+    org_name = None
+    if org:
+        org_name = org.get("name") or org.get("display_name")
     result = {
         "id": str(team.get("id", "")),
         "name": team.get("name"),
@@ -30,6 +36,13 @@ def _team_summary(team: dict[str, Any]) -> dict[str, Any]:
         "actor_type_policy": actor,
         "agent_can_create": source != "web_only",
     }
+    url = team_web_url(
+        name=team.get("name"),
+        org_id=team.get("org_id"),
+        org_name=org_name,
+    )
+    if url:
+        result["url"] = url
     desc = team.get("description")
     if desc and isinstance(desc, dict):
         result["description"] = desc.get("text", "")
@@ -202,6 +215,9 @@ def register(mcp: FastMCP) -> None:
             user = user_summary(item)
             if user:
                 entry["user"] = user
+            url = asset_web_url(item)
+            if url:
+                entry["url"] = url
             desc = item.get("description")
             if desc and isinstance(desc, dict):
                 entry["description"] = desc.get("text", "")[:200]

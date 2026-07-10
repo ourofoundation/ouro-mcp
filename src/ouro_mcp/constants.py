@@ -4,8 +4,13 @@ MAX_RESPONSE_SIZE = 50_000  # ~50KB JSON threshold
 
 ENV_OURO_API_KEY = "OURO_API_KEY"
 ENV_OURO_BASE_URL = "OURO_BASE_URL"
+ENV_OURO_FRONTEND_URL = "OURO_FRONTEND_URL"
 ENV_OURO_MCP_TIMEZONE = "OURO_MCP_TIMEZONE"
 ENV_WORKSPACE_ROOT = "WORKSPACE_ROOT"
+
+# Public site origin for absolute asset/team links in tool responses.
+DEFAULT_OURO_FRONTEND_URL = "https://ouro.foundation"
+GLOBAL_ORG_ID = "00000000-0000-0000-0000-000000000000"
 
 # Asset detail comment previews. These defaults keep `get_asset(detail="full")`
 # useful for agents without turning it into a full discussion-thread dump.

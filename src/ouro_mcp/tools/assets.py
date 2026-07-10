@@ -11,6 +11,7 @@ from ouro.utils.content import description_to_markdown
 from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    asset_web_url,
     dump_json,
     format_asset_summary,
     format_monetization_block,
@@ -183,6 +184,10 @@ def register(mcp: FastMCP) -> None:
 
             if item.get("parent_id"):
                 row["parent_id"] = str(item["parent_id"])
+
+            url = asset_web_url(item)
+            if url:
+                row["url"] = url
 
             # Surface monetization so agents can rank/filter without N+1
             # get_asset calls. Free assets contribute nothing.

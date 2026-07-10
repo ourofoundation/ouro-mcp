@@ -46,12 +46,12 @@ def _sample_team() -> dict:
     return {
         "id": "team-1",
         "name": "matsci",
-        "org_id": "org-1",
+        "org_id": "00000000-0000-0000-0000-000000000000",
         "visibility": "public",
         "default_role": "write",
         "source_policy": "any",
         "actor_type_policy": "any",
-        "organization": {"name": "Ouro"},
+        "organization": {"name": "all"},
         "memberCount": 2,
         "members": [
             {
@@ -82,6 +82,7 @@ def test_get_teams_detail_omits_members_by_default():
     ]
     assert payload["member_count"] == 2
     assert "members" not in payload
+    assert payload["url"] == "https://ouro.foundation/teams/matsci"
 
 
 def test_get_teams_detail_includes_members_when_requested():

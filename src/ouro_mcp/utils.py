@@ -10,7 +10,14 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from ouro_mcp.constants import ENV_OURO_MCP_TIMEZONE, ENV_WORKSPACE_ROOT, MAX_RESPONSE_SIZE
+from ouro_mcp.constants import (
+    DEFAULT_OURO_FRONTEND_URL,
+    ENV_OURO_FRONTEND_URL,
+    ENV_OURO_MCP_TIMEZONE,
+    ENV_WORKSPACE_ROOT,
+    GLOBAL_ORG_ID,
+    MAX_RESPONSE_SIZE,
+)
 
 log = logging.getLogger(__name__)
 
@@ -356,6 +363,66 @@ def _getv(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def frontend_origin() -> str:
+    """Public web origin (no trailing slash) for absolute asset/team URLs."""
+    raw = (
+        os.environ.get(ENV_OURO_FRONTEND_URL)
+        or DEFAULT_OURO_FRONTEND_URL
+    ).strip()
+    return raw.rstrip("/") or DEFAULT_OURO_FRONTEND_URL
+
+
+def absolute_web_url(path_or_url: str | None) -> str | None:
+    """Return an absolute https URL for a site path or already-absolute URL."""
+    if not path_or_url:
+        return None
+    value = str(path_or_url).strip()
+    if not value:
+        return None
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    if not value.startswith("/"):
+        value = f"/{value}"
+    return f"{frontend_origin()}{value}"
+
+
+def asset_web_url(asset: Any) -> str | None:
+    """Public URL for an asset model or search/feed dict.
+
+    The backend already attaches absolute ``url`` (and relative ``slug``) on
+    retrieve/search/activity. Prefer ``url``; only fall back to joining
+    ``slug`` to the frontend origin when ``url`` is missing.
+    """
+    if asset is None:
+        return None
+    return absolute_web_url(_getv(asset, "url") or _getv(asset, "slug"))
+
+
+def team_web_url(
+    *,
+    name: str | None,
+    org_id: str | None = None,
+    org_name: str | None = None,
+) -> str | None:
+    """Canonical public URL for a team.
+
+    Global-org teams use ``/teams/<slug>``. Org-scoped teams use
+    ``/<org-slug>/teams/<team-slug>`` when the org name is known; otherwise
+    return None rather than inventing a global path.
+    """
+    if not name:
+        return None
+    org_id_str = str(org_id) if org_id is not None else ""
+    org_slug = (org_name or "").strip()
+    if org_id_str == GLOBAL_ORG_ID or org_slug == "all":
+        path = f"/teams/{name}"
+    elif org_slug:
+        path = f"/{org_slug}/teams/{name}"
+    else:
+        return None
+    return absolute_web_url(path)
+
+
 def user_summary(source: Any) -> dict | None:
     """Build a standard {id, username, is_agent} dict from a model or raw dict.
 
@@ -464,6 +531,10 @@ def format_asset_summary(asset: Any) -> dict:
     parent_id = getattr(asset, "parent_id", None)
     if parent_id:
         summary["parent_id"] = str(parent_id)
+
+    url = asset_web_url(asset)
+    if url:
+        summary["url"] = url
 
     monetization_block = format_monetization_block(asset)
     if monetization_block:
