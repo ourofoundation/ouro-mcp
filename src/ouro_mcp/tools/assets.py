@@ -113,8 +113,11 @@ def register(mcp: FastMCP) -> None:
         limit: Annotated[int, Field(description="Max results to return")] = 10,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
     ) -> str:
-        """Search or browse assets on Ouro. Supports hybrid semantic + full-text search.
+        """Search or browse assets on Ouro. Supports chunk-level hybrid semantic + full-text search.
 
+        Matching is fine-grained: posts, comments, dataset schemas, and routes are
+        indexed as chunks, so results include a `snippet` (the matching passage) and
+        `match_source` (summary/body/comment/schema/route) for precise citation.
         Without a query: returns recent assets by creation date.
         With a UUID as query: direct asset lookup.
         Use sort="popular" to find the most engaged assets (by views, reactions, comments, downloads, uses).
@@ -169,6 +172,14 @@ def register(mcp: FastMCP) -> None:
                 "created_at": item.get("created_at"),
                 "last_updated": item.get("last_updated"),
             }
+
+            # Chunk-level search returns the matching passage and where it came
+            # from (summary/body/comment/schema/route) so agents can quote the
+            # exact evidence instead of refetching the whole asset.
+            if item.get("snippet"):
+                row["snippet"] = item["snippet"]
+            if item.get("match_source"):
+                row["match_source"] = item["match_source"]
 
             user = user_summary(item)
             if user:
