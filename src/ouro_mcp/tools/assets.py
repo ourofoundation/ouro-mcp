@@ -256,6 +256,37 @@ def register(mcp: FastMCP) -> None:
             }
         )
 
+    @mcp.tool(
+        annotations={"destructiveHint": True},
+    )
+    @handle_ouro_errors
+    def share_asset(
+        id: Annotated[str, Field(description="UUID of the asset to share")],
+        user_id: Annotated[
+            str, Field(description="UUID of the user to grant access to")
+        ],
+        ctx: Context,
+        role: Annotated[
+            str,
+            Field(description='"read" (default) | "write" | "admin"'),
+        ] = "read",
+    ) -> str:
+        """Grant a user direct permission on an asset.
+
+        Private assets are invisible to others until shared. Mentions, links,
+        and embeds do not grant access — call this when someone needs to read
+        or edit a private asset you own.
+        """
+        allowed_roles = {"read", "write", "admin"}
+        if role not in allowed_roles:
+            raise ValueError(
+                f"Invalid role={role!r}. Must be one of: {sorted(allowed_roles)}."
+            )
+
+        ouro = ctx.request_context.lifespan_context.ouro
+        ouro.assets.share(id, user_id, role=role)
+        return dump_json({"id": id, "user_id": user_id, "role": role})
+
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def download_asset(

@@ -71,6 +71,10 @@ Content is organized into **organizations** and **teams**:
 Omitting org_id/team_id defaults to the user's global organization and "All" team,
 which is a low-visibility catch-all. Always prefer a specific team when possible.
 
+**Private assets** are invisible to other users until you grant access with
+`share_asset(id, user_id, role="read")`. Mentions, links, and embeds do not
+grant access.
+
 **Team gating policies** — teams can restrict who creates content and how.
 These values are always resolved (never null) in get_teams/get_team responses:
 - `source_policy`: controls *how* assets are created.

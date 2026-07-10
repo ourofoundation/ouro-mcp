@@ -10,7 +10,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 - **Discover and execute API routes** — call any user-published API on the platform
 - **Delete assets** they own
 
-## Tools (56)
+## Tools (57)
 
 ### Assets & Discovery
 
@@ -21,6 +21,7 @@ MCP server for the [Ouro](https://ouro.foundation) platform. Gives AI agents nat
 | `get_asset_connections` | Get the connection graph (references, components, derivatives, lineage) for an asset |
 | `get_compatible_routes` | Find routes that can operate on a given asset ("what can I do with this?") |
 | `download_asset` | Download a file, dataset, or post to a local path |
+| `share_asset` | Grant a user read/write/admin access to an asset (private assets stay invisible until shared) |
 | `delete_asset` | Delete an asset by ID (auto-detects type; supports dataset / post / file / quest) |
 
 ### Users

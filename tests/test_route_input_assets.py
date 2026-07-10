@@ -98,6 +98,49 @@ def test_route_input_assets_summary_synthesizes_legacy_input_type() -> None:
     }
 
 
+def test_route_input_assets_summary_fills_sparse_keyed_from_legacy() -> None:
+    route = SimpleNamespace(
+        input_type="file",
+        input_assets={"file": {}},
+        input_filter=None,
+        input_file_extension="cif",
+        input_file_extensions=None,
+    )
+
+    assert route_input_assets_summary(route) == {
+        "file": {
+            "asset_type": "file",
+            "primary": True,
+            "file_extensions": ["cif"],
+        }
+    }
+
+
+def test_route_input_assets_summary_reads_pydantic_declarations() -> None:
+    declaration = SimpleNamespace(
+        model_dump=lambda exclude_none=True: {
+            "asset_type": "file",
+            "primary": True,
+            "file_extensions": ["cif"],
+        }
+    )
+    route = SimpleNamespace(
+        input_type="file",
+        input_assets={"file": declaration},
+        input_filter=None,
+        input_file_extension=None,
+        input_file_extensions=None,
+    )
+
+    assert route_input_assets_summary(route) == {
+        "file": {
+            "asset_type": "file",
+            "primary": True,
+            "file_extensions": ["cif"],
+        }
+    }
+
+
 def test_route_output_assets_summary_prefers_plural_declarations() -> None:
     route = SimpleNamespace(
         output_type="file",

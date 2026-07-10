@@ -636,7 +636,10 @@ def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
 
     if isinstance(raw, dict):
         for name, config in raw.items():
-            config = config if isinstance(config, dict) else {}
+            if hasattr(config, "model_dump"):
+                config = config.model_dump(exclude_none=True)
+            elif not isinstance(config, dict):
+                config = {}
             result[name] = optional_kwargs(
                 asset_type=config.get("asset_type") or config.get("assetType"),
                 primary=config.get("primary"),
@@ -661,6 +664,33 @@ def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
             input_filter=_getv(route, "input_filter"),
             file_extensions=legacy_extensions,
         )
+    elif input_type and len(result) == 1:
+        # Sparse keyed rows (e.g. `{file: {}}`) inherit the legacy primary
+        # projection so agents still see the declared extension filter.
+        sole_name, sole_config = next(iter(result.items()))
+        sparse = not sole_config.get("asset_type") and not sole_config.get(
+            "file_extensions"
+        )
+        if sparse or not sole_config.get("asset_type"):
+            sole_config["asset_type"] = sole_config.get("asset_type") or input_type
+        if not sole_config.get("file_extensions"):
+            legacy_extensions = (
+                _getv(route, "input_file_extensions")
+                or (
+                    [_getv(route, "input_file_extension")]
+                    if _getv(route, "input_file_extension")
+                    else None
+                )
+            )
+            if legacy_extensions:
+                sole_config["file_extensions"] = legacy_extensions
+        if not sole_config.get("input_filter"):
+            legacy_filter = _getv(route, "input_filter")
+            if legacy_filter:
+                sole_config["input_filter"] = legacy_filter
+        if sparse and sole_config.get("primary") is None:
+            sole_config["primary"] = True
+        result[sole_name] = optional_kwargs(**sole_config)
 
     return result or None
 
@@ -679,7 +709,10 @@ def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
 
     if isinstance(raw, dict):
         for name, config in raw.items():
-            config = config if isinstance(config, dict) else {}
+            if hasattr(config, "model_dump"):
+                config = config.model_dump(exclude_none=True)
+            elif not isinstance(config, dict):
+                config = {}
             result[name] = optional_kwargs(
                 asset_type=config.get("asset_type") or config.get("assetType"),
                 primary=config.get("primary"),
