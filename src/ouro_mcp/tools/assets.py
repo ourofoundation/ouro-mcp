@@ -422,11 +422,14 @@ def register(mcp: FastMCP) -> None:
         bundle = ouro.assets.actions(
             asset_id,
             role=role,  # type: ignore[arg-type]
+            include_response=include_response,
+            limit=limit,
+            offset=offset,
             **optional_kwargs(status=status),
         )
         created_by = bundle.get("created_by")
         as_input = list(bundle.get("as_input") or [])
-        page = as_input[offset : offset + limit]
+        pagination = bundle.get("pagination") or {}
 
         payload: dict[str, Any] = {
             "asset_id": asset_id,
@@ -438,13 +441,14 @@ def register(mcp: FastMCP) -> None:
             ),
             "as_input": [
                 _format_action_summary(action, include_response=include_response)
-                for action in page
+                for action in as_input
             ],
         }
         if role in {"input", "both"}:
-            payload["as_input_total"] = len(as_input)
             payload["as_input_offset"] = offset
             payload["as_input_limit"] = limit
+            payload["as_input_has_more"] = bool(pagination.get("hasMore"))
+            payload["as_input_count"] = len(as_input)
         return truncate_response(dump_json(payload))
 
     @mcp.tool(annotations={"readOnlyHint": True})

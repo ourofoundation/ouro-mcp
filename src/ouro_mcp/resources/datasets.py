@@ -66,14 +66,14 @@ def register(mcp: FastMCP) -> None:
         schema = ouro.datasets.schema(id)
         # The backend already enriches FK-to-referenceable-table columns with
         # semantic_type="reference" (+ ref_kind and optional target asset_type),
-        # so this is surfaced verbatim.
+        # and adds name/type aliases alongside column_name/data_type.
         refs = {}
         enum_columns = {}
         for field in schema or []:
             if not isinstance(field, dict):
                 continue
             if field.get("semantic_type") == "reference":
-                column = field.get("column_name")
+                column = field.get("column_name") or field.get("name")
                 if not column:
                     continue
                 kind = field.get("ref_kind") or "asset"
@@ -82,7 +82,7 @@ def register(mcp: FastMCP) -> None:
                     entry["asset_type"] = field["asset_type"]
                 refs[column] = entry
             elif field.get("semantic_type") == "enum":
-                column = field.get("column_name")
+                column = field.get("column_name") or field.get("name")
                 values = field.get("enum_values")
                 if column and isinstance(values, list):
                     enum_columns[column] = {"values": values}
