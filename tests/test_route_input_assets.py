@@ -222,8 +222,8 @@ def test_btc_route_cost_preview_uses_sats() -> None:
 
 
 class _FakeAssets:
-    def creation_actions(self, asset_id: str):  # noqa: ARG002
-        return None
+    def actions(self, asset_id: str, *, role: str = "both", **kwargs):  # noqa: ARG002
+        return {"created_by": None, "as_input": []}
 
     def connections(self, asset_id: str):  # noqa: ARG002
         return None

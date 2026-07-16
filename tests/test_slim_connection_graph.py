@@ -92,6 +92,29 @@ class TestSlimConnectionGraph(unittest.TestCase):
         out = slim_connection_graph(conns, current_asset_id="current")
         self.assertEqual(out["link"][0], {"id": "other", "name": "Other", "asset_type": "route"})
 
+    def test_action_edges_preserve_action_id(self) -> None:
+        conns = [
+            {
+                "id": "e1",
+                "type": "action",
+                "action_id": "act-1",
+                "source_id": "cif",
+                "target_id": "relaxed",
+                "source": {"id": "cif", "name": "CIF", "asset_type": "file"},
+                "target": {"id": "relaxed", "name": "Relaxed", "asset_type": "file"},
+            }
+        ]
+        out = slim_connection_graph(conns, current_asset_id="cif")
+        self.assertEqual(
+            out["action"][0],
+            {
+                "id": "relaxed",
+                "name": "Relaxed",
+                "asset_type": "file",
+                "action_id": "act-1",
+            },
+        )
+
     def test_non_list_passthrough(self) -> None:
         self.assertIsNone(slim_connection_graph(None))
         self.assertEqual(slim_connection_graph({}), {})

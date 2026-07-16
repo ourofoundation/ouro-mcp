@@ -341,13 +341,111 @@ def register(mcp: FastMCP) -> None:
         relate to each other and navigating lineage. Connections are grouped
         by relationship type. Each item is the connected asset summary with
         ``id``, ``name``, ``asset_type``, and asset ``created_at`` when
-        available; connection edge metadata and the current asset side are
-        omitted to keep responses small.
+        available. For ``action`` edges, ``action_id`` is included when the
+        backend provides it so you can follow up with ``get_action`` or
+        ``list_asset_actions``. Connection edge metadata and the current
+        asset side are otherwise omitted to keep responses small.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         connections = ouro.assets.connections(id)
         connections = slim_connection_graph(connections, current_asset_id=id)
         return truncate_response(dump_json({"asset_id": id, "connections": connections}))
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    @handle_ouro_errors
+    def list_asset_actions(
+        asset_id: Annotated[str, Field(description="Asset UUID")],
+        ctx: Context,
+        role: Annotated[
+            str,
+            Field(
+                description=(
+                    '"both" (default): created_by + as_input. '
+                    '"input": only actions that used this asset as input. '
+                    '"output": only the action that produced this asset.'
+                )
+            ),
+        ] = "both",
+        status: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    'Optional filter on as_input / input: "queued" | "in-progress" | '
+                    '"success" | "error" | "timed-out"'
+                )
+            ),
+        ] = None,
+        include_response: Annotated[
+            bool,
+            Field(
+                description="Include each action response payload. Leave false for compact browsing."
+            ),
+        ] = False,
+        limit: Annotated[
+            int,
+            Field(description="Max as_input actions to return (1-200)"),
+        ] = 20,
+        offset: Annotated[int, Field(description="Pagination offset for as_input")] = 0,
+    ) -> str:
+        """List route actions linked to an asset.
+
+        Prefer this over scraping posts for action IDs. ``created_by`` is the
+        action that produced the asset (if any). ``as_input`` is the list of
+        executions that used the asset as an input — use this to find which
+        routes ran on a file or dataset and to get embed/status/response.
+        """
+        from ouro_mcp.tools.services import _format_action_summary
+
+        allowed_roles = {"input", "output", "both"}
+        if role not in allowed_roles:
+            raise ValueError(
+                f"Invalid role={role!r}. Must be one of: {sorted(allowed_roles)}."
+            )
+        if limit <= 0 or limit > 200:
+            raise ValueError("limit must be between 1 and 200.")
+        if offset < 0:
+            raise ValueError("offset must be non-negative.")
+        if status:
+            allowed_status = {
+                "queued",
+                "in-progress",
+                "success",
+                "error",
+                "timed-out",
+            }
+            if status not in allowed_status:
+                raise ValueError(
+                    f"Invalid status={status!r}. Must be one of: {sorted(allowed_status)}."
+                )
+
+        ouro = ctx.request_context.lifespan_context.ouro
+        bundle = ouro.assets.actions(
+            asset_id,
+            role=role,  # type: ignore[arg-type]
+            **optional_kwargs(status=status),
+        )
+        created_by = bundle.get("created_by")
+        as_input = list(bundle.get("as_input") or [])
+        page = as_input[offset : offset + limit]
+
+        payload: dict[str, Any] = {
+            "asset_id": asset_id,
+            "role": role,
+            "created_by": (
+                _format_action_summary(created_by, include_response=include_response)
+                if created_by is not None
+                else None
+            ),
+            "as_input": [
+                _format_action_summary(action, include_response=include_response)
+                for action in page
+            ],
+        }
+        if role in {"input", "both"}:
+            payload["as_input_total"] = len(as_input)
+            payload["as_input_offset"] = offset
+            payload["as_input_limit"] = limit
+        return truncate_response(dump_json(payload))
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -437,9 +535,15 @@ def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
 def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
     """Best-effort merge of provenance, connections, and tags into an asset result dict."""
     try:
-        creation_action = ouro.assets.creation_actions(asset_id)
-        if creation_action:
-            result["creation_action"] = strip_heavy_fields(creation_action)
+        bundle = ouro.assets.actions(asset_id, role="output")
+        created_by = bundle.get("created_by") if isinstance(bundle, dict) else None
+        if created_by is not None:
+            raw = (
+                created_by.model_dump(mode="json")
+                if hasattr(created_by, "model_dump")
+                else created_by
+            )
+            result["creation_action"] = strip_heavy_fields(raw)
     except Exception:
         log.debug("Failed to fetch creation action for %s", asset_id, exc_info=True)
 

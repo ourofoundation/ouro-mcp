@@ -162,6 +162,8 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - Use execute_route(..., dry_run=true) to validate parameters without running the route.
 - execute_route returns an action_id and embed_markdown; use get_action(action_id) to inspect status/output.
 - Use list_route_actions(route_id=...) to find previous executions and get ready-to-use action embeds.
+- Use list_asset_actions(asset_id=...) to find actions that produced an asset (`created_by`)
+  or used it as input (`as_input`) — prefer this over scraping posts for action IDs.
 - Use get_action_logs(action_id=...) when you need execution logs.
 """.strip()
 

@@ -95,7 +95,8 @@ def slim_connection_graph(connections: Any, current_asset_id: str | None = None)
     the connected asset summary. ``id`` and ``asset_type`` are always
     present; ``name`` is omitted when null (display-only). ``created_at``,
     when available, is the connected asset's timestamp, not the edge
-    timestamp.
+    timestamp. For ``type == "action"`` edges, ``action_id`` is preserved
+    when present so agents can follow up with ``get_action``.
     """
     if not isinstance(connections, list):
         return connections
@@ -152,9 +153,15 @@ def slim_connection_graph(connections: Any, current_asset_id: str | None = None)
         target_id = str(target["id"]) if target and target.get("id") is not None else None
 
         if current_id and source_id == current_id:
-            row = target or {}
+            row = dict(target or {})
         else:
-            row = source or {}
+            row = dict(source or {})
+
+        # Action edges carry the route-execution id that produced the link.
+        # Preserve it so agents can follow up with get_action without scraping
+        # posts or guessing from lineage alone.
+        if connection_type == "action" and edge.get("action_id") is not None:
+            row["action_id"] = str(edge["action_id"])
 
         grouped.setdefault(connection_type, []).append(row)
     return grouped
