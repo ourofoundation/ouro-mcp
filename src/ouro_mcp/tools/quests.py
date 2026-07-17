@@ -30,7 +30,7 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Extended markdown body for the quest description. Supports "
                     "@mentions, LaTeX (\\(inline\\), \\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
+                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
                     '{"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}.'
@@ -72,7 +72,7 @@ def register(mcp: FastMCP) -> None:
         contributor per item; continuous allows unlimited submissions per item.
 
         Asset references in description:
-        - Inline links: prefer [label](post:|file:|dataset:|route:|service:<uuid>).
+        - Inline links: prefer [label](post:|file:|dataset:|route:|service:|quest:<uuid>).
         - Use [label](asset:<uuid>) only when the asset type is unknown.
         """
         ouro = ctx.request_context.lifespan_context.ouro
@@ -121,7 +121,7 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Replacement extended markdown body for the quest description. Supports "
                     "@mentions, LaTeX (\\(inline\\), \\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
+                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
                     '{"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}.'

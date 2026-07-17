@@ -82,7 +82,7 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Extended markdown. Supports @mentions, LaTeX (\\(inline\\), "
                     "\\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
+                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent```."
                 )
@@ -110,7 +110,7 @@ def register(mcp: FastMCP) -> None:
 
         content_markdown supports extended markdown:
         - User mentions: @username
-        - Asset links: prefer [text](post:|file:|dataset:|route:|service:<uuid>) shorthands; use [text](asset:<uuid>) only when the asset type is unknown
+        - Asset links: prefer [text](post:|file:|dataset:|route:|service:|quest:<uuid>) shorthands; use [text](asset:<uuid>) only when the asset type is unknown
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
         - LaTeX: \\(inline\\), \\[display\\]
         """

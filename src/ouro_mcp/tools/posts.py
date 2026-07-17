@@ -58,7 +58,7 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Extended markdown body. Supports @mentions, LaTeX (\\(inline\\), "
                     "\\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
+                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
                     '{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card","displayConfig":{...}}.'
@@ -72,7 +72,7 @@ def register(mcp: FastMCP) -> None:
         """Create a new post on Ouro from extended markdown. Provide content_markdown or content_path.
 
         Asset references:
-        - Inline links: prefer [label](post:|file:|dataset:|route:|service:<uuid>). Use [label](asset:<uuid>) only when the asset type is unknown. Do not invent URL paths.
+        - Inline links: prefer [label](post:|file:|dataset:|route:|service:|quest:<uuid>). Use [label](asset:<uuid>) only when the asset type is unknown. Do not invent URL paths.
         For embedded assets, use:
         ```assetComponent
         {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
@@ -114,7 +114,7 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Replacement extended markdown body. Supports @mentions, LaTeX (\\(inline\\), "
                     "\\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:<uuid>). "
+                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
                     '{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card","displayConfig":{...}}.'
