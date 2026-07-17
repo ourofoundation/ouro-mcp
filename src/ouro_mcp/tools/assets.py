@@ -717,7 +717,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
         if asset.progress:
             base["progress"] = {
                 "total": asset.progress.total,
-                "done": asset.progress.done,
+                "resolved": asset.progress.resolved,
                 "remaining": asset.progress.remaining,
             }
 
