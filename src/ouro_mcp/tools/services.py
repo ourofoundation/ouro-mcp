@@ -522,6 +522,18 @@ def _get_action_logs_payload(
     )
 
 
+_LICENSE_DESC = (
+    'SPDX license id for services/routes: "MIT" | "Apache-2.0" | "GPL-3.0-only" | '
+    '"AGPL-3.0-only" | "MPL-2.0" | "ARR". Defaults to MIT for new services.'
+)
+_ORIGINALITY_DESC = '"original" | "derivative" | "third-party"'
+_RELATION_TYPE_DESC = (
+    'DataCite relation of this asset to the related paper: '
+    '"IsSupplementTo" | "IsDerivedFrom" | "References" | '
+    '"IsVariantFormOf" | "IsIdenticalTo"'
+)
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -567,6 +579,25 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="OAuth authorization URL (only for 'OAuth 2.0' auth)"),
         ] = None,
+        license_id: Annotated[str, Field(description=_LICENSE_DESC)] = "MIT",
+        originality: Annotated[
+            Optional[str], Field(description=_ORIGINALITY_DESC)
+        ] = None,
+        github_url: Annotated[
+            Optional[str], Field(description="Source repo URL (https://github.com/...)")
+        ] = None,
+        paper_url: Annotated[
+            Optional[str], Field(description="Paper or preprint URL")
+        ] = None,
+        doi_url: Annotated[
+            Optional[str], Field(description="DOI URL (https://doi.org/...)")
+        ] = None,
+        external_url: Annotated[
+            Optional[str], Field(description="Other project/homepage URL")
+        ] = None,
+        relation_type: Annotated[
+            Optional[str], Field(description=_RELATION_TYPE_DESC)
+        ] = None,
     ) -> str:
         """Publish an external API as a service on Ouro.
 
@@ -574,6 +605,11 @@ def register(mcp: FastMCP) -> None:
         for an already-uploaded file) to register from an OpenAPI spec — routes
         are parsed and created automatically. Omit both to create a service
         with no routes yet, then add routes from the web UI.
+
+        Set `license_id` and provenance (`originality`, `github_url`,
+        `paper_url`, `doi_url`, `external_url`, `relation_type`) when wrapping
+        third-party models. Provenance is stored on `attribution`, not service
+        metadata.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -585,11 +621,18 @@ def register(mcp: FastMCP) -> None:
             description=description,
             org_id=org_id,
             team_id=team_id,
+            license_id=license_id,
             **optional_kwargs(
                 spec_url=spec_url,
                 spec_path=spec_path,
                 version=version,
                 auth_url=auth_url,
+                originality=originality,
+                github_url=github_url,
+                paper_url=paper_url,
+                doi_url=doi_url,
+                external_url=external_url,
+                relation_type=relation_type,
             ),
         )
 
@@ -629,12 +672,33 @@ def register(mcp: FastMCP) -> None:
         auth_url: Annotated[Optional[str], Field(description="OAuth authorization URL")] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
+        license_id: Annotated[
+            Optional[str], Field(description=_LICENSE_DESC)
+        ] = None,
+        originality: Annotated[
+            Optional[str], Field(description=_ORIGINALITY_DESC)
+        ] = None,
+        github_url: Annotated[
+            Optional[str], Field(description="Source repo URL (https://github.com/...)")
+        ] = None,
+        paper_url: Annotated[
+            Optional[str], Field(description="Paper or preprint URL")
+        ] = None,
+        doi_url: Annotated[
+            Optional[str], Field(description="DOI URL (https://doi.org/...)")
+        ] = None,
+        external_url: Annotated[
+            Optional[str], Field(description="Other project/homepage URL")
+        ] = None,
+        relation_type: Annotated[
+            Optional[str], Field(description=_RELATION_TYPE_DESC)
+        ] = None,
     ) -> str:
         """Update a service's metadata (name, base_url, auth, visibility, ...).
 
-        Metadata is merged with the service's existing values, so pass only
-        what changes. Providing `spec_url` or `spec_path` re-parses the OpenAPI
-        spec and syncs the service's routes.
+        Service config merges into `metadata`; provenance merges into
+        `attribution`. Pass only what changes. Providing `spec_url` or
+        `spec_path` re-parses the OpenAPI spec and syncs routes.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -652,6 +716,13 @@ def register(mcp: FastMCP) -> None:
                 auth_url=auth_url,
                 org_id=org_id,
                 team_id=team_id,
+                license_id=license_id,
+                originality=originality,
+                github_url=github_url,
+                paper_url=paper_url,
+                doi_url=doi_url,
+                external_url=external_url,
+                relation_type=relation_type,
             ),
         )
 

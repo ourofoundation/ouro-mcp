@@ -498,6 +498,44 @@ def team_summary(source: Any) -> dict | None:
     return result
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _attribution_summary(asset: Any) -> dict[str, Any]:
+    """Pull provenance from assets.attribution (legacy keys may still be on metadata)."""
+    attr = _as_dict(getattr(asset, "attribution", None))
+    legacy = _as_dict(getattr(asset, "metadata", None))
+
+    def pick(key: str) -> Any:
+        if attr.get(key) is not None:
+            return attr.get(key)
+        return legacy.get(key)
+
+    citation = pick("citation")
+    if hasattr(citation, "model_dump"):
+        citation = citation.model_dump()
+    elif citation is not None and not isinstance(citation, dict):
+        citation = None
+
+    return optional_kwargs(
+        originality=pick("originality"),
+        github_url=pick("github_url"),
+        paper_url=pick("paper_url"),
+        doi_url=pick("doi_url"),
+        external_url=pick("external_url"),
+        relation_type=pick("relation_type"),
+        doi=pick("doi"),
+        citation=citation,
+    )
+
+
 def format_asset_summary(asset: Any) -> dict:
     """Extract a consistent summary dict from any ouro-py asset model."""
     from ouro.utils.content import description_to_markdown
@@ -522,6 +560,14 @@ def format_asset_summary(asset: Any) -> dict:
 
     if asset.description:
         summary["description"] = description_to_markdown(asset.description, max_length=500)
+
+    license_id = getattr(asset, "license_id", None)
+    if license_id:
+        summary["license_id"] = license_id
+
+    attribution = _attribution_summary(asset)
+    if attribution:
+        summary["attribution"] = attribution
 
     user = user_summary(asset)
     if user:
