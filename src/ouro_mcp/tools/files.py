@@ -74,8 +74,9 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(
                 description=(
-                    "Path to the file on disk. Relative paths resolve against WORKSPACE_ROOT. "
-                    "Absolute paths are used as-is."
+                    "Path to the file on disk. Prefer paths relative to WORKSPACE_ROOT. "
+                    "Absolute paths under WORKSPACE_MOUNT (Docker) are remapped onto "
+                    "WORKSPACE_ROOT; other absolute paths must already be inside the workspace."
                 )
             ),
         ] = None,

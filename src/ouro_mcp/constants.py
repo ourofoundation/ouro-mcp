@@ -7,6 +7,9 @@ ENV_OURO_BASE_URL = "OURO_BASE_URL"
 ENV_OURO_FRONTEND_URL = "OURO_FRONTEND_URL"
 ENV_OURO_MCP_TIMEZONE = "OURO_MCP_TIMEZONE"
 ENV_WORKSPACE_ROOT = "WORKSPACE_ROOT"
+# Optional container mount path (e.g. /workspace). When set alongside
+# WORKSPACE_ROOT, absolute paths under this mount remap onto the host root.
+ENV_WORKSPACE_MOUNT = "WORKSPACE_MOUNT"
 
 # Public site origin for absolute asset/team links in tool responses.
 DEFAULT_OURO_FRONTEND_URL = "https://ouro.foundation"

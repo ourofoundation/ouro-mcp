@@ -14,6 +14,7 @@ from ouro_mcp.constants import (
     DEFAULT_OURO_FRONTEND_URL,
     ENV_OURO_FRONTEND_URL,
     ENV_OURO_MCP_TIMEZONE,
+    ENV_WORKSPACE_MOUNT,
     ENV_WORKSPACE_ROOT,
     GLOBAL_ORG_ID,
     MAX_RESPONSE_SIZE,
@@ -338,6 +339,11 @@ def resolve_local_path(raw: str) -> Path:
     when they already point inside it, and ``..`` traversal that escapes
     the root is rejected with ``PermissionError``.
 
+    When WORKSPACE_MOUNT is also set (e.g. ``/workspace`` for a Docker
+    sandbox), absolute paths under that mount are rewritten onto
+    WORKSPACE_ROOT so container-style paths work from a host-side MCP
+    process.
+
     When WORKSPACE_ROOT is not set (e.g. a desktop user running the MCP
     standalone) the path is returned as-is after ``~`` expansion and
     resolution, with no sandboxing.
@@ -349,6 +355,17 @@ def resolve_local_path(raw: str) -> Path:
         return p.resolve()
 
     workspace = Path(workspace_env).expanduser().resolve()
+
+    mount_env = (os.environ.get(ENV_WORKSPACE_MOUNT) or "").strip()
+    if mount_env and p.is_absolute():
+        mount = Path(mount_env)
+        try:
+            rel = p.relative_to(mount)
+        except ValueError:
+            rel = None
+        if rel is not None:
+            p = workspace / rel
+
     candidate = (workspace / p) if not p.is_absolute() else p
     resolved = candidate.resolve()
 
@@ -356,8 +373,8 @@ def resolve_local_path(raw: str) -> Path:
         resolved.relative_to(workspace)
     except ValueError as exc:
         raise PermissionError(
-            f"Path '{raw}' escapes the agent workspace ({workspace}). "
-            "Use a path inside the workspace."
+            f"Path '{raw}' escapes the agent workspace. "
+            "Use a relative path or a path under the workspace root."
         ) from exc
 
     return resolved

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from ouro_mcp.constants import ENV_WORKSPACE_ROOT
+from ouro_mcp.constants import ENV_WORKSPACE_MOUNT, ENV_WORKSPACE_ROOT
 from ouro_mcp.utils import resolve_local_path
 
 
@@ -17,6 +17,7 @@ class TestResolveLocalPathNoWorkspace(unittest.TestCase):
         self._env_patch = mock.patch.dict(os.environ, {}, clear=False)
         self._env_patch.start()
         os.environ.pop(ENV_WORKSPACE_ROOT, None)
+        os.environ.pop(ENV_WORKSPACE_MOUNT, None)
 
     def tearDown(self) -> None:
         self._env_patch.stop()
@@ -44,6 +45,7 @@ class TestResolveLocalPathWithWorkspace(unittest.TestCase):
             os.environ, {ENV_WORKSPACE_ROOT: str(self.workspace)}, clear=False
         )
         self._env_patch.start()
+        os.environ.pop(ENV_WORKSPACE_MOUNT, None)
 
     def tearDown(self) -> None:
         self._env_patch.stop()
@@ -65,7 +67,9 @@ class TestResolveLocalPathWithWorkspace(unittest.TestCase):
     def test_absolute_path_outside_workspace_rejected(self) -> None:
         with self.assertRaises(PermissionError) as cm:
             resolve_local_path("/tmp/escaped.cif")
-        self.assertIn("escapes the agent workspace", str(cm.exception))
+        message = str(cm.exception)
+        self.assertIn("escapes the agent workspace", message)
+        self.assertNotIn(str(self.workspace), message)
 
     def test_relative_traversal_rejected(self) -> None:
         with self.assertRaises(PermissionError) as cm:
@@ -83,6 +87,48 @@ class TestResolveLocalPathWithWorkspace(unittest.TestCase):
     def test_home_relative_outside_workspace_rejected(self) -> None:
         with self.assertRaises(PermissionError):
             resolve_local_path("~/definitely-not-in-the-workspace.cif")
+
+
+class TestResolveLocalPathWithMount(unittest.TestCase):
+    """WORKSPACE_MOUNT remaps container absolute paths onto WORKSPACE_ROOT."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self._tmp.name).resolve()
+        self._env_patch = mock.patch.dict(
+            os.environ,
+            {
+                ENV_WORKSPACE_ROOT: str(self.workspace),
+                ENV_WORKSPACE_MOUNT: "/workspace",
+            },
+            clear=False,
+        )
+        self._env_patch.start()
+
+    def tearDown(self) -> None:
+        self._env_patch.stop()
+        self._tmp.cleanup()
+
+    def test_mount_root_maps_to_workspace(self) -> None:
+        result = resolve_local_path("/workspace")
+        self.assertEqual(result, self.workspace)
+
+    def test_mount_relative_file_remapped(self) -> None:
+        result = resolve_local_path("/workspace/data/out.cif")
+        self.assertEqual(result, (self.workspace / "data/out.cif").resolve())
+
+    def test_relative_paths_still_work_with_mount(self) -> None:
+        result = resolve_local_path("data/out.cif")
+        self.assertEqual(result, (self.workspace / "data/out.cif").resolve())
+
+    def test_unrelated_absolute_path_still_rejected(self) -> None:
+        with self.assertRaises(PermissionError) as cm:
+            resolve_local_path("/tmp/escaped.cif")
+        self.assertNotIn(str(self.workspace), str(cm.exception))
+
+    def test_mount_traversal_escape_rejected(self) -> None:
+        with self.assertRaises(PermissionError):
+            resolve_local_path("/workspace/foo/../../etc/passwd")
 
 
 if __name__ == "__main__":
