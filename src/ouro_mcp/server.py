@@ -204,6 +204,11 @@ def main():
         help="Transport protocol (default: stdio)",
     )
     parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind host for HTTP transports (default: 127.0.0.1)",
+    )
+    parser.add_argument(
         "--port",
         type=int,
         default=DEFAULT_HTTP_PORT,
@@ -214,7 +219,16 @@ def main():
     if args.transport == "stdio":
         mcp.run(transport="stdio")
     else:
-        mcp.run(transport=args.transport, port=args.port)
+        # FastMCP.run() does not take host/port — set them on settings first.
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        log.info(
+            "Starting ouro-mcp transport=%s on %s:%s",
+            args.transport,
+            args.host,
+            args.port,
+        )
+        mcp.run(transport=args.transport)
 
 
 if __name__ == "__main__":
