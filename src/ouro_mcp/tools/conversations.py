@@ -158,6 +158,11 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         name: Annotated[Optional[str], Field(description="Conversation name")] = None,
         summary: Annotated[Optional[str], Field(description="Conversation summary")] = None,
+        license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Top-level provenance object; separate from conversation metadata"),
+        ] = None,
     ) -> str:
         """Create a conversation with the specified member user IDs."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -167,6 +172,8 @@ def register(mcp: FastMCP) -> None:
             name=name,
             summary=summary,
             org_id=org_id,
+            license_id=license_id,
+            attribution=attribution,
         )
         return dump_json(_conversation_summary(conversation))
 

@@ -99,6 +99,11 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "public",
         description: Annotated[Optional[str], Field(description="File description")] = None,
+        license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Top-level provenance object; separate from file metadata"),
+        ] = None,
     ) -> str:
         """Upload a file as an asset on Ouro.
 
@@ -133,6 +138,8 @@ def register(mcp: FastMCP) -> None:
             description=description,
             org_id=org_id,
             team_id=team_id,
+            license_id=license_id,
+            attribution=attribution,
             **file_kwargs,
         )
 
@@ -172,6 +179,11 @@ def register(mcp: FastMCP) -> None:
         visibility: Annotated[Optional[str], Field(description='"public" | "private" | "organization"')] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
+        license_id: Annotated[Optional[str], Field(description="New asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Updated top-level provenance object"),
+        ] = None,
     ) -> str:
         """Update a file's content or metadata.
 
@@ -198,6 +210,8 @@ def register(mcp: FastMCP) -> None:
                 visibility=visibility,
                 org_id=org_id,
                 team_id=team_id,
+                license_id=license_id,
+                attribution=attribution,
             ),
         )
 

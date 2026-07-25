@@ -75,6 +75,15 @@ which is a low-visibility catch-all. Always prefer a specific team when possible
 `share_asset(id, user_id, role="read")`. Mentions, links, and embeds do not
 grant access.
 
+**Licensing and attribution**:
+- Asset create/update tools accept top-level `license_id` and `attribution`
+  fields. Keep provenance separate from type-specific `metadata`.
+- `attribution.originality` is "original", "derivative", or "third-party".
+  Optional provenance fields include `github_url`, `paper_url`, `doi_url`,
+  `external_url`, and `relation_type`.
+- Preserve attribution and confirm that the license permits redistribution
+  before publishing derivative or third-party work.
+
 **Team gating policies** — teams can restrict who creates content and how.
 These values are always resolved (never null) in get_teams/get_team responses:
 - `source_policy`: controls *how* assets are created.
@@ -147,11 +156,8 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - Pass `spec_url` (or `spec_path`) to create_service/update_service to parse an
   OpenAPI spec and auto-create/sync the service's routes. Omit both to create a
   bare service with no routes.
-- Set attribution on create/update: `license_id` (default MIT; services also
-  accept Apache-2.0, GPL-3.0-only, AGPL-3.0-only, MPL-2.0, ARR),
-  `originality` ("original" | "derivative" | "third-party"), and optional
-  `github_url` / `paper_url` / `doi_url` / `external_url`. These are stored on
-  the asset's `attribution` field (not service `metadata`).
+- Services default to MIT and also accept Apache-2.0, GPL-3.0-only,
+  AGPL-3.0-only, MPL-2.0, and ARR.
 - Use update_service(id, ...) to change metadata (merged with existing values).
 - Use create_route(service_id, method, path, ...) to add an endpoint to a service
   (e.g. for a service created without a spec); `method` + `path` must be unique

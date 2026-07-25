@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
@@ -68,6 +68,11 @@ def register(mcp: FastMCP) -> None:
         content_path: Annotated[Optional[str], Field(description="Local .md/.markdown file path")] = None,
         visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "public",
         description: Annotated[Optional[str], Field(description="Short description/subtitle")] = None,
+        license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Top-level provenance object; separate from asset metadata"),
+        ] = None,
     ) -> str:
         """Create a new post on Ouro from extended markdown. Provide content_markdown or content_path.
 
@@ -98,6 +103,8 @@ def register(mcp: FastMCP) -> None:
             description=description,
             org_id=org_id,
             team_id=team_id,
+            license_id=license_id,
+            attribution=attribution,
         )
 
         return dump_json(format_asset_summary(post))
@@ -129,6 +136,11 @@ def register(mcp: FastMCP) -> None:
         description: Annotated[Optional[str], Field(description="New description/subtitle")] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
+        license_id: Annotated[Optional[str], Field(description="New asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Updated top-level provenance object"),
+        ] = None,
     ) -> str:
         """Update a post's content or metadata. Pass content_markdown/content_path to replace the body.
 
@@ -158,6 +170,8 @@ def register(mcp: FastMCP) -> None:
                 description=description,
                 org_id=org_id,
                 team_id=team_id,
+                license_id=license_id,
+                attribution=attribution,
             ),
         )
 

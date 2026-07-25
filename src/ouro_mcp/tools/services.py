@@ -580,6 +580,10 @@ def register(mcp: FastMCP) -> None:
             Field(description="OAuth authorization URL (only for 'OAuth 2.0' auth)"),
         ] = None,
         license_id: Annotated[str, Field(description=_LICENSE_DESC)] = "MIT",
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Top-level provenance object; separate from service metadata"),
+        ] = None,
         originality: Annotated[
             Optional[str], Field(description=_ORIGINALITY_DESC)
         ] = None,
@@ -612,6 +616,18 @@ def register(mcp: FastMCP) -> None:
         metadata.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+        provenance = (
+            attribution
+            if attribution is not None
+            else optional_kwargs(
+                originality=originality,
+                github_url=github_url,
+                paper_url=paper_url,
+                doi_url=doi_url,
+                external_url=external_url,
+                relation_type=relation_type,
+            )
+        )
 
         service = ouro.services.create(
             name=name,
@@ -622,17 +638,12 @@ def register(mcp: FastMCP) -> None:
             org_id=org_id,
             team_id=team_id,
             license_id=license_id,
+            attribution=provenance,
             **optional_kwargs(
                 spec_url=spec_url,
                 spec_path=spec_path,
                 version=version,
                 auth_url=auth_url,
-                originality=originality,
-                github_url=github_url,
-                paper_url=paper_url,
-                doi_url=doi_url,
-                external_url=external_url,
-                relation_type=relation_type,
             ),
         )
 
@@ -675,6 +686,10 @@ def register(mcp: FastMCP) -> None:
         license_id: Annotated[
             Optional[str], Field(description=_LICENSE_DESC)
         ] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Updated top-level provenance object"),
+        ] = None,
         originality: Annotated[
             Optional[str], Field(description=_ORIGINALITY_DESC)
         ] = None,
@@ -701,6 +716,14 @@ def register(mcp: FastMCP) -> None:
         `spec_path` re-parses the OpenAPI spec and syncs routes.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+        legacy_provenance = optional_kwargs(
+            originality=originality,
+            github_url=github_url,
+            paper_url=paper_url,
+            doi_url=doi_url,
+            external_url=external_url,
+            relation_type=relation_type,
+        )
 
         service = ouro.services.update(
             id,
@@ -717,12 +740,7 @@ def register(mcp: FastMCP) -> None:
                 org_id=org_id,
                 team_id=team_id,
                 license_id=license_id,
-                originality=originality,
-                github_url=github_url,
-                paper_url=paper_url,
-                doi_url=doi_url,
-                external_url=external_url,
-                relation_type=relation_type,
+                attribution=attribution if attribution is not None else legacy_provenance or None,
             ),
         )
 
@@ -770,6 +788,11 @@ def register(mcp: FastMCP) -> None:
         execution_mode: Annotated[
             str, Field(description='"sync" (default) or "async" for long-running upstreams')
         ] = "sync",
+        license_id: Annotated[Optional[str], Field(description=_LICENSE_DESC)] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Top-level provenance object; separate from route metadata"),
+        ] = None,
     ) -> str:
         """Add a route (a single API endpoint) to a service.
 
@@ -793,6 +816,8 @@ def register(mcp: FastMCP) -> None:
                 request_body=_parse_json_arg(request_body, "request_body"),
                 input_assets=_parse_json_arg(input_assets, "input_assets"),
                 output_assets=_parse_json_arg(output_assets, "output_assets"),
+                license_id=license_id,
+                attribution=attribution,
             ),
         )
 
@@ -825,6 +850,11 @@ def register(mcp: FastMCP) -> None:
         execution_mode: Annotated[
             Optional[str], Field(description='"sync" or "async"')
         ] = None,
+        license_id: Annotated[Optional[str], Field(description=_LICENSE_DESC)] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Updated top-level provenance object"),
+        ] = None,
     ) -> str:
         """Update a route's method, path, schema, or metadata.
 
@@ -846,6 +876,8 @@ def register(mcp: FastMCP) -> None:
                 request_body=_parse_json_arg(request_body, "request_body"),
                 input_assets=_parse_json_arg(input_assets, "input_assets"),
                 output_assets=_parse_json_arg(output_assets, "output_assets"),
+                license_id=license_id,
+                attribution=attribution,
             ),
         )
 

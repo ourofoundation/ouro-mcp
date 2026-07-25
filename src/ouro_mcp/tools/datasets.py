@@ -535,6 +535,11 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Top-level provenance object; separate from dataset metadata"),
+        ] = None,
     ) -> str:
         """Create a new dataset on Ouro. Provide data or data_path (one required).
 
@@ -566,6 +571,8 @@ def register(mcp: FastMCP) -> None:
             description=description,
             org_id=org_id,
             team_id=team_id,
+            license_id=license_id,
+            attribution=attribution,
             **optional_kwargs(
                 refs=declared_refs,
                 enum_columns=declared_enum_columns,
@@ -632,6 +639,11 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        license_id: Annotated[Optional[str], Field(description="New asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Updated top-level provenance object"),
+        ] = None,
     ) -> str:
         """Update a dataset's data or metadata.
 
@@ -668,6 +680,8 @@ def register(mcp: FastMCP) -> None:
                 description=description,
                 org_id=org_id,
                 team_id=team_id,
+                license_id=license_id,
+                attribution=attribution,
                 refs=declared_refs,
                 enum_columns=declared_enum_columns,
             ),

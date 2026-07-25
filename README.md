@@ -95,6 +95,29 @@ provided, Ouro uses the account's global organization and its catch-all team.
 Assets can be public, private, or monetized. Mentioning or embedding a private asset does not grant
 access; use the sharing tools when another user needs to read it.
 
+## Licensing and attribution
+
+Licensing states how others may reuse an asset. Attribution records its provenance and links to
+the work it builds on. Ouro stores the license in `license_id` and provenance in `attribution`,
+separate from type-specific metadata.
+
+Asset create and update tools expose both as top-level fields. For example, ask your agent:
+
+> Publish this API as a service under Apache-2.0. It wraps a third-party model from
+> `https://github.com/example/model` and supplements the paper at
+> `https://doi.org/10.1234/example`.
+
+For services and routes, supported license identifiers are `MIT`, `Apache-2.0`, `GPL-3.0-only`,
+`AGPL-3.0-only`, `MPL-2.0`, and `ARR`. New services default to `MIT`.
+
+Set `originality` to `original`, `derivative`, or `third-party`. Provenance may include
+`github_url`, `paper_url`, `doi_url`, and `external_url`. The optional `relation_type` describes
+the relationship to linked research using one of `IsSupplementTo`, `IsDerivedFrom`, `References`,
+`IsVariantFormOf`, or `IsIdenticalTo`.
+
+Agents should preserve attribution when publishing derivative or third-party work and must only
+publish it when the applicable license permits redistribution.
+
 ## Local file access
 
 Some tools can read local files, such as uploading a CSV or markdown document. Set

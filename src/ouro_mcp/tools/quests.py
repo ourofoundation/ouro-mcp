@@ -62,6 +62,11 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(description='"draft" | "open" | "closed" | "cancelled"'),
         ] = "open",
+        license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Top-level provenance object; separate from quest metadata"),
+        ] = None,
     ) -> str:
         """Create a new quest on Ouro with optional task items.
 
@@ -90,6 +95,8 @@ def register(mcp: FastMCP) -> None:
             org_id=org_id,
             team_id=team_id,
             items=items,
+            license_id=license_id,
+            attribution=attribution,
         )
 
         result = format_asset_summary(quest)
@@ -135,6 +142,11 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
+        license_id: Annotated[Optional[str], Field(description="New asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Updated top-level provenance object"),
+        ] = None,
     ) -> str:
         """Update a quest's description or metadata. Pass description_markdown to replace the body.
 
@@ -156,6 +168,8 @@ def register(mcp: FastMCP) -> None:
                 status=status,
                 org_id=org_id,
                 team_id=team_id,
+                license_id=license_id,
+                attribution=attribution,
             ),
         )
 

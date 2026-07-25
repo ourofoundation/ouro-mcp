@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
@@ -97,6 +97,11 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="Comment UUID to edit. Provide to replace an existing comment's content."),
         ] = None,
+        license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
+        attribution: Annotated[
+            Optional[dict[str, Any]],
+            Field(description="Top-level provenance object; separate from comment metadata"),
+        ] = None,
     ) -> str:
         """Create a comment/reply, or edit an existing comment.
 
@@ -121,8 +126,18 @@ def register(mcp: FastMCP) -> None:
         content = content_from_markdown(ouro, content_markdown)
 
         if id is not None:
-            comment = ouro.comments.update(id, content=content)
+            comment = ouro.comments.update(
+                id,
+                content=content,
+                license_id=license_id,
+                attribution=attribution,
+            )
         else:
-            comment = ouro.comments.create(content=content, parent_id=parent_id)
+            comment = ouro.comments.create(
+                content=content,
+                parent_id=parent_id,
+                license_id=license_id,
+                attribution=attribution,
+            )
 
         return dump_json(format_asset_summary(comment))
