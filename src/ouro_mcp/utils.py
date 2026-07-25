@@ -59,6 +59,37 @@ def strip_heavy_fields(value: Any) -> Any:
     return cleaned
 
 
+def slim_dataset_schema(schema: Any) -> list[dict[str, Any]] | None:
+    """Agent-facing column schema: ``name``/``type`` plus semantic hints.
+
+    Drops duplicated ``column_name``/``data_type`` aliases and FK plumbing
+    (``fk_constraint_name``, ``foreign_table_*``, ``foreign_column_name``).
+    Keeps ``semantic_type``, ``ref_kind``, ``asset_type``, and ``enum_values``
+    when present.
+    """
+    if schema is None:
+        return None
+    if not isinstance(schema, list):
+        return schema
+
+    slimmed: list[dict[str, Any]] = []
+    for field in schema:
+        if not isinstance(field, dict):
+            continue
+        name = field.get("name") or field.get("column_name")
+        if not name:
+            continue
+        entry: dict[str, Any] = {
+            "name": name,
+            "type": field.get("type") or field.get("data_type"),
+        }
+        for key in ("semantic_type", "ref_kind", "asset_type", "enum_values"):
+            if field.get(key) is not None:
+                entry[key] = field[key]
+        slimmed.append(entry)
+    return slimmed
+
+
 def slim_asset_tags(tags: Any) -> list[dict[str, Any]] | None:
     """Shrink asset tag rows for MCP — metadata only, no vectors."""
     if not isinstance(tags, list) or not tags:

@@ -7,7 +7,7 @@ import logging
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, format_asset_summary
+from ouro_mcp.utils import dump_json, format_asset_summary, slim_dataset_schema
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def register(mcp: FastMCP) -> None:
         result = format_asset_summary(dataset)
 
         try:
-            result["schema"] = ouro.datasets.schema(id)
+            result["schema"] = slim_dataset_schema(ouro.datasets.schema(id))
         except Exception:
             log.debug("Failed to fetch schema for dataset %s", id, exc_info=True)
             result["schema"] = None
@@ -48,10 +48,9 @@ def register(mcp: FastMCP) -> None:
         "ouro://datasets/{id}/schema",
         name="Dataset Schema",
         description=(
-            "Column schema for a dataset — names, types, and foreign keys. "
-            'Columns with semantic_type "reference" hold Ouro object ids '
-            "(backed by a foreign key); ref_kind names the kind (asset -> "
-            "public.assets, action -> public.actions) and refs maps those "
+            "Column schema for a dataset — names, types, and semantic hints. "
+            'Columns with semantic_type "reference" hold Ouro object ids; '
+            "ref_kind names the kind (asset or action) and refs maps those "
             "columns to {kind, asset_type?}. Use "
             "query_dataset(resolve_refs=true) to resolve those ids to "
             "names, types, and URLs. Columns with semantic_type \"enum\" include "
@@ -63,17 +62,14 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def get_dataset_schema(id: str, ctx: Context) -> str:
         ouro = ctx.request_context.lifespan_context.ouro
-        schema = ouro.datasets.schema(id)
-        # The backend already enriches FK-to-referenceable-table columns with
-        # semantic_type="reference" (+ ref_kind and optional target asset_type),
-        # and adds name/type aliases alongside column_name/data_type.
+        schema = slim_dataset_schema(ouro.datasets.schema(id))
         refs = {}
         enum_columns = {}
         for field in schema or []:
             if not isinstance(field, dict):
                 continue
             if field.get("semantic_type") == "reference":
-                column = field.get("column_name") or field.get("name")
+                column = field.get("name")
                 if not column:
                     continue
                 kind = field.get("ref_kind") or "asset"
@@ -82,7 +78,7 @@ def register(mcp: FastMCP) -> None:
                     entry["asset_type"] = field["asset_type"]
                 refs[column] = entry
             elif field.get("semantic_type") == "enum":
-                column = field.get("column_name") or field.get("name")
+                column = field.get("name")
                 values = field.get("enum_values")
                 if column and isinstance(values, list):
                     enum_columns[column] = {"values": values}

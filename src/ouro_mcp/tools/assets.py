@@ -23,6 +23,7 @@ from ouro_mcp.utils import (
     route_request_body_without_input_assets,
     slim_asset_tags,
     slim_connection_graph,
+    slim_dataset_schema,
     strip_heavy_fields,
     team_summary,
     truncate_response,
@@ -643,8 +644,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
 
     if asset_type == "dataset":
         try:
-            schema = ouro.datasets.schema(asset_id)
-            base["schema"] = schema
+            base["schema"] = slim_dataset_schema(ouro.datasets.schema(asset_id))
         except Exception:
             log.debug("Failed to fetch schema for dataset %s", asset.id, exc_info=True)
             base["schema"] = None

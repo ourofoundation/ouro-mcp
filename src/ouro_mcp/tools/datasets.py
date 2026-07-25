@@ -15,6 +15,7 @@ from ouro_mcp.utils import (
     optional_kwargs,
     resolve_local_path,
     slim_connection_graph,
+    slim_dataset_schema,
     truncate_response,
 )
 from pydantic import BeforeValidator, Field
@@ -217,7 +218,7 @@ def _refs_from_schema(schema: Any) -> dict[str, dict[str, Any]]:
     for field in schema or []:
         if not isinstance(field, dict) or field.get("semantic_type") != "reference":
             continue
-        column = field.get("column_name")
+        column = field.get("name") or field.get("column_name")
         if not column:
             continue
         kind = field.get("ref_kind") or "asset"
@@ -233,7 +234,7 @@ def _enum_columns_from_schema(schema: Any) -> dict[str, dict[str, list[str]]]:
     for field in schema or []:
         if not isinstance(field, dict) or field.get("semantic_type") != "enum":
             continue
-        column = field.get("column_name")
+        column = field.get("name") or field.get("column_name")
         values = field.get("enum_values")
         if not column or not isinstance(values, list):
             continue
@@ -318,13 +319,24 @@ def _dataset_proof(
     dataset_id: str,
     declared_refs: Optional[dict[str, Any]] = None,
     declared_enum_columns: Optional[dict[str, Any]] = None,
+    *,
+    include_verification: bool = True,
 ) -> dict[str, Any]:
-    """Collect lightweight verification data after create/update."""
+    """Collect verification data after create / structural update.
+
+    ``include_verification`` should be true when the call creates a dataset or
+    changes column structure (refs/enum promotion, edit_dataset_columns).
+    Row-only updates skip schema, resolved-refs preview, and connections.
+    Empty ``resolved_refs_preview`` / ``connections`` are omitted.
+    """
+    if not include_verification:
+        return {}
+
     proof: dict[str, Any] = {}
 
     try:
         schema = ouro.datasets.schema(dataset_id)
-        proof["schema"] = schema
+        proof["schema"] = slim_dataset_schema(schema)
         proof["refs"] = _merge_ref_hints(
             _refs_from_schema(schema),
             declared_refs,
@@ -336,7 +348,9 @@ def _dataset_proof(
     except Exception:
         proof["schema"] = None
         proof["refs"] = _merge_ref_hints({}, declared_refs)
-        proof["enum_columns"] = _merge_enum_column_hints({}, declared_enum_columns)
+        proof["enum_columns"] = _merge_enum_column_hints(
+            {}, declared_enum_columns
+        )
 
     try:
         page = ouro.datasets.query(
@@ -345,18 +359,22 @@ def _dataset_proof(
             with_pagination=True,
             resolve_refs=True,
         )
-        proof["resolved_refs_preview"] = page.get("resolved_refs") or {}
+        resolved = page.get("resolved_refs") or {}
+        if resolved:
+            proof["resolved_refs_preview"] = resolved
     except Exception:
-        proof["resolved_refs_preview"] = {}
+        pass
 
     try:
         if hasattr(ouro, "assets"):
-            proof["connections"] = slim_connection_graph(
+            connections = slim_connection_graph(
                 ouro.assets.connections(dataset_id),
                 current_asset_id=dataset_id,
             )
+            if connections:
+                proof["connections"] = connections
     except Exception:
-        proof["connections"] = {}
+        pass
 
     return proof
 
@@ -656,12 +674,17 @@ def register(mcp: FastMCP) -> None:
         )
 
         result = format_asset_summary(dataset)
+        # Schema / refs preview / connections only matter when promoting
+        # refs/enums; row ingest ignores unknown columns and does not evolve
+        # the table shape.
+        schema_changed = bool(declared_refs or declared_enum_columns)
         result.update(
             _dataset_proof(
                 ouro,
                 str(dataset.id),
                 declared_refs,
                 declared_enum_columns,
+                include_verification=schema_changed,
             )
         )
         result.update(_ingest_summary(dataset))

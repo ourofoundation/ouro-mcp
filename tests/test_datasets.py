@@ -8,6 +8,58 @@ import pandas as pd
 import pytest
 
 from ouro_mcp.tools.datasets import _resolve_dataset_data, register
+from ouro_mcp.utils import slim_dataset_schema
+
+
+def test_slim_dataset_schema_keeps_name_type_and_semantics() -> None:
+    assert slim_dataset_schema(
+        [
+            {
+                "column_name": "file_id",
+                "data_type": "uuid",
+                "fk_constraint_name": "fk_ref_file_id",
+                "foreign_table_schema": "public",
+                "foreign_table_name": "assets",
+                "foreign_column_name": "id",
+                "name": "file_id",
+                "type": "uuid",
+                "semantic_type": "reference",
+                "ref_kind": "asset",
+                "asset_type": "file",
+            },
+            {
+                "column_name": "status",
+                "data_type": "text",
+                "fk_constraint_name": None,
+                "foreign_table_schema": None,
+                "foreign_table_name": None,
+                "foreign_column_name": None,
+                "name": "status",
+                "type": "text",
+                "semantic_type": "enum",
+                "enum_values": ["todo", "done"],
+            },
+            {
+                "column_name": "score",
+                "data_type": "real",
+            },
+        ]
+    ) == [
+        {
+            "name": "file_id",
+            "type": "uuid",
+            "semantic_type": "reference",
+            "ref_kind": "asset",
+            "asset_type": "file",
+        },
+        {
+            "name": "status",
+            "type": "text",
+            "semantic_type": "enum",
+            "enum_values": ["todo", "done"],
+        },
+        {"name": "score", "type": "real"},
+    ]
 
 
 class _CaptureMCP:
@@ -31,6 +83,7 @@ class _FakeDatasets:
         ingest_warning: dict | None = None,
     ) -> None:
         self.created: list[dict] = []
+        self.updated: list[dict] = []
         self.query_page = query_page
         self.schema_response = schema_response
         self.query_calls: list[dict] = []
@@ -140,6 +193,26 @@ class _FakeDatasets:
 
     def schema(self, dataset_id: str):
         return self.schema_response or []
+
+    def update(self, dataset_id: str, **kwargs):
+        self.updated.append({"id": dataset_id, **kwargs})
+        dataset = SimpleNamespace(
+            id=dataset_id,
+            name=kwargs.get("name") or "dataset",
+            asset_type="dataset",
+            visibility=kwargs.get("visibility") or "private",
+            created_at=None,
+            last_updated=None,
+            state="success",
+            source="api",
+            description=None,
+            metadata={"table_name": "table_1"},
+        )
+        if self.ingest is not None:
+            dataset.row_ingest = self.ingest
+        if self.ingest_warning is not None:
+            dataset.ingest_warning = self.ingest_warning
+        return dataset
 
 
 class _FakeAssets:
@@ -401,6 +474,15 @@ def test_create_dataset_forwards_refs() -> None:
     created = datasets.created[0]
     assert created["refs"] == {"file_id": {"kind": "asset", "asset_type": "file"}}
     assert result["refs"] == {"file_id": {"kind": "asset", "asset_type": "file"}}
+    assert result["schema"] == [
+        {
+            "name": "file_id",
+            "type": "uuid",
+            "semantic_type": "reference",
+            "ref_kind": "asset",
+            "asset_type": "file",
+        }
+    ]
     assert result["resolved_refs_preview"] == sidecar
     assert result["connections"]["reference"][0]["id"] == "file-1"
 
@@ -433,6 +515,47 @@ def test_create_dataset_forwards_action_refs() -> None:
     created = datasets.created[0]
     assert created["refs"] == {"run_id": "action"}
     assert result["refs"] == {"run_id": {"kind": "action"}}
+    assert result["schema"] == [
+        {
+            "name": "run_id",
+            "type": "uuid",
+            "semantic_type": "reference",
+            "ref_kind": "action",
+        }
+    ]
+    assert "resolved_refs_preview" not in result
+
+
+def test_create_dataset_omits_empty_proof_sidecars() -> None:
+    datasets = _FakeDatasets(
+        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
+        schema_response=[{"column_name": "value", "data_type": "numeric"}],
+    )
+    tools = _dataset_tools()
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(
+            lifespan_context=SimpleNamespace(
+                ouro=SimpleNamespace(
+                    datasets=datasets,
+                    assets=SimpleNamespace(connections=lambda _id: []),
+                )
+            )
+        )
+    )
+
+    result = json.loads(
+        tools["create_dataset"](
+            name="plain",
+            org_id="org-1",
+            team_id="team-1",
+            ctx=ctx,
+            data='[{"value": 1}]',
+        )
+    )
+
+    assert result["schema"] == [{"name": "value", "type": "numeric"}]
+    assert "resolved_refs_preview" not in result
+    assert "connections" not in result
 
 
 def test_create_dataset_surfaces_partial_ingest_warning() -> None:
@@ -541,7 +664,15 @@ def test_create_dataset_forwards_enum_columns() -> None:
     created = datasets.created[0]
     assert created["enum_columns"] == {"status": {"values": ["todo", "done"]}}
     assert result["enum_columns"] == {"status": {"values": ["todo", "done"]}}
-    assert result["schema"][0]["enum_values"] == ["todo", "done"]
+    assert result["schema"] == [
+        {
+            "name": "status",
+            "type": "text",
+            "semantic_type": "enum",
+            "enum_values": ["todo", "done"],
+        }
+    ]
+    assert "resolved_refs_preview" not in result
 
 
 def test_query_dataset_resolve_refs_passes_flag_and_returns_sidecar() -> None:
@@ -646,7 +777,15 @@ def test_edit_dataset_columns_applies_operations_in_order() -> None:
     assert rename_call["column"] == "qty"
     assert rename_call["new_name"] == "quantity"
     assert result["operations"][0]["op"] == "add"
-    assert result["schema"][0]["enum_values"] == ["low", "high"]
+    assert result["schema"] == [
+        {
+            "name": "priority",
+            "type": "text",
+            "semantic_type": "enum",
+            "enum_values": ["low", "high"],
+        }
+    ]
+    assert "resolved_refs_preview" not in result
 
 
 def test_edit_dataset_columns_accepts_json_string() -> None:
@@ -704,3 +843,77 @@ def test_edit_dataset_columns_rename_requires_new_name() -> None:
 
     assert result["error"] == "invalid_arguments"
     assert "new_name" in result["message"]
+
+
+def test_update_dataset_row_only_skips_verification() -> None:
+    datasets = _FakeDatasets(
+        query_page={"data": pd.DataFrame([]), "resolved_refs": {"x": {}}},
+        schema_response=[{"column_name": "value", "data_type": "numeric"}],
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["update_dataset"](
+            "dataset-1",
+            _ctx(datasets),
+            data='[{"value": 1}]',
+        )
+    )
+
+    assert "schema" not in result
+    assert "refs" not in result
+    assert "enum_columns" not in result
+    assert "resolved_refs_preview" not in result
+    assert "connections" not in result
+    assert datasets.query_calls == []
+
+
+def test_update_dataset_refs_includes_verification() -> None:
+    sidecar = {
+        "file_id": {
+            "019df875-7957-7888-888f-f8140ff62564": {
+                "kind": "asset",
+                "id": "019df875-7957-7888-888f-f8140ff62564",
+                "asset_type": "file",
+                "name": "sample.cif",
+            }
+        }
+    }
+    datasets = _FakeDatasets(
+        query_page={
+            "data": pd.DataFrame([]),
+            "pagination": {"hasMore": False},
+            "resolved_refs": sidecar,
+        },
+        schema_response=[
+            {
+                "column_name": "file_id",
+                "data_type": "uuid",
+                "semantic_type": "reference",
+                "ref_kind": "asset",
+                "asset_type": "file",
+            }
+        ],
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["update_dataset"](
+            "dataset-1",
+            _ctx(datasets),
+            refs='{"file_id": {"kind": "asset", "asset_type": "file"}}',
+        )
+    )
+
+    assert result["schema"] == [
+        {
+            "name": "file_id",
+            "type": "uuid",
+            "semantic_type": "reference",
+            "ref_kind": "asset",
+            "asset_type": "file",
+        }
+    ]
+    assert result["refs"] == {"file_id": {"kind": "asset", "asset_type": "file"}}
+    assert result["resolved_refs_preview"] == sidecar
+    assert result["connections"]["reference"][0]["id"] == "file-1"

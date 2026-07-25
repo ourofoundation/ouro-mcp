@@ -78,7 +78,7 @@ def register(mcp: FastMCP) -> None:
         {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
         ```
         displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
-        For routes, set actionId to preview a specific action's status, logs, and output.
+        For routes, set actionId to show a compact action receipt (status, timing, output).
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -139,7 +139,7 @@ def register(mcp: FastMCP) -> None:
         {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
         ```
         displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
-        For routes, set actionId to preview a specific action's status, logs, and output.
+        For routes, set actionId to show a compact action receipt (status, timing, output).
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
