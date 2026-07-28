@@ -222,24 +222,57 @@ def register(mcp: FastMCP) -> None:
     def delete_asset(
         id: Annotated[str, Field(description="UUID of the asset to delete")],
         ctx: Context,
+        delete_children: Annotated[
+            bool | None,
+            Field(
+                description=(
+                    "Also delete child assets linked via parent_id "
+                    "(e.g. service routes, post embedded assets). "
+                    "Defaults to true for services, false otherwise."
+                )
+            ),
+        ] = None,
+        dry_run: Annotated[
+            bool,
+            Field(
+                description=(
+                    "If true, return the delete summary (including children "
+                    "that would be removed) without deleting anything."
+                )
+            ),
+        ] = False,
     ) -> str:
-        """Delete an asset by ID. Auto-detects the asset type and routes to the appropriate delete method."""
+        """Delete an asset by ID. Auto-detects the asset type and routes to the appropriate delete method.
+
+        Returns a summary of the deleted asset and any deleted children
+        (id, name, asset_type). Pass dry_run=true to preview first.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
 
         asset = ouro.assets.retrieve(id)
         asset_type = asset.asset_type
         name = asset.name
 
+        if delete_children is None:
+            effective_delete_children = asset_type == "service"
+        else:
+            effective_delete_children = delete_children
+
+        delete_kwargs = {
+            "delete_children": effective_delete_children,
+            "dry_run": dry_run,
+        }
+
         if asset_type == "dataset":
-            ouro.datasets.delete(id)
+            result = ouro.datasets.delete(id, **delete_kwargs)
         elif asset_type == "post":
-            ouro.posts.delete(id)
+            result = ouro.posts.delete(id, **delete_kwargs)
         elif asset_type == "file":
-            ouro.files.delete(id)
+            result = ouro.files.delete(id, **delete_kwargs)
         elif asset_type == "quest":
-            ouro.quests.delete(id)
+            result = ouro.quests.delete(id, **delete_kwargs)
         elif asset_type == "service":
-            ouro.services.delete(id)
+            result = ouro.services.delete(id, **delete_kwargs)
         else:
             return dump_json(
                 {
@@ -248,14 +281,18 @@ def register(mcp: FastMCP) -> None:
                 }
             )
 
-        return dump_json(
-            {
-                "deleted": True,
-                "id": id,
-                "name": name,
-                "asset_type": asset_type,
-            }
-        )
+        deleted_children = (result or {}).get("deleted_children") or []
+        payload = {
+            "deleted": not dry_run,
+            "id": (result or {}).get("id") or id,
+            "name": (result or {}).get("name") or name,
+            "asset_type": (result or {}).get("asset_type") or asset_type,
+            "deleted_children": deleted_children,
+            "deleted_children_count": len(deleted_children),
+        }
+        if dry_run:
+            payload["dry_run"] = True
+        return dump_json(payload)
 
     @mcp.tool(
         annotations={"destructiveHint": True},
