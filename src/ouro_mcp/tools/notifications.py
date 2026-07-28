@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Union
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
@@ -18,8 +18,20 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         offset: Annotated[int, Field(description="Pagination offset")] = 0,
         limit: Annotated[int, Field(description="Max results to return")] = 20,
-        org_id: Annotated[Optional[str], Field(description="Filter by organization UUID")] = None,
-        unread_only: Annotated[bool, Field(description="Only return unread notifications")] = False,
+        org_id: Annotated[
+            Optional[str], Field(description="Filter by organization UUID")
+        ] = None,
+        unread_only: Annotated[
+            bool, Field(description="Only return unread notifications")
+        ] = False,
+        category: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Comma-separated categories: mentions, comments, shares, money"
+                )
+            ),
+        ] = None,
     ) -> str:
         """List notifications for the authenticated user, newest first."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -29,6 +41,7 @@ def register(mcp: FastMCP) -> None:
             limit=limit,
             org_id=org_id,
             unread_only=unread_only,
+            category=category,
             with_pagination=True,
         )
 
@@ -72,27 +85,26 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def read_notification(
-        id: Annotated[str, Field(description="Notification UUID")],
+        ids: Annotated[
+            Union[list[str], str],
+            Field(
+                description="One notification UUID or a list of UUIDs to mark read"
+            ),
+        ],
         ctx: Context,
     ) -> str:
-        """Mark a notification as read and return it."""
+        """Mark one or many notifications as read in a single call.
+
+        Pass every id you have handled or dismissed; omit ids you want to keep
+        unread so they surface again later.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
-
-        notification = ouro.notifications.read(id)
-
-        result = {
-            "id": str(notification.get("id", "")),
-            "type": notification.get("type"),
-            "viewed": notification.get("viewed"),
-            "created_at": notification.get("created_at"),
-        }
-
-        source = notification.get("source_user")
-        if source:
-            result["from"] = source.get("username") or source.get("name")
-
-        content = notification.get("content", {})
-        if content.get("text"):
-            result["text"] = content["text"]
-
-        return dump_json(result)
+        id_list = [ids] if isinstance(ids, str) else list(dict.fromkeys(ids))
+        read, failed = [], []
+        for nid in id_list:
+            try:
+                ouro.notifications.read(nid)
+                read.append(nid)
+            except Exception as exc:
+                failed.append({"id": nid, "error": str(exc)})
+        return dump_json({"read": len(read), "read_ids": read, "failed": failed})
