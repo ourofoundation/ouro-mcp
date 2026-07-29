@@ -28,7 +28,7 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(
                 description=(
-                    "Comma-separated categories: mentions, comments, shares, money"
+                    "Comma-separated categories: mentions, comments, references, shares, money, actions"
                 )
             ),
         ] = None,
