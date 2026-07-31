@@ -157,19 +157,17 @@ def _quest_tools() -> dict[str, object]:
 
 def test_list_assigned_quest_items_calls_sdk() -> None:
     quests = _FakeQuests()
-    result = json.loads(
-        _quest_tools()["list_assigned_quest_items"](
-            _ctx(quests),
-            status="pending,in_progress",
-            assignee_id="user-1",
-            org_id="org-1",
-            team_id="team-1",
-            limit=5,
-            offset=10,
-        )
+    result = _quest_tools()["list_assigned_quest_items"](
+        _ctx(quests),
+        status="pending,in_progress",
+        assignee_id="user-1",
+        org_id="org-1",
+        team_id="team-1",
+        limit=5,
+        offset=10,
     )
 
-    assert result["data"][0]["description"] == "Assigned task"
+    assert "Assigned task" in result
     assert quests.calls == [
         {
             "method": "list_assigned_items",
@@ -233,7 +231,7 @@ def test_submit_quest_entry_calls_sdk() -> None:
     assert quests.calls[0]["description"].text == "Dataset submission notes"
 
 
-def test_list_quest_entries_returns_list_envelope() -> None:
+def test_list_quest_entries_returns_markdown() -> None:
     quests = _FakeQuests()
 
     def list_entries(quest_id: str, **kwargs):
@@ -245,6 +243,7 @@ def test_list_quest_entries_returns_list_envelope() -> None:
                 _FakeModel(
                     id="entry-1",
                     status="accepted",
+                    description="submission",
                     assets={"file": {"asset_id": "asset-1", "asset_type": "file"}},
                     embedded_assets=[],
                     users=[],
@@ -254,21 +253,18 @@ def test_list_quest_entries_returns_list_envelope() -> None:
         }
 
     quests.list_entries = list_entries
-    result = json.loads(
-        _quest_tools()["list_quest_entries"](
-            "quest-1",
-            _ctx(quests),
-            status="accepted",
-            limit=10,
-            offset=20,
-        )
+    result = _quest_tools()["list_quest_entries"](
+        "quest-1",
+        _ctx(quests),
+        status="accepted",
+        limit=10,
+        offset=20,
     )
 
-    assert result["results"][0]["assets"] == {
-        "file": {"asset_id": "asset-1", "asset_type": "file"}
-    }
-    assert result["results"][0]["embedded_assets"] == []
-    assert result["hasMore"] is False
+    assert "quest_id: `quest-1`" in result
+    assert "id: `entry-1`" in result
+    assert "status: accepted" in result
+    assert "asset-1" in result
     assert quests.calls == [
         {
             "method": "list_entries",

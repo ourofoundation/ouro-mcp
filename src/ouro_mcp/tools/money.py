@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, list_response, optional_kwargs
+from ouro_mcp.utils import (
+    dump_json,
+    markdown_bullet,
+    markdown_id,
+    optional_kwargs,
+    render_markdown_list,
+)
 
 
 def register(mcp: FastMCP) -> None:
@@ -47,17 +53,14 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """List wallet transactions in reverse-chronological order.
 
-        Returns the standard list envelope: ``{"results": [...], "total",
-        "hasMore"}``. Amounts inside each transaction are in sats (BTC) or
-        cents (USD).
+        Returns compact markdown. Amounts are in sats (BTC) or cents (USD).
 
         Pagination model:
         - USD supports offset-based paging via ``limit`` + ``offset`` and
-          server-side ``type`` filtering. ``hasMore`` reflects the server's
-          own signal.
+          server-side ``type`` filtering. The header reflects whether more
+          pages are available.
         - BTC currently returns the full history in one call; ``limit`` /
-          ``offset`` / ``type`` are ignored and ``hasMore`` is always
-          ``false``.
+          ``offset`` / ``type`` are ignored.
 
         Read-only; no side effects.
         """
@@ -70,8 +73,28 @@ def register(mcp: FastMCP) -> None:
         )
         items = transactions.get("data", []) if isinstance(transactions, dict) else transactions
         pagination = transactions.get("pagination", {}) if isinstance(transactions, dict) else {}
-        return dump_json(
-            list_response(items, pagination=pagination, limit=limit)
+
+        def _tx_line(row: Any) -> str:
+            if not isinstance(row, dict):
+                return markdown_bullet(str(row))
+            amount = row.get("amount")
+            tx_type = row.get("type") or row.get("transaction_type") or "transaction"
+            parts = [
+                markdown_id(row.get("id")),
+                f"amount: {amount}" if amount is not None else None,
+                row.get("created_at") or row.get("timestamp"),
+            ]
+            body = row.get("message") or row.get("description")
+            return markdown_bullet(str(tx_type), *parts, body=body)
+
+        return render_markdown_list(
+            list(items or []),
+            line_fn=_tx_line,
+            pagination=pagination,
+            offset=offset or 0,
+            noun="transactions",
+            empty_text="No transactions.",
+            extras=[f"currency: {currency.lower()}"],
         )
 
     @mcp.tool(annotations={"destructiveHint": True})
@@ -187,7 +210,6 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.money.get_usage_history(
-            limit=limit,
             offset=offset,
             asset_id=asset_id,
             role=role,

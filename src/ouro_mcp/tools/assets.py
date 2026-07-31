@@ -7,25 +7,26 @@ import logging
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
-from ouro.utils.content import description_to_markdown
 from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
-    asset_web_url,
     dump_json,
     format_asset_summary,
-    format_monetization_block,
-    list_response,
+    format_search_hit,
+    markdown_bullet,
+    markdown_id,
     optional_kwargs,
-    org_summary,
+    present_kwargs,
+    render_markdown_list,
+    render_markdown_sections,
     route_input_assets_summary,
     route_output_assets_summary,
     route_request_body_without_input_assets,
+    search_hit_line,
     slim_asset_tags,
     slim_connection_graph,
     slim_dataset_schema,
     strip_heavy_fields,
-    team_summary,
     truncate_response,
     user_summary,
 )
@@ -46,12 +47,13 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(
                 description=(
-                    '"summary" (default) returns name, description, metadata, and engagement counts. '
+                    '"summary" (default) returns name, short description, visibility, '
+                    "flat username/org_id/team_id, and engagement counts. "
                     '"full" also includes type-specific content '
                     "(post body, dataset schema/stats, file download URL, service routes, route execution schemas), "
-                    "plus provenance (creation action), connections grouped by type with the other asset "
-                    "summarized as id, asset_type, name, and created_at when available, "
-                    "tags, and a bounded comments/replies preview when present."
+                    "plus a compact creation_action pointer (action_id/status/route_id), "
+                    "connections grouped by type, tags, and a bounded comments/replies preview when present. "
+                    "Use list_asset_actions(role=\"output\") for the full producer action."
                 )
             ),
         ] = "summary",
@@ -116,9 +118,10 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Search or browse assets on Ouro. Supports chunk-level hybrid semantic + full-text search.
 
-        Matching is fine-grained: posts, comments, dataset schemas, and routes are
-        indexed as chunks, so results include a `snippet` (the matching passage) and
-        `match_source` (summary/body/comment/schema/route) for precise citation.
+        Returns compact markdown discovery rows (id, asset_type, name, description,
+        username, created_at). Query hits may also include a snippet for the
+        matching passage. Call `get_asset` for full detail (content, schemas,
+        download URLs, etc.).
         Without a query: returns recent assets by creation date.
         With a UUID as query: direct asset lookup.
         Use sort="popular" to find the most engaged assets (by views, reactions, comments, downloads, uses).
@@ -142,12 +145,14 @@ def register(mcp: FastMCP) -> None:
         if extension:
             merged_metadata["extension"] = extension
 
+        # Models often fill unused optionals with ""; blank UUID filters 500
+        # in Postgres ("invalid input syntax for type uuid: \"\"").
         response = ouro.assets.search(
             query,
             limit=limit,
             offset=offset,
             with_pagination=True,
-            **optional_kwargs(
+            **present_kwargs(
                 asset_type=asset_type,
                 scope=scope,
                 org_id=org_id,
@@ -160,59 +165,15 @@ def register(mcp: FastMCP) -> None:
             ),
         )
 
-        assets = []
-        for item in response.get("data", []):
-            row: dict[str, Any] = {
-                "id": str(item.get("id", "")),
-                "name": item.get("name"),
-                "asset_type": item.get("asset_type"),
-                "description": description_to_markdown(item.get("description"), max_length=200),
-                "visibility": item.get("visibility"),
-                "state": item.get("state"),
-                "source": item.get("source"),
-                "created_at": item.get("created_at"),
-                "last_updated": item.get("last_updated"),
-            }
+        assets = [format_search_hit(item) for item in response.get("data", [])]
 
-            # Chunk-level search returns the matching passage and where it came
-            # from (summary/body/comment/schema/route) so agents can quote the
-            # exact evidence instead of refetching the whole asset.
-            if item.get("snippet"):
-                row["snippet"] = item["snippet"]
-            if item.get("match_source"):
-                row["match_source"] = item["match_source"]
-
-            user = user_summary(item)
-            if user:
-                row["user"] = user
-
-            org = org_summary(item)
-            if org:
-                row["organization"] = org
-
-            team = team_summary(item)
-            if team:
-                row["team"] = team
-
-            if item.get("parent_id"):
-                row["parent_id"] = str(item["parent_id"])
-
-            url = asset_web_url(item)
-            if url:
-                row["url"] = url
-
-            # Surface monetization so agents can rank/filter without N+1
-            # get_asset calls. Free assets contribute nothing.
-            row.update(format_monetization_block(item))
-
-            assets.append(row)
-
-        return dump_json(
-            list_response(
-                assets,
-                pagination=response.get("pagination") or {},
-                limit=limit,
-            )
+        return render_markdown_list(
+            assets,
+            line_fn=search_hit_line,
+            pagination=response.get("pagination") or {},
+            offset=offset,
+            noun="assets",
+            empty_text="No assets found.",
         )
 
     @mcp.tool(
@@ -375,19 +336,39 @@ def register(mcp: FastMCP) -> None:
         """Get the connection graph for an asset.
 
         Returns relationships like references, components, derivatives,
-        and action inputs/outputs. Useful for understanding how assets
-        relate to each other and navigating lineage. Connections are grouped
-        by relationship type. Each item is the connected asset summary with
-        ``id``, ``name``, ``asset_type``, and asset ``created_at`` when
-        available. For ``action`` edges, ``action_id`` is included when the
-        backend provides it so you can follow up with ``get_action`` or
-        ``list_asset_actions``. Connection edge metadata and the current
-        asset side are otherwise omitted to keep responses small.
+        and action inputs/outputs as compact markdown sections. Useful for
+        understanding how assets relate to each other and navigating lineage.
+        Each item is the connected asset summary with id, name, asset_type,
+        and asset created_at when available. For action edges, action_id is
+        included when the backend provides it so you can follow up with
+        get_action or list_asset_actions.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         connections = ouro.assets.connections(id)
         connections = slim_connection_graph(connections, current_asset_id=id)
-        return truncate_response(dump_json({"asset_id": id, "connections": connections}))
+        if not isinstance(connections, dict):
+            connections = {"connections": list(connections or [])}
+
+        def _connection_line(row: Any) -> str:
+            if not isinstance(row, dict):
+                return markdown_bullet(str(row))
+            name = row.get("name") or "(unnamed)"
+            parts = [markdown_id(row.get("id"))]
+            if row.get("action_id"):
+                parts.append(f"action_id: `{row['action_id']}`")
+            created = row.get("created_at")
+            if created:
+                parts.append(str(created))
+            return markdown_bullet(str(name), *parts, kind=row.get("asset_type"))
+
+        return truncate_response(
+            render_markdown_sections(
+                connections,
+                line_fn=_connection_line,
+                preamble=f"Connections for asset `{id}`",
+                empty_text="No connections.",
+            )
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -427,12 +408,16 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """List route actions linked to an asset.
 
-        Prefer this over scraping posts for action IDs. ``created_by`` is the
-        action that produced the asset (if any). ``as_input`` is the list of
-        executions that used the asset as an input — use this to find which
-        routes ran on a file or dataset and to get embed/status/response.
+        Prefer this over scraping posts for action IDs. Returns compact
+        markdown. ``created_by`` is the action that produced the asset (if
+        any). ``as_input`` is the list of executions that used the asset as
+        an input — use this to find which routes ran on a file or dataset
+        and to get embed/status/response.
         """
-        from ouro_mcp.tools.services import _format_action_summary
+        from ouro_mcp.tools.services import (
+            _format_action_summary,
+            action_summary_line,
+        )
 
         allowed_roles = {"input", "output", "both"}
         if role not in allowed_roles:
@@ -469,25 +454,36 @@ def register(mcp: FastMCP) -> None:
         as_input = list(bundle.get("as_input") or [])
         pagination = bundle.get("pagination") or {}
 
-        payload: dict[str, Any] = {
-            "asset_id": asset_id,
-            "role": role,
-            "created_by": (
-                _format_action_summary(created_by, include_response=include_response)
+        sections: dict[str, list[Any]] = {}
+        if role in {"output", "both"}:
+            sections["created_by"] = (
+                [_format_action_summary(created_by, include_response=include_response)]
                 if created_by is not None
-                else None
-            ),
-            "as_input": [
+                else []
+            )
+        if role in {"input", "both"}:
+            sections["as_input"] = [
                 _format_action_summary(action, include_response=include_response)
                 for action in as_input
-            ],
-        }
+            ]
+
+        extras: list[str] = [f"asset_id: `{asset_id}`", f"role: {role}"]
         if role in {"input", "both"}:
-            payload["as_input_offset"] = offset
-            payload["as_input_limit"] = limit
-            payload["as_input_has_more"] = bool(pagination.get("hasMore"))
-            payload["as_input_count"] = len(as_input)
-        return truncate_response(dump_json(payload))
+            has_more = bool(pagination.get("hasMore"))
+            extras.append(f"as_input showing {len(as_input)} (offset={offset}, limit={limit})")
+            if has_more:
+                extras.append(
+                    f"more as_input available — call again with offset={offset + len(as_input)}"
+                )
+
+        return truncate_response(
+            render_markdown_sections(
+                sections,
+                line_fn=action_summary_line,
+                preamble=" · ".join(extras),
+                empty_text="No linked actions.",
+            )
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -538,14 +534,24 @@ def register(mcp: FastMCP) -> None:
                 else:
                     entry["description"] = str(desc)[:200]
             results.append(entry)
-        response = list_response(
+
+        def _route_line(row: dict[str, Any]) -> str:
+            return markdown_bullet(
+                str(row.get("name") or "(untitled)"),
+                markdown_id(row.get("id")),
+                kind=row.get("asset_type") or "route",
+                body=row.get("description"),
+            )
+
+        return render_markdown_list(
             results,
+            line_fn=_route_line,
             pagination=page.get("pagination") or {},
-            limit=limit,
-            extra={"asset_id": id, "sort": sort},
+            offset=offset,
+            noun="compatible routes",
+            empty_text="No compatible routes.",
+            extras=[f"asset_id: `{id}`", f"sort: {sort}"],
         )
-        response["compatible_routes"] = results
-        return dump_json(response)
 
 
 def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
@@ -574,18 +580,51 @@ def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
         result["counts"] = nonzero
 
 
+def _compact_creation_action(created_by: Any) -> dict[str, Any] | None:
+    """Pointer-only producer action for get_asset(detail=full).
+
+    Full action payloads (response, assets, metadata) belong on
+    ``list_asset_actions`` / ``get_action``, not inline on every full asset read.
+    """
+    if created_by is None:
+        return None
+    if hasattr(created_by, "model_dump"):
+        raw = created_by.model_dump(mode="json")
+    elif isinstance(created_by, dict):
+        raw = created_by
+    else:
+        raw = {
+            "id": getattr(created_by, "id", None),
+            "status": getattr(created_by, "status", None),
+            "route_id": getattr(created_by, "route_id", None),
+        }
+        route = getattr(created_by, "route", None)
+        if route is not None and raw.get("route_id") is None:
+            raw["route_id"] = getattr(route, "id", None) or (
+                route.get("id") if isinstance(route, dict) else None
+            )
+
+    action_id = raw.get("id") or raw.get("action_id")
+    if not action_id:
+        return None
+    pointer: dict[str, Any] = {"action_id": str(action_id)}
+    status = raw.get("status") or raw.get("action_status")
+    if status:
+        pointer["action_status"] = status
+    route_id = raw.get("route_id") or (raw.get("route") or {}).get("id")
+    if route_id:
+        pointer["route_id"] = str(route_id)
+    return pointer
+
+
 def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
     """Best-effort merge of provenance, connections, and tags into an asset result dict."""
     try:
         bundle = ouro.assets.actions(asset_id, role="output")
         created_by = bundle.get("created_by") if isinstance(bundle, dict) else None
-        if created_by is not None:
-            raw = (
-                created_by.model_dump(mode="json")
-                if hasattr(created_by, "model_dump")
-                else created_by
-            )
-            result["creation_action"] = strip_heavy_fields(raw)
+        pointer = _compact_creation_action(created_by)
+        if pointer:
+            result["creation_action"] = pointer
     except Exception:
         log.debug("Failed to fetch creation action for %s", asset_id, exc_info=True)
 

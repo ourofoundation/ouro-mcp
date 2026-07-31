@@ -16,8 +16,10 @@ from ouro_mcp.utils import (
     format_asset_summary,
     format_one_time_cost_summary,
     format_pay_per_use_cost_summary,
-    list_response,
+    markdown_bullet,
+    markdown_id,
     optional_kwargs,
+    render_markdown_list,
     route_input_assets_summary,
     route_output_assets_summary,
     route_request_body_without_input_assets,
@@ -257,8 +259,14 @@ def _format_action_result(
     route_id: Optional[str] = None,
     route_name: Optional[str] = None,
     duration_seconds: Optional[float] = None,
+    include_response: bool = True,
 ) -> dict[str, Any]:
-    """Build the tool response dict for a completed (or errored) Action."""
+    """Build the tool response dict for a completed (or errored) Action.
+
+    ``include_response`` controls whether the full action ``response`` payload
+    is inlined under ``data`` / ``error``. Browse/poll paths (``get_action``)
+    default to false; ``execute_route`` keeps the payload since it just ran.
+    """
     result: dict[str, Any] = {
         "status": "success" if action.is_success else action.status,
         "action_id": str(action.id),
@@ -272,12 +280,13 @@ def _format_action_result(
     if duration_seconds is not None:
         result["duration_seconds"] = duration_seconds
 
-    # For errored actions, surface the server response under `error` so the
-    # agent can reason about the failure without losing the action context.
+    # For errored actions, always surface compact error context (retryable /
+    # status_code). Full response bodies are opt-in via include_response.
     if action.is_error:
-        result["error"] = _serialize_result(action.response)
         result.update(_action_error_context(action.response))
-    else:
+        if include_response:
+            result["error"] = _serialize_result(action.response)
+    elif include_response:
         result["data"] = _serialize_result(action.response)
 
     # Surface inputs and outputs exclusively as the modern plural
@@ -327,7 +336,13 @@ def _compact_asset(asset: Any) -> Optional[dict[str, Any]]:
         "asset_type": asset.get("asset_type"),
     }
     if asset.get("description"):
-        result["description"] = asset.get("description")
+        desc = asset.get("description")
+        if isinstance(desc, dict):
+            text = desc.get("text") or ""
+            if text:
+                result["description"] = str(text)[:200]
+        else:
+            result["description"] = str(desc)[:200]
     return {k: v for k, v in result.items() if v not in (None, "")}
 
 
@@ -464,6 +479,29 @@ def _format_action_summary(
     return {k: v for k, v in result.items() if v is not None}
 
 
+def action_summary_line(summary: Any) -> str:
+    """Render one action summary dict as a markdown bullet."""
+    if not isinstance(summary, dict):
+        summary = _format_action_summary(summary)
+    status_val = summary.get("action_status") or summary.get("status")
+    parts = [
+        markdown_id(summary.get("action_id") or summary.get("id")),
+        f"status: {status_val}" if status_val else None,
+    ]
+    route_id = summary.get("route_id")
+    if route_id:
+        parts.append(f"route_id: `{route_id}`")
+    if summary.get("created_at"):
+        parts.append(str(summary["created_at"]))
+    route = summary.get("route") if isinstance(summary.get("route"), dict) else None
+    name = (route or {}).get("name") or "action"
+    return markdown_bullet(
+        str(name),
+        *parts,
+        body=summary.get("embed_markdown"),
+    )
+
+
 def _format_log_entry(log_entry: Any) -> dict[str, Any]:
     log_entry = _as_dict(log_entry)
     result: dict[str, Any] = {
@@ -489,7 +527,7 @@ def _format_log_entry(log_entry: Any) -> dict[str, Any]:
     return {k: v for k, v in result.items() if v is not None}
 
 
-def _get_action_logs_payload(
+def _fetch_action_logs(
     ouro: Any,
     action_id: str,
     *,
@@ -497,7 +535,8 @@ def _get_action_logs_payload(
     limit: int = 100,
     offset: int = 0,
     sort_order: str = "asc",
-) -> dict[str, Any]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Load action logs. Returns ``(log_rows, pagination)``."""
     if limit <= 0 or limit > 500:
         raise ValueError("limit must be between 1 and 500.")
     if offset < 0:
@@ -514,12 +553,7 @@ def _get_action_logs_payload(
         with_pagination=True,
     )
     logs = [_format_log_entry(item) for item in (page.get("data") or [])]
-    return list_response(
-        logs,
-        pagination=page.get("pagination") or {},
-        limit=limit,
-        extra={"action_id": action_id, "sort_order": sort_order},
-    )
+    return logs, page.get("pagination") or {}
 
 
 _LICENSE_DESC = (
@@ -1128,6 +1162,16 @@ def register(mcp: FastMCP) -> None:
             int,
             Field(description="Max logs to include when include_logs=true"),
         ] = 50,
+        include_response: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Include the action response payload under `data`/`error`. "
+                    "Leave false for compact status + output asset ids; set true "
+                    "when you need the full result body."
+                )
+            ),
+        ] = False,
     ) -> str:
         """Check the status of a route action (execute_route result).
 
@@ -1135,7 +1179,9 @@ def register(mcp: FastMCP) -> None:
         or to inspect a past action you want to reference / embed. Set
         `wait=true` to block until the action reaches a terminal state.
 
-        Returns action status, route ID, data/error, output asset info, and embed_markdown.
+        By default returns status, route/action ids, compact input/output
+        assets, embed_markdown, and cost — not the full response body. Pass
+        `include_response=true` when you need `data`/`error` payloads.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -1151,25 +1197,31 @@ def register(mcp: FastMCP) -> None:
                 # Fall through to a snapshot read so the caller at least sees
                 # current status + logs context.
                 action = ouro.routes.retrieve_action(action_id)
-                snapshot = _format_action_result(action, route_id=str(action.route_id))
+                snapshot = _format_action_result(
+                    action,
+                    route_id=str(action.route_id),
+                    include_response=include_response,
+                )
                 snapshot["status"] = "pending"
                 snapshot["message"] = (
                     f"Action still in progress after {timeout}s. "
                     "Call `get_action` again later."
                 )
                 if include_logs:
-                    snapshot["logs"] = _get_action_logs_payload(
-                        ouro, action_id, limit=log_limit
-                    )["results"]
+                    logs, _ = _fetch_action_logs(ouro, action_id, limit=log_limit)
+                    snapshot["logs"] = logs
                 return dump_json(snapshot)
         else:
             action = ouro.routes.retrieve_action(action_id)
 
-        result = _format_action_result(action, route_id=str(action.route_id))
+        result = _format_action_result(
+            action,
+            route_id=str(action.route_id),
+            include_response=include_response,
+        )
         if include_logs:
-            result["logs"] = _get_action_logs_payload(
-                ouro, action_id, limit=log_limit
-            )["results"]
+            logs, _ = _fetch_action_logs(ouro, action_id, limit=log_limit)
+            result["logs"] = logs
         return dump_json(result)
 
     @mcp.tool(
@@ -1248,19 +1300,22 @@ def register(mcp: FastMCP) -> None:
             _format_action_summary(action, include_response=include_response)
             for action in actions
         ]
-        payload = list_response(
-            results,
-            pagination=page.get("pagination") or {},
-            limit=limit,
-            extra={
-                "route": {
-                    "id": str(route.id),
-                    "name": route.name,
-                },
-                "note": "Use embed_markdown to embed an action preview in Ouro markdown.",
-            },
+
+        return truncate_response(
+            render_markdown_list(
+                results,
+                line_fn=action_summary_line,
+                pagination=page.get("pagination") or {},
+                offset=offset,
+                noun="route actions",
+                empty_text="No route actions.",
+                extras=[
+                    f"route_id: `{route.id}`",
+                    f"route: {route.name}",
+                    "Use embed_markdown bodies to embed an action preview in Ouro markdown.",
+                ],
+            )
         )
-        return truncate_response(dump_json(payload))
 
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -1282,16 +1337,37 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Read logs for a route action."""
         ouro = ctx.request_context.lifespan_context.ouro
+        logs, pagination = _fetch_action_logs(
+            ouro,
+            action_id,
+            level=level,
+            limit=limit,
+            offset=offset,
+            sort_order=sort_order,
+        )
+
+        def _log_line(entry: dict[str, Any]) -> str:
+            parts = [
+                markdown_id(entry.get("id")),
+                entry.get("level"),
+                entry.get("event_type"),
+                entry.get("created_at"),
+            ]
+            msg = entry.get("message") or entry.get("origin") or "(no message)"
+            return markdown_bullet(str(msg), *parts)
+
         return truncate_response(
-            dump_json(
-                _get_action_logs_payload(
-                    ouro,
-                    action_id,
-                    level=level,
-                    limit=limit,
-                    offset=offset,
-                    sort_order=sort_order,
-                )
+            render_markdown_list(
+                logs,
+                line_fn=_log_line,
+                pagination=pagination,
+                offset=offset,
+                noun="log lines",
+                empty_text="No logs.",
+                extras=[
+                    f"action_id: `{action_id}`",
+                    f"sort_order: {sort_order}",
+                ],
             )
         )
 

@@ -10,8 +10,10 @@ from ouro_mcp.utils import (
     content_from_markdown,
     dump_json,
     format_asset_summary,
-    list_response,
+    markdown_bullet,
+    markdown_id,
     optional_kwargs,
+    render_markdown_list,
 )
 from pydantic import Field
 
@@ -215,7 +217,44 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             with_pagination=True,
         )
-        return dump_json(result)
+        if isinstance(result, dict):
+            items = result.get("data") or result.get("results") or []
+            pagination = result.get("pagination") or {}
+        else:
+            items = list(result or [])
+            pagination = {}
+
+        def _item_line(item: Any) -> str:
+            if hasattr(item, "model_dump"):
+                row = item.model_dump(mode="json")
+            elif isinstance(item, dict):
+                row = item
+            else:
+                row = {
+                    "id": getattr(item, "id", None),
+                    "description": getattr(item, "description", None),
+                    "status": getattr(item, "status", None),
+                    "quest_id": getattr(item, "quest_id", None),
+                }
+            parts = [
+                markdown_id(row.get("id")),
+                f"status: {row['status']}" if row.get("status") else None,
+            ]
+            if row.get("quest_id"):
+                parts.append(f"quest_id: `{row['quest_id']}`")
+            return markdown_bullet(
+                str(row.get("description") or "(no description)"),
+                *parts,
+            )
+
+        return render_markdown_list(
+            items,
+            line_fn=_item_line,
+            pagination=pagination,
+            offset=offset,
+            noun="assigned quest items",
+            empty_text="No assigned quest items.",
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -228,28 +267,40 @@ def register(mcp: FastMCP) -> None:
         items = ouro.quests.list_items(quest_id)
         total = len(items)
         done = sum(1 for i in items if i.status == "done")
-        result = {
-            "quest_id": quest_id,
-            "progress": f"{done}/{total}",
-            "items": [
-                {
-                    "id": str(i.id),
-                    "description": i.description,
-                    "status": i.status,
-                    "sort_order": i.sort_order,
-                    "reward_currency": i.reward_currency,
-                    "reward_amount": i.reward_amount,
-                    **({"notes": i.notes} if i.notes else {}),
-                    **({"waiting_on": i.waiting_on} if getattr(i, "waiting_on", None) else {}),
-                    **({"waiting_until": i.waiting_until} if getattr(i, "waiting_until", None) else {}),
-                    **({"waiting_check_every": i.waiting_check_every} if getattr(i, "waiting_check_every", None) else {}),
-                    **({"assignee_id": str(i.assignee_id)} if i.assignee_id else {}),
-                    **({"child_quest_id": str(i.child_quest_id)} if i.child_quest_id else {}),
-                }
-                for i in items
-            ],
-        }
-        return dump_json(result)
+
+        def _item_line(i: Any) -> str:
+            parts = [
+                markdown_id(i.id),
+                f"status: {i.status}",
+                f"order: {i.sort_order}",
+            ]
+            if i.reward_currency and i.reward_amount is not None:
+                parts.append(f"reward: {i.reward_amount} {i.reward_currency}")
+            if getattr(i, "assignee_id", None):
+                parts.append(f"assignee: `{i.assignee_id}`")
+            if getattr(i, "waiting_on", None):
+                parts.append(f"waiting_on: {i.waiting_on}")
+            body_bits = []
+            if i.notes:
+                body_bits.append(str(i.notes))
+            if getattr(i, "waiting_until", None):
+                body_bits.append(f"waiting_until: {i.waiting_until}")
+            if getattr(i, "child_quest_id", None):
+                body_bits.append(f"child_quest_id: `{i.child_quest_id}`")
+            return markdown_bullet(
+                str(i.description or "(no description)"),
+                *parts,
+                body=" · ".join(body_bits) if body_bits else None,
+            )
+
+        return render_markdown_list(
+            items,
+            line_fn=_item_line,
+            total=total,
+            noun="quest items",
+            empty_text="No quest items.",
+            extras=[f"quest_id: `{quest_id}`", f"progress: {done}/{total}"],
+        )
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -573,12 +624,34 @@ def register(mcp: FastMCP) -> None:
             entry.model_dump(mode="json")
             for entry in result.get("data", [])
         ]
-        return dump_json(
-            list_response(
-                entries,
-                pagination=result.get("pagination"),
-                limit=limit,
+
+        def _entry_line(row: dict[str, Any]) -> str:
+            parts = [
+                markdown_id(row.get("id")),
+                f"status: {row['status']}" if row.get("status") else None,
+            ]
+            if row.get("item_id"):
+                parts.append(f"item_id: `{row['item_id']}`")
+            if row.get("user_id"):
+                parts.append(f"user_id: `{row['user_id']}`")
+            assets = row.get("assets")
+            body = None
+            if assets:
+                body = f"assets: {assets}"
+            return markdown_bullet(
+                str(row.get("description") or row.get("status") or "entry"),
+                *parts,
+                body=body,
             )
+
+        return render_markdown_list(
+            entries,
+            line_fn=_entry_line,
+            pagination=result.get("pagination"),
+            offset=offset,
+            noun="quest entries",
+            empty_text="No quest entries.",
+            extras=[f"quest_id: `{quest_id}`"],
         )
 
     @mcp.tool(annotations={"idempotentHint": True})

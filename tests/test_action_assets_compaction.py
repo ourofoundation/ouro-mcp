@@ -104,7 +104,7 @@ class TestCompactActionAssets(unittest.TestCase):
                         "id": "a1",
                         "name": "Benchmark report",
                         "asset_type": "file",
-                        "description": {"text": "summary"},
+                        "description": "summary",
                     },
                 },
                 {
@@ -237,6 +237,78 @@ class TestFormatActionSummaryUnifiedShape(unittest.TestCase):
         self.assertIn("input_assets", row)
         self.assertNotIn("input_asset", row)
         self.assertEqual(row["input_assets"][0]["name"], "structure")
+
+
+class TestFormatActionResultIncludeResponse(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.services = _load_services_module()
+
+    def _action(self, *, status: str = "success", response: object = None, **kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            id="00000000-0000-0000-0000-000000000001",
+            status=status,
+            is_success=status == "success",
+            is_error=status == "error",
+            response=response if response is not None else {"scores": [1, 2, 3]},
+            input_assets=None,
+            input_asset=None,
+            output_assets=[
+                {
+                    "name": "file",
+                    "is_primary": True,
+                    "asset": {"id": "a1", "asset_type": "file", "name": "Out"},
+                }
+            ],
+            output_asset=None,
+            usage_record=None,
+            btc_charges=None,
+            **kwargs,
+        )
+
+    def test_include_response_true_embeds_data(self) -> None:
+        row = self.services._format_action_result(
+            self._action(),
+            route_id="00000000-0000-0000-0000-000000000002",
+            include_response=True,
+        )
+        self.assertEqual(row["data"], {"scores": [1, 2, 3]})
+        self.assertIn("output_assets", row)
+
+    def test_include_response_false_omits_data(self) -> None:
+        row = self.services._format_action_result(
+            self._action(),
+            route_id="00000000-0000-0000-0000-000000000002",
+            include_response=False,
+        )
+        self.assertNotIn("data", row)
+        self.assertNotIn("error", row)
+        self.assertEqual(row["action_status"], "success")
+        self.assertIn("output_assets", row)
+        self.assertIn("embed_markdown", row)
+
+    def test_error_without_response_keeps_compact_context(self) -> None:
+        row = self.services._format_action_result(
+            self._action(
+                status="error",
+                response={
+                    "error": {
+                        "code": "external_service_timeout",
+                        "retryable": True,
+                        "statusCode": 504,
+                        "serviceUrl": "https://svc.example",
+                    }
+                },
+            ),
+            route_id="00000000-0000-0000-0000-000000000002",
+            include_response=False,
+        )
+        self.assertNotIn("error", row)
+        self.assertNotIn("data", row)
+        self.assertEqual(row["retryable"], True)
+        self.assertEqual(row["status_code"], 504)
 
 
 if __name__ == "__main__":

@@ -114,13 +114,11 @@ def test_read_notification_aggregates_failures() -> None:
 def test_get_notifications_passes_category() -> None:
     notifications = _FakeNotifications()
     tools = _tools()
-    result = json.loads(
-        tools["get_notifications"](
-            ctx=_ctx(notifications),
-            category="mentions,comments,shares",
-            unread_only=True,
-            limit=10,
-        )
+    result = tools["get_notifications"](
+        ctx=_ctx(notifications),
+        category="mentions,comments,shares",
+        unread_only=True,
+        limit=10,
     )
     assert notifications.list_calls == [
         {
@@ -132,5 +130,6 @@ def test_get_notifications_passes_category() -> None:
             "with_pagination": True,
         }
     ]
-    assert result["results"][0]["id"] == "n1"
-    assert result["results"][0]["type"] == "mention"
+    assert "id: `n1`" in result
+    assert "mention" in result
+    assert "@alice" in result

@@ -199,8 +199,16 @@ def slim_connection_graph(connections: Any, current_asset_id: str | None = None)
     return grouped
 
 
+_TRUNCATION_FOOTER = "\n… [truncated — call with smaller limit/offset]"
+_PARALLEL_HEADER_PREFIX = "=== "
+
+
 def truncate_response(data: str, context: str = "") -> str:
-    """If a JSON response exceeds the size threshold, truncate and flag it."""
+    """If a response exceeds the size threshold, truncate and flag it.
+
+    JSON payloads with a ``rows`` list shrink by dropping rows. Markdown /
+    other text is truncated at a line boundary under ``MAX_RESPONSE_SIZE``.
+    """
     if len(data) <= MAX_RESPONSE_SIZE:
         return data
     try:
@@ -215,7 +223,17 @@ def truncate_response(data: str, context: str = "") -> str:
             return json.dumps(parsed)
     except (json.JSONDecodeError, TypeError):
         pass
-    return data[:MAX_RESPONSE_SIZE] + "\n... [truncated]"
+
+    # Prefer a clean line cut for markdown / plain-text responses so agents
+    # don't get a half-rendered bullet.
+    budget = MAX_RESPONSE_SIZE - len(_TRUNCATION_FOOTER)
+    if budget <= 0:
+        return data[:MAX_RESPONSE_SIZE] + "\n... [truncated]"
+    cut = data[:budget]
+    last_nl = cut.rfind("\n")
+    if last_nl > budget // 2:
+        cut = cut[:last_nl]
+    return cut + _TRUNCATION_FOOTER
 
 
 def _configured_timezone_name() -> str | None:
@@ -334,18 +352,11 @@ def list_response(
     there's nothing more. ``limit`` is still accepted for symmetry with the
     callsite signature but is not consulted when deriving ``hasMore``.
     """
-    pag = pagination or {}
-
-    resolved_total = total if total is not None else pag.get("total")
-
-    if has_more is not None:
-        resolved_has_more = bool(has_more)
-    elif "hasMore" in pag:
-        resolved_has_more = bool(pag["hasMore"])
-    else:
-        resolved_has_more = False
-
-    resolved_next_cursor = pag.get("nextCursor")
+    resolved_total, resolved_has_more, resolved_next_cursor = resolve_list_pagination(
+        pagination,
+        total=total,
+        has_more=has_more,
+    )
 
     payload: dict[str, Any] = {
         "results": results,
@@ -359,6 +370,243 @@ def list_response(
     if extra:
         payload.update(extra)
     return payload
+
+
+def resolve_list_pagination(
+    pagination: dict | None = None,
+    *,
+    total: int | None = None,
+    has_more: bool | None = None,
+) -> tuple[Any, bool, Any]:
+    """Resolve ``(total, has_more, next_cursor)`` from kwargs + server pagination."""
+    pag = pagination or {}
+    resolved_total = total if total is not None else pag.get("total")
+    if has_more is not None:
+        resolved_has_more = bool(has_more)
+    elif "hasMore" in pag:
+        resolved_has_more = bool(pag["hasMore"])
+    else:
+        resolved_has_more = False
+    return resolved_total, resolved_has_more, pag.get("nextCursor")
+
+
+def collapse_whitespace(text: Any, max_length: int | None = None) -> str:
+    """Collapse newlines/runs of whitespace into a single readable line."""
+    if text is None:
+        return ""
+    collapsed = re.sub(r"\s+", " ", str(text)).strip()
+    if max_length is not None and len(collapsed) > max_length:
+        return collapsed[: max_length - 1].rstrip() + "…"
+    return collapsed
+
+
+def _assert_no_parallel_header(text: str) -> None:
+    """Reject text that would break ouro-agents parallel result splitting.
+
+    Parallel tool results are labeled with lines starting ``=== Tool result:``.
+    Emitting the same prefix inside a tool body would split observations
+    incorrectly.
+    """
+    for line in text.splitlines():
+        if line.startswith(_PARALLEL_HEADER_PREFIX):
+            raise ValueError(
+                "Markdown tool responses must not contain lines starting with "
+                f"{_PARALLEL_HEADER_PREFIX!r} (conflicts with parallel tool "
+                "result headers)."
+            )
+
+
+def _format_timestamp_for_md(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    text = str(value).strip()
+    return text or None
+
+
+def markdown_id(value: Any) -> str | None:
+    """Render an id as ``id: `uuid``` for verbatim agent copying."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return f"id: `{text}`"
+
+
+def markdown_bullet(
+    primary: str,
+    *parts: Any,
+    kind: str | None = None,
+    body: str | None = None,
+) -> str:
+    """Build a compact markdown list item.
+
+    ``primary`` is the bold lead (name / title). Optional ``kind`` renders
+    immediately after as ``(kind)`` — matching the discovery contract
+    ``**Name** (type) — id: ...``. Additional ``parts`` are joined with
+    em-dashes. Optional ``body`` becomes an indented second line.
+    """
+    lead = f"**{collapse_whitespace(primary) or '(untitled)'}**"
+    if kind:
+        kind_text = collapse_whitespace(kind)
+        if kind_text:
+            lead += f" ({kind_text})"
+    segments = [lead]
+    for part in parts:
+        if part is None:
+            continue
+        text = collapse_whitespace(part)
+        if text:
+            segments.append(text)
+    line = "- " + " — ".join(segments)
+    if body:
+        body_text = collapse_whitespace(body)
+        if body_text:
+            line += f"\n  {body_text}"
+    _assert_no_parallel_header(line)
+    return line
+
+
+def search_hit_line(hit: dict[str, Any]) -> str:
+    """Render one ``format_search_hit`` row as a markdown bullet."""
+    name = hit.get("name") or "(untitled)"
+    parts: list[Any] = [markdown_id(hit.get("id"))]
+    username = hit.get("username")
+    if username:
+        parts.append(f"by @{username}")
+    created = _format_timestamp_for_md(hit.get("created_at"))
+    if created:
+        parts.append(created)
+
+    body_bits: list[str] = []
+    description = hit.get("description")
+    if description:
+        body_bits.append(str(description))
+    snippet = hit.get("snippet")
+    if snippet:
+        match_source = hit.get("match_source")
+        prefix = f"[{match_source}] " if match_source else ""
+        body_bits.append(f"{prefix}{snippet}")
+    body = " · ".join(body_bits) if body_bits else None
+    return markdown_bullet(
+        str(name),
+        *parts,
+        kind=hit.get("asset_type"),
+        body=body,
+    )
+
+
+def format_markdown_list_header(
+    *,
+    shown: int,
+    total: int | None = None,
+    has_more: bool = False,
+    offset: int | None = None,
+    noun: str = "results",
+    empty_text: str = "No results.",
+    extras: list[str] | None = None,
+) -> str:
+    """Build the header line(s) for a markdown list response."""
+    if shown == 0 and not has_more and (total is None or total == 0):
+        header = empty_text
+    elif total is not None:
+        header = f"Found {total} {noun}"
+        if shown != total or has_more:
+            header += f" (showing {shown}"
+            if has_more:
+                next_offset = (offset or 0) + shown
+                header += f"; more available — call again with offset={next_offset}"
+            header += ")"
+    else:
+        header = f"Found {shown} {noun}"
+        if has_more:
+            next_offset = (offset or 0) + shown
+            header += f" (more available — call again with offset={next_offset})"
+    lines = [header]
+    if extras:
+        for extra in extras:
+            text = collapse_whitespace(extra)
+            if text:
+                lines.append(text)
+    result = "\n".join(lines)
+    _assert_no_parallel_header(result)
+    return result
+
+
+def render_markdown_list(
+    items: list[Any],
+    *,
+    line_fn: Any,
+    total: int | None = None,
+    has_more: bool | None = None,
+    offset: int | None = None,
+    noun: str = "results",
+    empty_text: str = "No results.",
+    extras: list[str] | None = None,
+    pagination: dict | None = None,
+) -> str:
+    """Render a list of rows as compact markdown for agent consumption.
+
+    ``line_fn`` maps each item to a markdown bullet string (typically via
+    :func:`markdown_bullet` or :func:`search_hit_line`). Pagination metadata
+    mirrors :func:`resolve_list_pagination`.
+    """
+    resolved_total, resolved_has_more, _cursor = resolve_list_pagination(
+        pagination,
+        total=total,
+        has_more=has_more,
+    )
+
+    lines = [line for line in (line_fn(item) for item in items) if line]
+
+    header = format_markdown_list_header(
+        shown=len(lines),
+        total=resolved_total if resolved_total is not None else None,
+        has_more=resolved_has_more,
+        offset=offset,
+        noun=noun,
+        empty_text=empty_text,
+        extras=extras,
+    )
+    if not lines:
+        return header
+
+    result = f"{header}\n\n" + "\n".join(lines)
+    _assert_no_parallel_header(result)
+    return result
+
+
+def render_markdown_sections(
+    sections: dict[str, list[Any]],
+    *,
+    line_fn: Any,
+    preamble: str | None = None,
+    empty_text: str = "No results.",
+) -> str:
+    """Render grouped payloads (connections, asset actions) as ``##`` sections."""
+    parts: list[str] = []
+    if preamble:
+        parts.append(collapse_whitespace(preamble) or preamble.strip())
+
+    any_items = False
+    for title, items in sections.items():
+        if not items:
+            continue
+        any_items = True
+        parts.append(f"## {collapse_whitespace(title) or title}")
+        for item in items:
+            line = line_fn(item)
+            if line:
+                parts.append(line)
+
+    if not any_items:
+        parts.append(empty_text)
+
+    result = "\n".join(parts)
+    _assert_no_parallel_header(result)
+    return result
 
 
 def resolve_local_path(raw: str) -> Path:
@@ -584,8 +832,46 @@ def _attribution_summary(asset: Any) -> dict[str, Any]:
     )
 
 
+def format_search_hit(item: Any) -> dict[str, Any]:
+    """Slim discovery row for ``search_assets``.
+
+    Keep only what an agent needs to pick a hit and call ``get_asset``:
+    id, type, name, short description, username, created_at, plus chunk
+    ``snippet`` / ``match_source`` when the backend returned them.
+    """
+    from ouro.utils.content import description_to_markdown
+
+    data = _as_dict(item)
+    row: dict[str, Any] = {
+        "id": str(data.get("id") or ""),
+        "name": data.get("name"),
+        "asset_type": data.get("asset_type"),
+        "created_at": data.get("created_at"),
+    }
+
+    description = description_to_markdown(data.get("description"), max_length=200)
+    if description:
+        row["description"] = description
+
+    user = user_summary(data)
+    if user and user.get("username"):
+        row["username"] = user["username"]
+
+    if data.get("snippet"):
+        row["snippet"] = data["snippet"]
+    if data.get("match_source"):
+        row["match_source"] = data["match_source"]
+
+    return row
+
+
 def format_asset_summary(asset: Any) -> dict:
-    """Extract a consistent summary dict from any ouro-py asset model."""
+    """Compact agent-facing summary for get_asset / create / update returns.
+
+    Flat location fields (username, org_id, team_id) instead of nested objects;
+    no web ``url`` (typed download / get_asset full cover that). Description
+    capped at 200 chars to match ``format_search_hit``.
+    """
     from ouro.utils.content import description_to_markdown
 
     summary: dict[str, Any] = {
@@ -594,7 +880,6 @@ def format_asset_summary(asset: Any) -> dict:
         "asset_type": asset.asset_type,
         "visibility": asset.visibility,
         "created_at": asset.created_at.isoformat() if asset.created_at else None,
-        "last_updated": asset.last_updated.isoformat() if asset.last_updated else None,
     }
     # `state` / `source` are nullable per asset type and emit as `null` for most
     # rows (posts, files, comments, etc.). Skip them when absent to keep summary
@@ -607,7 +892,9 @@ def format_asset_summary(asset: Any) -> dict:
         summary["source"] = source
 
     if asset.description:
-        summary["description"] = description_to_markdown(asset.description, max_length=500)
+        summary["description"] = description_to_markdown(
+            asset.description, max_length=200
+        )
 
     license_id = getattr(asset, "license_id", None)
     if license_id:
@@ -618,24 +905,24 @@ def format_asset_summary(asset: Any) -> dict:
         summary["attribution"] = attribution
 
     user = user_summary(asset)
-    if user:
-        summary["user"] = user
+    if user and user.get("username"):
+        summary["username"] = user["username"]
 
     org = org_summary(asset)
-    if org:
-        summary["organization"] = org
+    if org and org.get("id"):
+        summary["org_id"] = org["id"]
+        if org.get("name"):
+            summary["org_name"] = org["name"]
 
     team = team_summary(asset)
-    if team:
-        summary["team"] = team
+    if team and team.get("id"):
+        summary["team_id"] = team["id"]
+        if team.get("name"):
+            summary["team_name"] = team["name"]
 
     parent_id = getattr(asset, "parent_id", None)
     if parent_id:
         summary["parent_id"] = str(parent_id)
-
-    url = asset_web_url(asset)
-    if url:
-        summary["url"] = url
 
     monetization_block = format_monetization_block(asset)
     if monetization_block:
@@ -722,6 +1009,23 @@ def format_monetization_block(asset: Any) -> dict[str, Any]:
 def optional_kwargs(**kw: Any) -> dict:
     """Build a kwargs dict, dropping any keys whose value is None."""
     return {k: v for k, v in kw.items() if v is not None}
+
+
+def present_kwargs(**kw: Any) -> dict:
+    """Like optional_kwargs, also dropping blank strings.
+
+    Use for filter/search params where models often send ``""`` for unused
+    optionals. Do **not** use for update fields that treat ``""`` as an
+    explicit clear (e.g. quest waiting_*).
+    """
+    out: dict[str, Any] = {}
+    for key, value in kw.items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        out[key] = value
+    return out
 
 
 def route_input_assets_summary(route: Any) -> dict[str, Any] | None:

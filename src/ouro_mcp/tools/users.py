@@ -6,7 +6,7 @@ from typing import Annotated
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, list_response
+from ouro_mcp.utils import dump_json, markdown_bullet, markdown_id, render_markdown_list
 from pydantic import Field
 
 
@@ -55,7 +55,18 @@ def register(mcp: FastMCP) -> None:
                 }
             )
 
-        return dump_json(list_response(users))
+        def _user_line(row: dict) -> str:
+            return markdown_bullet(
+                f"@{row.get('username') or '(unknown)'}",
+                markdown_id(row.get("user_id")),
+            )
+
+        return render_markdown_list(
+            users,
+            line_fn=_user_line,
+            noun="users",
+            empty_text="No users found.",
+        )
 
     @mcp.tool(
         annotations={"readOnlyHint": True},

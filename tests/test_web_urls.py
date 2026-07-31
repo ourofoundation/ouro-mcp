@@ -10,7 +10,6 @@ from ouro_mcp.tools.teams import _team_summary
 from ouro_mcp.utils import (
     absolute_web_url,
     asset_web_url,
-    format_asset_summary,
     frontend_origin,
     team_web_url,
 )
@@ -130,8 +129,10 @@ class TestTeamWebUrl(unittest.TestCase):
         )
 
 
-class TestFormatAssetSummaryUrl(unittest.TestCase):
-    def test_includes_full_url(self) -> None:
+class TestFormatAssetSummarySlim(unittest.TestCase):
+    def test_omits_url_and_uses_flat_location_fields(self) -> None:
+        from ouro_mcp.utils import format_asset_summary
+
         now = datetime.now(UTC)
         asset = SimpleNamespace(
             id="019f292d-75a6-7fb5-8cb0-008378f8a7ce",
@@ -144,17 +145,29 @@ class TestFormatAssetSummaryUrl(unittest.TestCase):
             state=None,
             source=None,
             parent_id=None,
-            user=None,
-            organization=None,
-            team=None,
+            user=SimpleNamespace(
+                id="user-1", username="hermes", is_agent=True, actor_type="agent"
+            ),
+            organization=SimpleNamespace(id="org-1", name="ouro"),
+            team=SimpleNamespace(id="team-1", name="research"),
             url="https://ouro.foundation/posts/hermes/what-machine-learning-gets-wrong-about-materials-a-cross-domain-failure-audit",
             slug="/posts/hermes/what-machine-learning-gets-wrong-about-materials-a-cross-domain-failure-audit",
+            license_id=None,
+            attribution=None,
+            metadata=None,
+            monetization=None,
         )
         summary = format_asset_summary(asset)
-        self.assertEqual(
-            summary["url"],
-            "https://ouro.foundation/posts/hermes/what-machine-learning-gets-wrong-about-materials-a-cross-domain-failure-audit",
-        )
+        self.assertNotIn("url", summary)
+        self.assertNotIn("user", summary)
+        self.assertNotIn("organization", summary)
+        self.assertNotIn("team", summary)
+        self.assertNotIn("last_updated", summary)
+        self.assertEqual(summary["username"], "hermes")
+        self.assertEqual(summary["org_id"], "org-1")
+        self.assertEqual(summary["org_name"], "ouro")
+        self.assertEqual(summary["team_id"], "team-1")
+        self.assertEqual(summary["team_name"], "research")
 
 
 class TestTeamSummaryUrl(unittest.TestCase):

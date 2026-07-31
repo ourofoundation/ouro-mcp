@@ -71,6 +71,17 @@ Content is organized into **organizations** and **teams**:
 Omitting org_id/team_id defaults to the user's global organization and "All" team,
 which is a low-visibility catch-all. Always prefer a specific team when possible.
 
+**Tool response formats**:
+- List/search tools (search_assets, get_organizations, get_teams list mode,
+  get_team_feed, search_users, get_compatible_routes, list_*, get_notifications,
+  get_comments, get_transactions, ...) return **compact markdown**: a header with
+  counts/pagination, then one bullet per item. IDs are backtick-wrapped after
+  ``id:`` — copy them verbatim into follow-up calls like get_asset / execute_route.
+  When the header says more are available, page with ``offset`` (or ``before``
+  for list_messages).
+- Single-entity tools (get_asset, create_*/update_*, get_action, query_dataset,
+  get_balance, errors, ...) still return **JSON**.
+
 **Private assets** are invisible to other users until you grant access with
 `share_asset(id, user_id, role="read")`. Mentions, links, and embeds do not
 grant access.
@@ -171,7 +182,9 @@ These values are always resolved (never null) in get_teams/get_team responses:
   the route's input asset names. Do not build file/dataset/post body objects by hand;
   Ouro resolves asset IDs into the service-facing request body.
 - Use execute_route(..., dry_run=true) to validate parameters without running the route.
-- execute_route returns an action_id and embed_markdown; use get_action(action_id) to inspect status/output.
+- execute_route returns an action_id and embed_markdown; use get_action(action_id)
+  to inspect status/output assets. Pass include_response=true only when you need
+  the full action response body (same flag on list_asset_actions / list_route_actions).
 - Use list_route_actions(route_id=...) to find previous executions and get ready-to-use action embeds.
 - Use list_asset_actions(asset_id=...) to find actions that produced an asset (`created_by`)
   or used it as input (`as_input`) — prefer this over scraping posts for action IDs.

@@ -10,7 +10,9 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
     dump_json,
-    list_response,
+    markdown_bullet,
+    markdown_id,
+    render_markdown_list,
     truncate_response,
 )
 from pydantic import Field
@@ -93,8 +95,33 @@ def _list_conversations(
     pagination = page.get("pagination")
 
     results = [_conversation_summary(conversation) for conversation in conversations]
+
+    def _conversation_line(row: dict) -> str:
+        parts = [markdown_id(row.get("id"))]
+        if row.get("org_id"):
+            parts.append(f"org_id: `{row['org_id']}`")
+        if row.get("team_id"):
+            parts.append(f"team_id: `{row['team_id']}`")
+        member_ids = row.get("member_user_ids") or []
+        if member_ids:
+            parts.append(f"members: {len(member_ids)}")
+        if row.get("last_updated"):
+            parts.append(str(row["last_updated"]))
+        return markdown_bullet(
+            str(row.get("name") or "(unnamed conversation)"),
+            *parts,
+            body=row.get("summary"),
+        )
+
     return truncate_response(
-        dump_json(list_response(results, pagination=pagination, limit=limit))
+        render_markdown_list(
+            results,
+            line_fn=_conversation_line,
+            pagination=pagination,
+            offset=offset,
+            noun="conversations",
+            empty_text="No conversations.",
+        )
     )
 
 
@@ -266,6 +293,31 @@ def register(mcp: FastMCP) -> None:
         pagination = page.get("pagination")
 
         results = [_message_summary(message) for message in messages]
+
+        def _message_line(row: dict) -> str:
+            parts = [
+                markdown_id(row.get("id")),
+                f"user_id: `{row['user_id']}`" if row.get("user_id") else None,
+            ]
+            if row.get("type") and row.get("type") != "message":
+                parts.append(f"type: {row['type']}")
+            if row.get("created_at"):
+                parts.append(str(row["created_at"]))
+            text = row.get("text") or ""
+            primary = text[:80] + ("…" if len(text) > 80 else "") if text else "(empty)"
+            body = text if len(text) > 80 else None
+            return markdown_bullet(primary, *parts, body=body)
+
         return truncate_response(
-            dump_json(list_response(results, pagination=pagination, limit=limit))
+            render_markdown_list(
+                results,
+                line_fn=_message_line,
+                pagination=pagination,
+                noun="messages",
+                empty_text="No messages.",
+                extras=[
+                    f"conversation_id: `{conversation_id}`",
+                    "Newest first. Page with before=<oldest created_at>.",
+                ],
+            )
         )

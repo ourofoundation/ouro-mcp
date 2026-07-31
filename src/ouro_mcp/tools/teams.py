@@ -8,14 +8,16 @@ from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
-    asset_web_url,
     content_from_markdown,
     dump_json,
-    list_response,
+    format_search_hit,
+    markdown_bullet,
+    markdown_id,
+    render_markdown_list,
     resolve_team_policy,
+    search_hit_line,
     team_web_url,
     truncate_response,
-    user_summary,
 )
 
 
@@ -172,7 +174,33 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        return dump_json(list_response(results))
+        def _team_line(row: dict[str, Any]) -> str:
+            parts = [
+                markdown_id(row.get("id")),
+                f"org_id: `{row['org_id']}`" if row.get("org_id") else None,
+            ]
+            if row.get("organization_name"):
+                parts.append(f"org: {row['organization_name']}")
+            if row.get("visibility"):
+                parts.append(str(row["visibility"]))
+            if row.get("role"):
+                parts.append(f"role: {row['role']}")
+            if row.get("agent_can_create") is False:
+                parts.append("agent_can_create: false")
+            if row.get("member_count") is not None:
+                parts.append(f"members: {row['member_count']}")
+            return markdown_bullet(
+                str(row.get("name") or "(unnamed)"),
+                *parts,
+                body=row.get("description"),
+            )
+
+        return render_markdown_list(
+            results,
+            line_fn=_team_line,
+            noun="teams",
+            empty_text="No teams found.",
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -184,10 +212,15 @@ def register(mcp: FastMCP) -> None:
         limit: Annotated[int, Field(description="Max results to return")] = 20,
         asset_type: Annotated[Optional[str], Field(description='"post" | "dataset" | "file" | "service"')] = None,
     ) -> str:
-        """Browse a team's activity feed or unread items. Use get_asset() to inspect any result in detail."""
+        """Browse a team's activity feed or unread items.
+
+        Returns the same compact markdown discovery rows as ``search_assets``
+        (id, name, asset_type, description, username, created_at). Use
+        ``get_asset`` for full detail on any result.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        extra: dict[str, Any] = {}
+        extras: list[str] = [f"team_id: `{id}`"]
         if unread_only:
             page_limit = max(1, min(limit, 50))
             raw = ouro.teams.unread_preview(
@@ -195,7 +228,7 @@ def register(mcp: FastMCP) -> None:
             )
             items = raw.get("results", [])
             pagination = raw.get("pagination", {})
-            extra["unread_count"] = int(raw.get("unread_count", 0) or 0)
+            extras.append(f"unread_count: {int(raw.get('unread_count', 0) or 0)}")
         else:
             raw = ouro.teams.activity(
                 id, offset=offset, limit=limit, asset_type=asset_type,
@@ -203,33 +236,19 @@ def register(mcp: FastMCP) -> None:
             items = raw.get("data", [])
             pagination = raw.get("pagination", {})
 
-        results = []
-        for item in items:
-            entry: dict[str, Any] = {
-                "id": str(item.get("id", "")),
-                "name": item.get("name"),
-                "asset_type": item.get("asset_type"),
-                "visibility": item.get("visibility"),
-                "created_at": item.get("created_at"),
-            }
-            user = user_summary(item)
-            if user:
-                entry["user"] = user
-            url = asset_web_url(item)
-            if url:
-                entry["url"] = url
-            desc = item.get("description")
-            if desc and isinstance(desc, dict):
-                entry["description"] = desc.get("text", "")[:200]
-            results.append(entry)
+        results = [format_search_hit(item) for item in items]
 
-        payload = list_response(
-            results,
-            pagination=pagination,
-            limit=limit,
-            extra=extra,
+        return truncate_response(
+            render_markdown_list(
+                results,
+                line_fn=search_hit_line,
+                pagination=pagination,
+                offset=offset,
+                noun="feed items",
+                empty_text="No feed items.",
+                extras=extras,
+            )
         )
-        return truncate_response(dump_json(payload))
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors

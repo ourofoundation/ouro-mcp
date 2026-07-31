@@ -11,6 +11,8 @@ from ouro_mcp.utils import (
     content_from_markdown,
     dump_json,
     format_asset_summary,
+    markdown_bullet,
+    markdown_id,
     truncate_response,
 )
 from pydantic import Field
@@ -67,11 +69,49 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        response_data = {"results": results}
-        if parent_context:
-            response_data["parent"] = parent_context
+        def _comment_line(row: dict) -> str:
+            author = row.get("author") or "unknown"
+            parts = [
+                markdown_id(row.get("id")),
+                row.get("created_at"),
+            ]
+            if row.get("reply_count"):
+                parts.append(f"replies: {row['reply_count']}")
+            return markdown_bullet(
+                f"@{author}",
+                *parts,
+                body=row.get("text"),
+            )
 
-        return truncate_response(dump_json(response_data))
+        parts: list[str] = [f"Comments on parent_id: `{parent_id}`"]
+        if parent_context:
+            parent_parts = [markdown_id(parent_context.get("id"))]
+            if parent_context.get("name") and parent_context.get("username"):
+                parent_parts.insert(0, parent_context["name"])
+            primary = (
+                f"@{parent_context['username']}"
+                if parent_context.get("username")
+                else (parent_context.get("name") or "parent")
+            )
+            parts.append("## Parent")
+            parts.append(
+                markdown_bullet(
+                    str(primary),
+                    *parent_parts,
+                    kind=parent_context.get("asset_type"),
+                    body=parent_context.get("text"),
+                )
+            )
+            parts.append("## Comments")
+
+        if not results:
+            parts.append("No comments.")
+        else:
+            parts.append(f"Found {len(results)} comments")
+            for row in results:
+                parts.append(_comment_line(row))
+
+        return truncate_response("\n".join(parts))
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors

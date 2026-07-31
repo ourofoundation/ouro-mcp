@@ -12,7 +12,10 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
     format_asset_summary,
+    markdown_bullet,
+    markdown_id,
     optional_kwargs,
+    render_markdown_list,
     resolve_local_path,
     slim_connection_graph,
     slim_dataset_schema,
@@ -764,7 +767,31 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
         views = ouro.datasets.list_views(dataset_id)
-        return dump_json({"dataset_id": dataset_id, "views": views})
+
+        def _view_line(view: Any) -> str:
+            if isinstance(view, dict):
+                row = view
+            elif hasattr(view, "model_dump"):
+                row = view.model_dump(mode="json")
+            else:
+                row = {
+                    "id": getattr(view, "id", None),
+                    "name": getattr(view, "name", None),
+                    "description": getattr(view, "description", None),
+                }
+            return markdown_bullet(
+                str(row.get("name") or "(unnamed view)"),
+                markdown_id(row.get("id")),
+                body=row.get("description"),
+            )
+
+        return render_markdown_list(
+            list(views or []),
+            line_fn=_view_line,
+            noun="dataset views",
+            empty_text="No dataset views.",
+            extras=[f"dataset_id: `{dataset_id}`"],
+        )
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors

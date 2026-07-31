@@ -8,7 +8,13 @@ from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, list_response, truncate_response
+from ouro_mcp.utils import (
+    dump_json,
+    markdown_bullet,
+    markdown_id,
+    render_markdown_list,
+    truncate_response,
+)
 
 
 def register(mcp: FastMCP) -> None:
@@ -72,13 +78,36 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
-        return truncate_response(
-            dump_json(
-                list_response(
-                    results,
-                    pagination=response.get("pagination") or {},
-                    limit=limit,
+        def _notification_line(row: dict) -> str:
+            parts = [
+                markdown_id(row.get("id")),
+                "unread" if row.get("viewed") is False else None,
+                f"from @{row['from']}" if row.get("from") else None,
+                row.get("created_at"),
+            ]
+            asset = row.get("asset") if isinstance(row.get("asset"), dict) else None
+            body_bits = []
+            if row.get("text"):
+                body_bits.append(str(row["text"]))
+            if asset:
+                body_bits.append(
+                    f"asset: {asset.get('name')} ({asset.get('asset_type')}) "
+                    f"id: `{asset.get('id')}`"
                 )
+            return markdown_bullet(
+                str(row.get("type") or "notification"),
+                *parts,
+                body=" · ".join(body_bits) if body_bits else None,
+            )
+
+        return truncate_response(
+            render_markdown_list(
+                results,
+                line_fn=_notification_line,
+                pagination=response.get("pagination") or {},
+                offset=offset,
+                noun="notifications",
+                empty_text="No notifications.",
             )
         )
 
