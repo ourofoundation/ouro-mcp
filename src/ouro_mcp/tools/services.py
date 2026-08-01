@@ -120,19 +120,15 @@ def _action_error_context(response: Any) -> dict[str, Any]:
     retryable = error.get("retryable")
     if retryable is None and status is not None:
         retryable = status in {408, 429, 500, 502, 503, 504}
-    service_url = error.get("serviceUrl")
     error_type = error.get("type")
-    is_external = (
-        error_type == "external_service_error"
-        or service_url is not None
-        or (isinstance(code, str) and code.startswith("external_service"))
+    is_external = error_type == "external_service_error" or (
+        isinstance(code, str) and code.startswith("external_service")
     )
     result: dict[str, Any] = {
         "error_type": "external_service_error" if is_external else "route_execution_failed",
         "retryable": retryable,
         "status_code": status,
         "code": code,
-        "service_url": service_url,
     }
     return {k: v for k, v in result.items() if v is not None}
 

@@ -63,12 +63,10 @@ def test_external_service_error_is_actionable() -> None:
                 "code": "external_service_error",
                 "message": "Service unavailable",
                 "status": 503,
-                "serviceUrl": "https://service.example.test",
                 "retryable": True,
             },
         },
         status_code=503,
-        service_url="https://service.example.test",
         retryable=True,
         code="external_service_error",
     )
@@ -78,5 +76,4 @@ def test_external_service_error_is_actionable() -> None:
     assert payload["error"] == "external_service_error"
     assert payload["status"] == 503
     assert payload["retryable"] is True
-    assert payload["service_url"] == "https://service.example.test"
     assert payload["action_id"] == "00000000-0000-0000-0000-000000000001"

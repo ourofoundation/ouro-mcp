@@ -298,7 +298,6 @@ class TestFormatActionResultIncludeResponse(unittest.TestCase):
                         "code": "external_service_timeout",
                         "retryable": True,
                         "statusCode": 504,
-                        "serviceUrl": "https://svc.example",
                     }
                 },
             ),

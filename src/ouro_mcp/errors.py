@@ -33,7 +33,6 @@ try:
 except ImportError:  # ouro-py < external service typed errors
     class ExternalServiceError(RouteExecutionError):  # type: ignore[no-redef]
         status_code: int | None = None
-        service_url: str | None = None
         code: str | None = None
 
 try:
@@ -188,7 +187,6 @@ def _format_ouro_error(e: Exception) -> str:
         payload["action_id"] = e.action_id
         payload["action_status"] = e.status
         payload["response"] = e.response
-        payload["service_url"] = getattr(e, "service_url", None)
         payload["code"] = getattr(e, "code", None)
         if getattr(e, "retryable", None) is not None:
             payload["retryable"] = e.retryable
