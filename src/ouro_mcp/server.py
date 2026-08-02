@@ -41,14 +41,14 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[OuroContext]:
             "Get your API key from https://ouro.foundation/settings/api-keys."
         )
 
-    kwargs = {"api_key": api_key}
+    kwargs = {"api_key": api_key, "client": f"ouro-mcp/{__version__}"}
     if os.environ.get(ENV_OURO_BASE_URL):
         kwargs["base_url"] = os.environ[ENV_OURO_BASE_URL].strip()
 
     ouro = Ouro(**kwargs)
-    ouro._raw_client.headers["X-Ouro-Client"] = f"ouro-mcp/{__version__}"
     log.info(f"Authenticated as {ouro.user.email}")
     log.info(f"Backend: {ouro.base_url}")
+    log.info(f"Client: {ouro._ouro_client} ({ouro._user_agent})")
     yield OuroContext(ouro=ouro)
 
 
