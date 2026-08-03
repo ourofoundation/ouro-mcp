@@ -6,6 +6,9 @@ ENV_OURO_API_KEY = "OURO_API_KEY"
 ENV_OURO_BASE_URL = "OURO_BASE_URL"
 ENV_OURO_FRONTEND_URL = "OURO_FRONTEND_URL"
 ENV_OURO_MCP_TIMEZONE = "OURO_MCP_TIMEZONE"
+# List/table tool responses: "md" (default, compact for agents) or "json".
+ENV_OURO_MCP_RESPONSE_FORMAT = "OURO_MCP_RESPONSE_FORMAT"
+DEFAULT_RESPONSE_FORMAT = "md"
 ENV_WORKSPACE_ROOT = "WORKSPACE_ROOT"
 # Optional container mount path (e.g. /workspace). When set alongside
 # WORKSPACE_ROOT, absolute paths under this mount remap onto the host root.

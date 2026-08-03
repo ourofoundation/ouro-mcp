@@ -342,10 +342,22 @@ def register(mcp: FastMCP) -> None:
         and asset created_at when available. For action edges, action_id is
         included when the backend provides it so you can follow up with
         get_action or list_asset_actions.
+
+        For datasets, outgoing ``reference`` edges (row-level file/action IDs)
+        are omitted — use the dataset schema / ``query_dataset`` instead.
+        Incoming references and other connection types are still returned.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        connections = ouro.assets.connections(id)
-        connections = slim_connection_graph(connections, current_asset_id=id)
+        omit_outgoing_refs = False
+        try:
+            omit_outgoing_refs = getattr(ouro.assets.retrieve(id), "asset_type", None) == "dataset"
+        except Exception:
+            log.debug("Failed to resolve asset type for connections on %s", id, exc_info=True)
+        connections = slim_connection_graph(
+            ouro.assets.connections(id),
+            current_asset_id=id,
+            omit_outgoing_references=omit_outgoing_refs,
+        )
         if not isinstance(connections, dict):
             connections = {"connections": list(connections or [])}
 
@@ -630,8 +642,15 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
 
     try:
         connections = ouro.assets.connections(asset_id)
-        if connections:
-            result["connections"] = slim_connection_graph(connections, current_asset_id=asset_id)
+        slimmed = slim_connection_graph(
+            connections,
+            current_asset_id=asset_id,
+            # Dataset→row-ref edges duplicate IDs already in the table and
+            # routinely number in the thousands; keep only incoming refs.
+            omit_outgoing_references=result.get("asset_type") == "dataset",
+        )
+        if slimmed:
+            result["connections"] = slimmed
     except Exception:
         log.debug("Failed to fetch connections for %s", asset_id, exc_info=True)
 

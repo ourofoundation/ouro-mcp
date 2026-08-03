@@ -330,7 +330,7 @@ def test_resolve_dataset_data_rejects_multiple_sources() -> None:
         _resolve_dataset_data(data=[{"row": 1}], data_path="rows.csv")
 
 
-def test_query_dataset_returns_json_rows_with_pagination_and_nulls() -> None:
+def test_query_dataset_returns_markdown_table_with_pagination_and_nulls() -> None:
     page = {
         "data": pd.DataFrame(
             [
@@ -347,9 +347,7 @@ def test_query_dataset_returns_json_rows_with_pagination_and_nulls() -> None:
     datasets = _FakeDatasets(query_page=page)
     tools = _dataset_tools()
 
-    result = json.loads(
-        tools["query_dataset"]("dataset-1", _ctx(datasets), limit=1, offset=2)
-    )
+    result = tools["query_dataset"]("dataset-1", _ctx(datasets), limit=1, offset=2)
 
     assert datasets.query_calls == [
         {
@@ -359,18 +357,35 @@ def test_query_dataset_returns_json_rows_with_pagination_and_nulls() -> None:
             "with_pagination": True,
         }
     ]
+    assert result.startswith(
+        "Found 1 rows (offset=2; limit=1; more available — call again with offset=3)"
+    )
+    assert "| name | value | missing | seen_at |" in result
+    assert "| alpha | 1.5 |  | 2026-05-02T12:00:00+00:00 |" in result
+
+
+def test_query_dataset_response_format_json() -> None:
+    page = {
+        "data": pd.DataFrame([{"name": "alpha", "value": 1}]),
+        "pagination": {"hasMore": False},
+    }
+    datasets = _FakeDatasets(query_page=page)
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["query_dataset"](
+            "dataset-1",
+            _ctx(datasets),
+            limit=10,
+            response_format="json",
+        )
+    )
+
     assert result == {
-        "rows": [
-            {
-                "name": "alpha",
-                "value": 1.5,
-                "missing": None,
-                "seen_at": "2026-05-02T12:00:00+00:00",
-            }
-        ],
-        "offset": 2,
-        "limit": 1,
-        "hasMore": True,
+        "rows": [{"name": "alpha", "value": 1}],
+        "offset": 0,
+        "limit": 10,
+        "hasMore": False,
     }
 
 
@@ -400,12 +415,10 @@ def test_query_dataset_runs_optional_sql_query() -> None:
     )
     tools = _dataset_tools()
 
-    result = json.loads(
-        tools["query_dataset"](
-            "dataset-1",
-            _ctx(datasets),
-            sql="SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
-        )
+    result = tools["query_dataset"](
+        "dataset-1",
+        _ctx(datasets),
+        sql="SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
     )
 
     assert "query_dataset_sql" not in tools
@@ -415,15 +428,28 @@ def test_query_dataset_runs_optional_sql_query() -> None:
             "sql": "SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
         }
     ]
+    assert result.startswith("Found 1 rows")
+    assert "| category | count | missing | seen_at |" in result
+    assert "| alpha | 2 |  | 2026-05-02T12:00:00+00:00 |" in result
+
+
+def test_query_dataset_sql_response_format_json() -> None:
+    datasets = _FakeDatasets(
+        query_page=pd.DataFrame([{"category": "alpha", "count": 2}])
+    )
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["query_dataset"](
+            "dataset-1",
+            _ctx(datasets),
+            sql="SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
+            response_format="json",
+        )
+    )
+
     assert result == {
-        "rows": [
-            {
-                "category": "alpha",
-                "count": 2,
-                "missing": None,
-                "seen_at": "2026-05-02T12:00:00+00:00",
-            }
-        ],
+        "rows": [{"category": "alpha", "count": 2}],
         "row_count": 1,
     }
 
@@ -484,7 +510,8 @@ def test_create_dataset_forwards_refs() -> None:
         }
     ]
     assert result["resolved_refs_preview"] == sidecar
-    assert result["connections"]["reference"][0]["id"] == "file-1"
+    # Outgoing dataset→file reference edges are omitted; schema/refs cover them.
+    assert "connections" not in result
 
 
 def test_create_dataset_forwards_action_refs() -> None:
@@ -695,14 +722,27 @@ def test_query_dataset_resolve_refs_passes_flag_and_returns_sidecar() -> None:
     datasets = _FakeDatasets(query_page=page)
     tools = _dataset_tools()
 
-    result = json.loads(
-        tools["query_dataset"](
-            "dataset-1", _ctx(datasets), limit=10, resolve_refs=True
-        )
+    result = tools["query_dataset"](
+        "dataset-1", _ctx(datasets), limit=10, resolve_refs=True
     )
 
     assert datasets.query_calls[0]["resolve_refs"] is True
-    assert result["resolved_refs"] == sidecar
+    assert "| file_id |" in result
+    assert "## resolved_refs" in result
+    assert "### file_id" in result
+    assert "**sample.cif** (file)" in result
+    assert "id: `019df875-7957-7888-888f-f8140ff62564`" in result
+
+    as_json = json.loads(
+        tools["query_dataset"](
+            "dataset-1",
+            _ctx(datasets),
+            limit=10,
+            resolve_refs=True,
+            response_format="json",
+        )
+    )
+    assert as_json["resolved_refs"] == sidecar
 
 
 def test_query_dataset_resolve_refs_rejected_with_sql() -> None:
@@ -916,4 +956,5 @@ def test_update_dataset_refs_includes_verification() -> None:
     ]
     assert result["refs"] == {"file_id": {"kind": "asset", "asset_type": "file"}}
     assert result["resolved_refs_preview"] == sidecar
-    assert result["connections"]["reference"][0]["id"] == "file-1"
+    # Outgoing dataset→file reference edges are omitted; schema/refs cover them.
+    assert "connections" not in result

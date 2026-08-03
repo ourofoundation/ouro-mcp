@@ -148,6 +148,7 @@ Paths outside that directory will be rejected.
 | `OURO_BASE_URL` | `https://api.ouro.foundation` | Ouro API base URL |
 | `OURO_FRONTEND_URL` | `https://ouro.foundation` | Base URL for links returned to clients |
 | `OURO_MCP_TIMEZONE` | unset | IANA timezone used to localize timestamps |
+| `OURO_MCP_RESPONSE_FORMAT` | `md` | List/table tool output: `md` (compact) or `json` |
 | `WORKSPACE_ROOT` | unset | Restricts local file access to one directory |
 | `OURO_MCP_LOG_LEVEL` | `INFO` | Server log level |
 

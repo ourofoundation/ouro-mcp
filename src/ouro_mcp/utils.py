@@ -12,7 +12,9 @@ from zoneinfo import ZoneInfo
 
 from ouro_mcp.constants import (
     DEFAULT_OURO_FRONTEND_URL,
+    DEFAULT_RESPONSE_FORMAT,
     ENV_OURO_FRONTEND_URL,
+    ENV_OURO_MCP_RESPONSE_FORMAT,
     ENV_OURO_MCP_TIMEZONE,
     ENV_WORKSPACE_MOUNT,
     ENV_WORKSPACE_ROOT,
@@ -117,7 +119,12 @@ def slim_asset_tags(tags: Any) -> list[dict[str, Any]] | None:
     return slimmed or None
 
 
-def slim_connection_graph(connections: Any, current_asset_id: str | None = None) -> Any:
+def slim_connection_graph(
+    connections: Any,
+    current_asset_id: str | None = None,
+    *,
+    omit_outgoing_references: bool = False,
+) -> Any:
     """Shrink connection payloads from the Ouro API for MCP tool responses.
 
     Each edge may include full ``source`` and ``target`` asset records
@@ -129,6 +136,11 @@ def slim_connection_graph(connections: Any, current_asset_id: str | None = None)
     when available, is the connected asset's timestamp, not the edge
     timestamp. For ``type == "action"`` edges, ``action_id`` is preserved
     when present so agents can follow up with ``get_action``.
+
+    When ``omit_outgoing_references`` is true (datasets), skip ``reference``
+    edges where the current asset is the source. Those edges duplicate IDs
+    already stored in dataset ref columns and routinely number in the
+    thousands. Incoming references (who points at this asset) are kept.
     """
     if not isinstance(connections, list):
         return connections
@@ -184,7 +196,11 @@ def slim_connection_graph(connections: Any, current_asset_id: str | None = None)
         source_id = str(source["id"]) if source and source.get("id") is not None else None
         target_id = str(target["id"]) if target and target.get("id") is not None else None
 
-        if current_id and source_id == current_id:
+        is_outgoing = bool(current_id and source_id == current_id)
+        if omit_outgoing_references and connection_type == "reference" and is_outgoing:
+            continue
+
+        if is_outgoing:
             row = dict(target or {})
         else:
             row = dict(source or {})
@@ -201,13 +217,34 @@ def slim_connection_graph(connections: Any, current_asset_id: str | None = None)
 
 _TRUNCATION_FOOTER = "\n… [truncated — call with smaller limit/offset]"
 _PARALLEL_HEADER_PREFIX = "=== "
+_MD_TABLE_SEP_RE = re.compile(r"^\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
+
+
+def resolve_response_format(override: str | None = None) -> str:
+    """Return ``md`` or ``json`` for list/table tool responses.
+
+    Precedence: explicit ``override`` → ``OURO_MCP_RESPONSE_FORMAT`` →
+    ``md`` (agent-friendly default).
+    """
+    raw = (override if override is not None else os.environ.get(ENV_OURO_MCP_RESPONSE_FORMAT, ""))
+    value = str(raw or "").strip().lower()
+    if value in {"md", "markdown"}:
+        return "md"
+    if value in {"json", "application/json"}:
+        return "json"
+    if override is not None and value:
+        raise ValueError(
+            f"Invalid response_format={override!r}. Use 'md' or 'json'."
+        )
+    return DEFAULT_RESPONSE_FORMAT
 
 
 def truncate_response(data: str, context: str = "") -> str:
     """If a response exceeds the size threshold, truncate and flag it.
 
-    JSON payloads with a ``rows`` list shrink by dropping rows. Markdown /
-    other text is truncated at a line boundary under ``MAX_RESPONSE_SIZE``.
+    JSON payloads with a ``rows`` list shrink by dropping rows. Markdown
+    tables drop data rows from the end. Other text is truncated at a line
+    boundary under ``MAX_RESPONSE_SIZE``.
     """
     if len(data) <= MAX_RESPONSE_SIZE:
         return data
@@ -224,6 +261,12 @@ def truncate_response(data: str, context: str = "") -> str:
     except (json.JSONDecodeError, TypeError):
         pass
 
+    trimmed = _truncate_markdown_table(data)
+    if trimmed is not None and len(trimmed) <= MAX_RESPONSE_SIZE:
+        return trimmed
+    if trimmed is not None:
+        data = trimmed
+
     # Prefer a clean line cut for markdown / plain-text responses so agents
     # don't get a half-rendered bullet.
     budget = MAX_RESPONSE_SIZE - len(_TRUNCATION_FOOTER)
@@ -234,6 +277,34 @@ def truncate_response(data: str, context: str = "") -> str:
     if last_nl > budget // 2:
         cut = cut[:last_nl]
     return cut + _TRUNCATION_FOOTER
+
+
+def _truncate_markdown_table(data: str) -> str | None:
+    """Drop trailing markdown table data rows until under the size budget."""
+    lines = data.splitlines()
+    sep_idx = next(
+        (i for i, line in enumerate(lines) if _MD_TABLE_SEP_RE.match(line)),
+        None,
+    )
+    if sep_idx is None or sep_idx == 0:
+        return None
+
+    # Keep header + separator; drop from the last data row of the first table.
+    # Stop at a blank line or non-table line after the table body.
+    end = sep_idx + 1
+    while end < len(lines) and lines[end].lstrip().startswith("|"):
+        end += 1
+    if end <= sep_idx + 1:
+        return None
+
+    prefix = lines[: sep_idx + 1]
+    body = lines[sep_idx + 1 : end]
+    suffix = lines[end:]
+    while body and len("\n".join(prefix + body + suffix)) + len(_TRUNCATION_FOOTER) > MAX_RESPONSE_SIZE:
+        body.pop()
+    if len(body) == end - (sep_idx + 1):
+        return None
+    return "\n".join(prefix + body + suffix) + _TRUNCATION_FOOTER
 
 
 def _configured_timezone_name() -> str | None:
@@ -498,6 +569,15 @@ def search_hit_line(hit: dict[str, Any]) -> str:
     )
 
 
+def _jsonable_list_item(item: Any) -> Any:
+    if hasattr(item, "model_dump"):
+        try:
+            return item.model_dump(mode="json")
+        except TypeError:
+            return item.model_dump()
+    return item
+
+
 def format_markdown_list_header(
     *,
     shown: int,
@@ -542,22 +622,42 @@ def render_markdown_list(
     total: int | None = None,
     has_more: bool | None = None,
     offset: int | None = None,
+    limit: int | None = None,
     noun: str = "results",
     empty_text: str = "No results.",
     extras: list[str] | None = None,
+    extra: dict | None = None,
     pagination: dict | None = None,
+    response_format: str | None = None,
 ) -> str:
-    """Render a list of rows as compact markdown for agent consumption.
+    """Render a list of rows as compact markdown (or JSON) for agents.
 
     ``line_fn`` maps each item to a markdown bullet string (typically via
     :func:`markdown_bullet` or :func:`search_hit_line`). Pagination metadata
     mirrors :func:`resolve_list_pagination`.
+
+    Format is controlled by ``response_format`` or ``OURO_MCP_RESPONSE_FORMAT``
+    (``md`` default, or ``json``). JSON uses the :func:`list_response` envelope
+    and dumps ``items`` (via ``model_dump`` when available). Pass ``extra`` for
+    JSON-only sidecar fields (markdown ``extras`` stay display-only).
     """
     resolved_total, resolved_has_more, _cursor = resolve_list_pagination(
         pagination,
         total=total,
         has_more=has_more,
     )
+
+    if resolve_response_format(response_format) == "json":
+        return dump_json(
+            list_response(
+                [_jsonable_list_item(item) for item in items],
+                pagination=pagination,
+                limit=limit,
+                total=resolved_total,
+                has_more=resolved_has_more,
+                extra=extra,
+            )
+        )
 
     lines = [line for line in (line_fn(item) for item in items) if line]
 
@@ -574,6 +674,140 @@ def render_markdown_list(
         return header
 
     result = f"{header}\n\n" + "\n".join(lines)
+    _assert_no_parallel_header(result)
+    return result
+
+
+def _escape_md_table_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\n", " ").replace("|", "\\|")
+    return collapse_whitespace(text)
+
+
+def table_columns(rows: list[dict[str, Any]]) -> list[str]:
+    """Stable column order: first-seen key across rows."""
+    seen: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for key in row:
+            if key not in seen:
+                seen.append(key)
+    return seen
+
+
+def render_markdown_table(
+    rows: list[dict[str, Any]],
+    *,
+    columns: list[str] | None = None,
+) -> str:
+    """Render row dicts as a GitHub-flavored markdown table."""
+    cols = list(columns) if columns is not None else table_columns(rows)
+    if not cols:
+        return ""
+
+    header = "| " + " | ".join(_escape_md_table_cell(c) for c in cols) + " |"
+    separator = "| " + " | ".join("---" for _ in cols) + " |"
+    body = [
+        "| "
+        + " | ".join(_escape_md_table_cell(row.get(c) if isinstance(row, dict) else None) for c in cols)
+        + " |"
+        for row in rows
+    ]
+    result = "\n".join([header, separator, *body])
+    _assert_no_parallel_header(result)
+    return result
+
+
+def _render_resolved_refs_md(resolved_refs: dict[str, Any]) -> str:
+    """Compact markdown for the query_dataset ``resolved_refs`` sidecar."""
+    parts: list[str] = ["## resolved_refs"]
+    for column, id_map in resolved_refs.items():
+        parts.append(f"### {column}")
+        if not isinstance(id_map, dict) or not id_map:
+            parts.append("- (none)")
+            continue
+        for ref_id, info in id_map.items():
+            if not isinstance(info, dict):
+                parts.append(markdown_bullet(str(ref_id), str(info)))
+                continue
+            name = info.get("name") or ref_id
+            kind = info.get("asset_type") or info.get("kind")
+            parts.append(
+                markdown_bullet(
+                    str(name),
+                    markdown_id(info.get("id") or ref_id),
+                    info.get("web_url"),
+                    kind=str(kind) if kind else None,
+                )
+            )
+    result = "\n".join(parts)
+    _assert_no_parallel_header(result)
+    return result
+
+
+def format_table_response(
+    rows: list[dict[str, Any]],
+    *,
+    offset: int | None = None,
+    limit: int | None = None,
+    has_more: bool | None = None,
+    row_count: int | None = None,
+    resolved_refs: dict[str, Any] | None = None,
+    empty_text: str = "No rows.",
+    response_format: str | None = None,
+) -> str:
+    """Render dataset query rows as a markdown table or JSON envelope.
+
+    Markdown is typically much smaller than JSON for wide tables (no
+    repeated keys per row). Set ``OURO_MCP_RESPONSE_FORMAT=json`` or pass
+    ``response_format=\"json\"`` for the legacy JSON shape.
+    """
+    fmt = resolve_response_format(response_format)
+    shown = len(rows)
+    payload: dict[str, Any] = {"rows": rows}
+    if row_count is not None:
+        payload["row_count"] = row_count
+    if offset is not None:
+        payload["offset"] = offset
+    if limit is not None:
+        payload["limit"] = limit
+    if has_more is not None:
+        payload["hasMore"] = bool(has_more)
+    if resolved_refs is not None:
+        payload["resolved_refs"] = resolved_refs
+
+    if fmt == "json":
+        return dump_json(payload)
+
+    if shown == 0 and not has_more:
+        header = empty_text
+    elif row_count is not None and offset is None:
+        header = f"Found {row_count} rows"
+    else:
+        header = f"Found {shown} rows"
+        bits: list[str] = []
+        if offset is not None:
+            bits.append(f"offset={offset}")
+        if limit is not None:
+            bits.append(f"limit={limit}")
+        if has_more:
+            next_offset = (offset or 0) + shown
+            bits.append(f"more available — call again with offset={next_offset}")
+        if bits:
+            header += f" ({'; '.join(bits)})"
+
+    parts = [header]
+    if rows:
+        parts.append("")
+        parts.append(render_markdown_table(rows))
+    if resolved_refs:
+        parts.append("")
+        parts.append(_render_resolved_refs_md(resolved_refs))
+
+    result = "\n".join(parts)
     _assert_no_parallel_header(result)
     return result
 

@@ -122,6 +122,66 @@ class TestSlimConnectionGraph(unittest.TestCase):
     def test_malformed_edge_preserved(self) -> None:
         self.assertEqual(slim_connection_graph(["keep"]), {"unknown": [{"value": "keep"}]})
 
+    def test_omit_outgoing_references_keeps_incoming(self) -> None:
+        conns = [
+            {
+                "id": "out",
+                "type": "reference",
+                "source_id": "dataset",
+                "target_id": "cif",
+                "source": {"id": "dataset", "name": "DS", "asset_type": "dataset"},
+                "target": {"id": "cif", "name": "CIF", "asset_type": "file"},
+            },
+            {
+                "id": "in",
+                "type": "reference",
+                "source_id": "other",
+                "target_id": "dataset",
+                "source": {"id": "other", "name": "Shortlist", "asset_type": "dataset"},
+                "target": {"id": "dataset", "name": "DS", "asset_type": "dataset"},
+            },
+            {
+                "id": "link",
+                "type": "link",
+                "source_id": "dataset",
+                "target_id": "post",
+                "source": {"id": "dataset", "name": "DS", "asset_type": "dataset"},
+                "target": {"id": "post", "name": "Writeup", "asset_type": "post"},
+            },
+        ]
+        out = slim_connection_graph(
+            conns,
+            current_asset_id="dataset",
+            omit_outgoing_references=True,
+        )
+        self.assertEqual(set(out), {"reference", "link"})
+        self.assertEqual(
+            out["reference"],
+            [{"id": "other", "name": "Shortlist", "asset_type": "dataset"}],
+        )
+        self.assertEqual(
+            out["link"],
+            [{"id": "post", "name": "Writeup", "asset_type": "post"}],
+        )
+
+    def test_omit_outgoing_references_can_empty_graph(self) -> None:
+        conns = [
+            {
+                "id": "out",
+                "type": "reference",
+                "source_id": "dataset",
+                "target_id": "cif",
+                "source": {"id": "dataset", "asset_type": "dataset"},
+                "target": {"id": "cif", "asset_type": "file"},
+            }
+        ]
+        out = slim_connection_graph(
+            conns,
+            current_asset_id="dataset",
+            omit_outgoing_references=True,
+        )
+        self.assertEqual(out, {})
+
 
 if __name__ == "__main__":
     unittest.main()

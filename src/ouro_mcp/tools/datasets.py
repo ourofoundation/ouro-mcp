@@ -12,6 +12,7 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
     format_asset_summary,
+    format_table_response,
     markdown_bullet,
     markdown_id,
     optional_kwargs,
@@ -373,6 +374,8 @@ def _dataset_proof(
             connections = slim_connection_graph(
                 ouro.assets.connections(dataset_id),
                 current_asset_id=dataset_id,
+                # Outgoing dataset refs duplicate column IDs; keep incoming.
+                omit_outgoing_references=True,
             )
             if connections:
                 proof["connections"] = connections
@@ -416,8 +419,17 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = False,
+        response_format: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    'Output format: "md" (default markdown table) or "json". '
+                    "Overrides OURO_MCP_RESPONSE_FORMAT when set."
+                )
+            ),
+        ] = None,
     ) -> str:
-        """Query a dataset's contents as JSON records.
+        """Query a dataset's contents as a compact markdown table (or JSON).
 
         By default this pages server-side so large datasets don't load fully
         into memory. Pass ``sql`` to run a read-only PostgreSQL query, mirroring
@@ -429,6 +441,10 @@ def register(mcp: FastMCP) -> None:
         ``semantic_type: "reference"`` hold Ouro object ids (``ref_kind`` is
         "asset" or "action"). Pass ``resolve_refs=true`` when you need their
         names, types, or URLs.
+
+        Default response is a markdown table (much smaller than JSON for wide
+        tables). Set ``response_format="json"`` or ``OURO_MCP_RESPONSE_FORMAT=json``
+        for the legacy ``{rows, offset, limit, hasMore}`` envelope.
         """
         if sql is not None:
             if not sql.strip():
@@ -447,7 +463,11 @@ def register(mcp: FastMCP) -> None:
             ouro = ctx.request_context.lifespan_context.ouro
             df = ouro.datasets.query(dataset_id, sql=sql)
             rows = _json_records_from_dataframe(df)
-            result = dump_json({"rows": rows, "row_count": len(rows)})
+            result = format_table_response(
+                rows,
+                row_count=len(rows),
+                response_format=response_format,
+            )
             return truncate_response(
                 result,
                 context=(
@@ -475,16 +495,14 @@ def register(mcp: FastMCP) -> None:
 
         rows = _json_records_from_dataframe(df)
 
-        payload: dict[str, Any] = {
-            "rows": rows,
-            "offset": offset,
-            "limit": limit,
-            "hasMore": bool(pagination.get("hasMore")),
-        }
-        if resolve_refs:
-            payload["resolved_refs"] = page.get("resolved_refs") or {}
-
-        result = dump_json(payload)
+        result = format_table_response(
+            rows,
+            offset=offset,
+            limit=limit,
+            has_more=bool(pagination.get("hasMore")),
+            resolved_refs=(page.get("resolved_refs") or {}) if resolve_refs else None,
+            response_format=response_format,
+        )
 
         return truncate_response(
             result,
@@ -768,7 +786,8 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
         views = ouro.datasets.list_views(dataset_id)
 
-        def _view_line(view: Any) -> str:
+        results: list[dict[str, Any]] = []
+        for view in views or []:
             if isinstance(view, dict):
                 row = view
             elif hasattr(view, "model_dump"):
@@ -779,6 +798,15 @@ def register(mcp: FastMCP) -> None:
                     "name": getattr(view, "name", None),
                     "description": getattr(view, "description", None),
                 }
+            results.append(
+                {
+                    "id": row.get("id"),
+                    "name": row.get("name"),
+                    "description": row.get("description"),
+                }
+            )
+
+        def _view_line(row: dict[str, Any]) -> str:
             return markdown_bullet(
                 str(row.get("name") or "(unnamed view)"),
                 markdown_id(row.get("id")),
@@ -786,11 +814,12 @@ def register(mcp: FastMCP) -> None:
             )
 
         return render_markdown_list(
-            list(views or []),
+            results,
             line_fn=_view_line,
             noun="dataset views",
             empty_text="No dataset views.",
             extras=[f"dataset_id: `{dataset_id}`"],
+            extra={"dataset_id": dataset_id},
         )
 
     @mcp.tool(annotations={"idempotentHint": False})

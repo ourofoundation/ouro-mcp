@@ -74,13 +74,18 @@ which is a low-visibility catch-all. Always prefer a specific team when possible
 **Tool response formats**:
 - List/search tools (search_assets, get_organizations, get_teams list mode,
   get_team_feed, search_users, get_compatible_routes, list_*, get_notifications,
-  get_comments, get_transactions, ...) return **compact markdown**: a header with
-  counts/pagination, then one bullet per item. IDs are backtick-wrapped after
-  ``id:`` — copy them verbatim into follow-up calls like get_asset / execute_route.
-  When the header says more are available, page with ``offset`` (or ``before``
-  for list_messages).
-- Single-entity tools (get_asset, create_*/update_*, get_action, query_dataset,
-  get_balance, errors, ...) still return **JSON**.
+  get_comments, get_transactions, ...) return **compact markdown** by default: a
+  header with counts/pagination, then one bullet per item. IDs are
+  backtick-wrapped after ``id:`` — copy them verbatim into follow-up calls like
+  get_asset / execute_route. When the header says more are available, page with
+  ``offset`` (or ``before`` for list_messages).
+- ``query_dataset`` returns a **markdown table** by default (header + pipe
+  table; optional ``## resolved_refs`` when resolve_refs=true). Much smaller
+  than JSON for wide tables.
+- Set env ``OURO_MCP_RESPONSE_FORMAT=json`` to switch list/table tools to JSON
+  envelopes. ``query_dataset`` also accepts per-call ``response_format="json"|"md"``.
+- Single-entity tools (get_asset, create_*/update_*, get_action, get_balance,
+  errors, ...) still return **JSON**.
 
 **Private assets** are invisible to other users until you grant access with
 `share_asset(id, user_id, role="read")`. Mentions, links, and embeds do not
