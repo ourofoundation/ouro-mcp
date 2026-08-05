@@ -124,6 +124,7 @@ def slim_connection_graph(
     current_asset_id: str | None = None,
     *,
     omit_outgoing_references: bool = False,
+    omit_comments: bool = False,
 ) -> Any:
     """Shrink connection payloads from the Ouro API for MCP tool responses.
 
@@ -141,6 +142,11 @@ def slim_connection_graph(
     edges where the current asset is the source. Those edges duplicate IDs
     already stored in dataset ref columns and routinely number in the
     thousands. Incoming references (who points at this asset) are kept.
+
+    When ``omit_comments`` is true, skip ``type == "comment"`` edges.
+    Comment bodies already ship via the ``comments`` preview on
+    ``get_asset(detail=\"full\")`` and via ``get_comments``; keeping the
+    connection stubs just duplicates IDs without text.
     """
     if not isinstance(connections, list):
         return connections
@@ -191,6 +197,9 @@ def slim_connection_graph(
             continue
 
         connection_type = str(edge.get("type") or "unknown")
+        if omit_comments and connection_type == "comment":
+            continue
+
         source = _endpoint_from_edge(edge, "source")
         target = _endpoint_from_edge(edge, "target")
         source_id = str(source["id"]) if source and source.get("id") is not None else None

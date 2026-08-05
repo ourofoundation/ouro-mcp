@@ -182,6 +182,47 @@ class TestSlimConnectionGraph(unittest.TestCase):
         )
         self.assertEqual(out, {})
 
+    def test_omit_comments_drops_comment_edges_keeps_others(self) -> None:
+        conns = [
+            {
+                "id": "c1",
+                "type": "comment",
+                "source_id": "comment-1",
+                "target_id": "post-1",
+                "source": {"id": "comment-1", "name": "", "asset_type": "comment"},
+                "target": {"id": "post-1", "name": "Post", "asset_type": "post"},
+            },
+            {
+                "id": "l1",
+                "type": "link",
+                "source_id": "post-1",
+                "target_id": "file-1",
+                "source": {"id": "post-1", "name": "Post", "asset_type": "post"},
+                "target": {"id": "file-1", "name": "CIF", "asset_type": "file"},
+            },
+        ]
+        out = slim_connection_graph(
+            conns,
+            current_asset_id="post-1",
+            omit_comments=True,
+        )
+        self.assertEqual(set(out), {"link"})
+        self.assertEqual(
+            out["link"],
+            [{"id": "file-1", "name": "CIF", "asset_type": "file"}],
+        )
+
+    def test_omit_comments_false_keeps_comment_edges(self) -> None:
+        conns = [
+            {
+                "id": "c1",
+                "type": "comment",
+                "source": {"id": "comment-1", "asset_type": "comment"},
+            }
+        ]
+        out = slim_connection_graph(conns, omit_comments=False)
+        self.assertEqual(out["comment"][0], {"id": "comment-1", "asset_type": "comment"})
+
 
 if __name__ == "__main__":
     unittest.main()

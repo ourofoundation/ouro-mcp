@@ -376,6 +376,7 @@ def _dataset_proof(
                 current_asset_id=dataset_id,
                 # Outgoing dataset refs duplicate column IDs; keep incoming.
                 omit_outgoing_references=True,
+                omit_comments=True,
             )
             if connections:
                 proof["connections"] = connections

@@ -52,7 +52,8 @@ def register(mcp: FastMCP) -> None:
                     '"full" also includes type-specific content '
                     "(post body, dataset schema/stats, file download URL, service routes, route execution schemas), "
                     "plus a compact creation_action pointer (action_id/status/route_id), "
-                    "connections grouped by type, tags, and a bounded comments/replies preview when present. "
+                    "lineage connections (comment edges omitted — see comments preview / get_comments), "
+                    "tags, and a bounded comments/replies preview when present. "
                     "Use list_asset_actions(role=\"output\") for the full producer action."
                 )
             ),
@@ -343,9 +344,11 @@ def register(mcp: FastMCP) -> None:
         included when the backend provides it so you can follow up with
         get_action or list_asset_actions.
 
-        For datasets, outgoing ``reference`` edges (row-level file/action IDs)
-        are omitted — use the dataset schema / ``query_dataset`` instead.
-        Incoming references and other connection types are still returned.
+        Comment edges are omitted — use ``get_comments`` (or the comments
+        preview on ``get_asset(detail=\"full\")``). For datasets, outgoing
+        ``reference`` edges (row-level file/action IDs) are also omitted —
+        use the dataset schema / ``query_dataset`` instead. Incoming
+        references and other connection types are still returned.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         omit_outgoing_refs = False
@@ -357,6 +360,7 @@ def register(mcp: FastMCP) -> None:
             ouro.assets.connections(id),
             current_asset_id=id,
             omit_outgoing_references=omit_outgoing_refs,
+            omit_comments=True,
         )
         if not isinstance(connections, dict):
             connections = {"connections": list(connections or [])}
@@ -648,6 +652,9 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
             # Dataset→row-ref edges duplicate IDs already in the table and
             # routinely number in the thousands; keep only incoming refs.
             omit_outgoing_references=result.get("asset_type") == "dataset",
+            # Comment stubs duplicate the bounded `comments` preview (and
+            # `get_comments`); omit them so connections stay lineage-focused.
+            omit_comments=True,
         )
         if slimmed:
             result["connections"] = slimmed
