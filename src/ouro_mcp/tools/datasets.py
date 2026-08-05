@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
@@ -23,6 +24,37 @@ from ouro_mcp.utils import (
     truncate_response,
 )
 from pydantic import BeforeValidator, Field
+
+_SQL_LIMIT_OR_OFFSET_RE = re.compile(r"\b(LIMIT|OFFSET)\b", re.IGNORECASE)
+_DEFAULT_QUERY_LIMIT = 100
+_MAX_QUERY_LIMIT = 1000
+
+
+def _fold_sql_pagination(sql: str, *, limit: int, offset: int) -> str:
+    """Fold tool-level limit/offset into SQL when the agent passed both.
+
+    Agents commonly pass ``limit``/``offset`` alongside ``sql`` because both
+    are schema fields. Rejecting that combination caused avoidable retries;
+    fold the pagination into the query instead. If the SQL already contains
+    LIMIT or OFFSET, leave it alone (the SQL wins).
+
+    ``limit <= 0`` is treated as unspecified (confused agents sometimes pass
+    0 to "clear" the param) and falls back to the default page size.
+    """
+    if _SQL_LIMIT_OR_OFFSET_RE.search(sql):
+        return sql
+
+    effective_limit = limit if limit > 0 else _DEFAULT_QUERY_LIMIT
+    if effective_limit > _MAX_QUERY_LIMIT:
+        raise ValueError(f"limit must be between 1 and {_MAX_QUERY_LIMIT}.")
+    if offset < 0:
+        raise ValueError("offset must be non-negative.")
+
+    folded = sql.rstrip().rstrip(";")
+    folded = f"{folded} LIMIT {effective_limit}"
+    if offset:
+        folded = f"{folded} OFFSET {offset}"
+    return folded
 
 
 def _dataframe_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
@@ -399,13 +431,29 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Optional read-only SQL query. Use `{{table}}` as a placeholder "
-                    "for the dataset table. When provided, include LIMIT/OFFSET in "
-                    "the SQL instead of using the limit/offset parameters."
+                    "for the dataset table. limit/offset are folded into the SQL "
+                    "automatically when it has no LIMIT/OFFSET of its own."
                 )
             ),
         ] = None,
-        limit: Annotated[int, Field(description="Max rows to return (1-1000)")] = 100,
-        offset: Annotated[int, Field(description="Row offset for pagination")] = 0,
+        limit: Annotated[
+            int,
+            Field(
+                description=(
+                    "Max rows to return (1-1000). Works with sql too: appended as "
+                    "LIMIT when the SQL has none. limit=0 is treated as the default."
+                )
+            ),
+        ] = _DEFAULT_QUERY_LIMIT,
+        offset: Annotated[
+            int,
+            Field(
+                description=(
+                    "Row offset for pagination. Works with sql too: appended as "
+                    "OFFSET when the SQL has no LIMIT/OFFSET of its own."
+                )
+            ),
+        ] = 0,
         resolve_refs: Annotated[
             bool,
             Field(
@@ -436,7 +484,9 @@ def register(mcp: FastMCP) -> None:
         into memory. Pass ``sql`` to run a read-only PostgreSQL query, mirroring
         ``ouro.datasets.query(dataset_id, sql=...)`` from ouro-py. Always
         reference the table as ``{{table}}`` in SQL mode. Writes are rejected
-        server-side and queries time out after 10 seconds.
+        server-side and queries time out after 10 seconds. Tool-level
+        ``limit``/``offset`` are folded into the SQL when it has no LIMIT/OFFSET
+        of its own (so agents can pass both without failing).
 
         Inspect the schema first (``ouro://datasets/{id}/schema``): columns with
         ``semantic_type: "reference"`` hold Ouro object ids (``ref_kind`` is
@@ -450,16 +500,13 @@ def register(mcp: FastMCP) -> None:
         if sql is not None:
             if not sql.strip():
                 raise ValueError("sql query is required when sql is provided.")
-            if limit != 100 or offset != 0:
-                raise ValueError(
-                    "limit/offset are not compatible with sql; include "
-                    "LIMIT/OFFSET in the SQL query instead."
-                )
             if resolve_refs:
                 raise ValueError(
                     "resolve_refs is not supported with sql; use the "
                     "paginated (non-sql) query mode instead."
                 )
+
+            sql = _fold_sql_pagination(sql, limit=limit, offset=offset)
 
             ouro = ctx.request_context.lifespan_context.ouro
             df = ouro.datasets.query(dataset_id, sql=sql)
@@ -477,8 +524,8 @@ def register(mcp: FastMCP) -> None:
                 ),
             )
 
-        if limit <= 0 or limit > 1000:
-            raise ValueError("limit must be between 1 and 1000.")
+        if limit <= 0 or limit > _MAX_QUERY_LIMIT:
+            raise ValueError(f"limit must be between 1 and {_MAX_QUERY_LIMIT}.")
         if offset < 0:
             raise ValueError("offset must be non-negative.")
 

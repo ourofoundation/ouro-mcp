@@ -425,7 +425,10 @@ def test_query_dataset_runs_optional_sql_query() -> None:
     assert datasets.query_calls == [
         {
             "dataset_id": "dataset-1",
-            "sql": "SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
+            "sql": (
+                "SELECT category, count(*) AS count FROM {{table}} "
+                "GROUP BY category LIMIT 100"
+            ),
         }
     ]
     assert result.startswith("Found 1 rows")
@@ -452,6 +455,7 @@ def test_query_dataset_sql_response_format_json() -> None:
         "rows": [{"category": "alpha", "count": 2}],
         "row_count": 1,
     }
+    assert datasets.query_calls[0]["sql"].endswith("LIMIT 100")
 
 
 def test_create_dataset_forwards_refs() -> None:
@@ -761,21 +765,55 @@ def test_query_dataset_resolve_refs_rejected_with_sql() -> None:
     assert "not supported with sql" in result["message"]
 
 
-def test_query_dataset_sql_rejects_pagination_arguments() -> None:
+def test_query_dataset_sql_folds_limit_offset() -> None:
+    datasets = _FakeDatasets(query_page=pd.DataFrame([{"id": 1}]))
     tools = _dataset_tools()
 
-    result = json.loads(
-        tools["query_dataset"](
-            "dataset-1",
-            _ctx(_FakeDatasets()),
-            sql="SELECT * FROM {{table}}",
-            limit=10,
-        )
+    tools["query_dataset"](
+        "dataset-1",
+        _ctx(datasets),
+        sql="SELECT id, name FROM {{table}}",
+        limit=50,
+        offset=10,
     )
 
-    assert result["error"] == "invalid_arguments"
-    assert "limit/offset are not compatible with sql" in result["message"]
+    assert datasets.query_calls == [
+        {
+            "dataset_id": "dataset-1",
+            "sql": "SELECT id, name FROM {{table}} LIMIT 50 OFFSET 10",
+        }
+    ]
 
+
+def test_query_dataset_sql_treats_limit_zero_as_default() -> None:
+    """Agents sometimes pass limit=0 to 'clear' the param after a rejection."""
+    datasets = _FakeDatasets(query_page=pd.DataFrame([{"id": 1}]))
+    tools = _dataset_tools()
+
+    tools["query_dataset"](
+        "dataset-1",
+        _ctx(datasets),
+        sql="SELECT id FROM {{table}}",
+        limit=0,
+        offset=0,
+    )
+
+    assert datasets.query_calls[0]["sql"] == "SELECT id FROM {{table}} LIMIT 100"
+
+
+def test_query_dataset_sql_keeps_existing_limit() -> None:
+    datasets = _FakeDatasets(query_page=pd.DataFrame([{"id": 1}]))
+    tools = _dataset_tools()
+
+    tools["query_dataset"](
+        "dataset-1",
+        _ctx(datasets),
+        sql="SELECT id FROM {{table}} LIMIT 5",
+        limit=50,
+        offset=10,
+    )
+
+    assert datasets.query_calls[0]["sql"] == "SELECT id FROM {{table}} LIMIT 5"
 
 def test_edit_dataset_columns_applies_operations_in_order() -> None:
     datasets = _FakeDatasets(
