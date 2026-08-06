@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
@@ -16,6 +16,8 @@ from ouro_mcp.utils import (
     render_markdown_list,
 )
 
+UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
 
 def register(mcp: FastMCP) -> None:
     # ------------------------------------------------------------------
@@ -25,27 +27,41 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_balance(
-        currency: Annotated[str, Field(description='"btc" (returns sats) or "usd" (returns cents)')],
+        currency: Annotated[
+            Literal["btc", "usd"],
+            Field(description='"btc" (returns sats) or "usd" (returns cents)'),
+        ],
         ctx: Context,
     ) -> str:
         """Read the authenticated user's wallet balance.
 
-        Returns ``{"currency": "btc" | "usd", "balance": int}`` where the
+        Returns ``{"currency": "btc" | "usd", "balance": int, ...}`` where the
         balance is always in the currency's smallest unit:
 
         - BTC: satoshis (1 BTC = 100_000_000 sats).
         - USD: cents (1 USD = 100 cents).
 
+        When the backend provides an ``available`` amount (balance minus soft
+        escrow holds), it is included in the response.
+
         Read-only; no side effects.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.money.get_balance(currency=currency)
-        return dump_json({"currency": currency.lower(), "balance": result})
+        if isinstance(result, dict):
+            payload = {"currency": currency, **result}
+            if "available" not in payload and "available_cents" in payload:
+                payload["available"] = payload["available_cents"]
+            return dump_json(payload)
+        return dump_json({"currency": currency, "balance": result})
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_transactions(
-        currency: Annotated[str, Field(description='"btc" or "usd"')],
+        currency: Annotated[
+            Literal["btc", "usd"],
+            Field(description='"btc" or "usd"'),
+        ],
         ctx: Context,
         limit: Annotated[Optional[int], Field(description="Max transactions to return (USD only)")] = None,
         offset: Annotated[Optional[int], Field(description="Pagination offset (USD only)")] = None,
@@ -94,15 +110,26 @@ def register(mcp: FastMCP) -> None:
             offset=offset or 0,
             noun="transactions",
             empty_text="No transactions.",
-            extras=[f"currency: {currency.lower()}"],
+            extras=[f"currency: {currency}"],
         )
 
-    @mcp.tool(annotations={"destructiveHint": True})
+    @mcp.tool(
+        annotations={
+            "destructiveHint": True,
+            "idempotentHint": False,
+        }
+    )
     @handle_ouro_errors
     def unlock_asset(
         asset_type: Annotated[str, Field(description='"post" | "file" | "dataset" | etc.')],
-        asset_id: Annotated[str, Field(description="Asset UUID")],
-        currency: Annotated[str, Field(description='"btc" or "usd"')],
+        asset_id: Annotated[
+            str,
+            Field(description="Asset UUID", pattern=UUID_PATTERN),
+        ],
+        currency: Annotated[
+            Literal["btc", "usd"],
+            Field(description='"btc" or "usd"'),
+        ],
         ctx: Context,
     ) -> str:
         """Purchase a paid asset, debiting the wallet in the chosen currency.
@@ -123,18 +150,32 @@ def register(mcp: FastMCP) -> None:
         )
         return dump_json({
             "success": True,
-            "currency": currency.lower(),
+            "currency": currency,
             "asset_type": asset_type,
             "asset_id": asset_id,
             **result,
         })
 
-    @mcp.tool(annotations={"destructiveHint": True})
+    @mcp.tool(
+        annotations={
+            "destructiveHint": True,
+            "idempotentHint": False,
+        }
+    )
     @handle_ouro_errors
     def send_money(
-        recipient_id: Annotated[str, Field(description="Recipient user UUID")],
-        amount: Annotated[int, Field(description="Amount in sats (BTC) or cents (USD)")],
-        currency: Annotated[str, Field(description='"btc" or "usd"')],
+        recipient_id: Annotated[
+            str,
+            Field(description="Recipient user UUID", pattern=UUID_PATTERN),
+        ],
+        amount: Annotated[
+            int,
+            Field(gt=0, description="Amount in sats (BTC) or cents (USD)"),
+        ],
+        currency: Annotated[
+            Literal["btc", "usd"],
+            Field(description='"btc" or "usd"'),
+        ],
         ctx: Context,
         message: Annotated[Optional[str], Field(description="Optional note (USD only)")] = None,
     ) -> str:
@@ -159,7 +200,7 @@ def register(mcp: FastMCP) -> None:
         )
         return dump_json({
             "success": True,
-            "currency": currency.lower(),
+            "currency": currency,
             "recipient_id": recipient_id,
             "amount": amount,
             **result,
@@ -193,7 +234,10 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         limit: Annotated[Optional[int], Field(description="Max records to return")] = None,
         offset: Annotated[Optional[int], Field(description="Pagination offset")] = None,
-        asset_id: Annotated[Optional[str], Field(description="Filter by asset UUID")] = None,
+        asset_id: Annotated[
+            Optional[str],
+            Field(description="Filter by asset UUID"),
+        ] = None,
         role: Annotated[Optional[str], Field(description='"consumer" (spending) or "creator" (earnings)')] = None,
     ) -> str:
         """List pay-per-use route billing records (USD). Read-only.

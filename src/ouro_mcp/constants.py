@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-MAX_RESPONSE_SIZE = 50_000  # ~50KB JSON threshold
+# Soft char cap used when clients opt into response truncation. Truncation is
+# off by default — clients (Cursor, ouro-agents, …) should budget context themselves.
+DEFAULT_MAX_RESPONSE_SIZE = 50_000
+# Back-compat alias for callers/tests that imported MAX_RESPONSE_SIZE.
+MAX_RESPONSE_SIZE = DEFAULT_MAX_RESPONSE_SIZE
 
 ENV_OURO_API_KEY = "OURO_API_KEY"
 ENV_OURO_BASE_URL = "OURO_BASE_URL"
@@ -9,6 +13,8 @@ ENV_OURO_MCP_TIMEZONE = "OURO_MCP_TIMEZONE"
 # List/table tool responses: "md" (default, compact for agents) or "json".
 ENV_OURO_MCP_RESPONSE_FORMAT = "OURO_MCP_RESPONSE_FORMAT"
 DEFAULT_RESPONSE_FORMAT = "md"
+# Soft character budget for truncate_response. Unset or 0 = disabled (client truncates).
+ENV_OURO_MCP_MAX_RESPONSE_SIZE = "OURO_MCP_MAX_RESPONSE_SIZE"
 ENV_WORKSPACE_ROOT = "WORKSPACE_ROOT"
 # Optional container mount path (e.g. /workspace). When set alongside
 # WORKSPACE_ROOT, absolute paths under this mount remap onto the host root.

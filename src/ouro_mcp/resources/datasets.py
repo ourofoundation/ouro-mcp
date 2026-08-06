@@ -49,6 +49,7 @@ def register(mcp: FastMCP) -> None:
         name="Dataset Schema",
         description=(
             "Column schema for a dataset — names, types, and semantic hints. "
+            "Column names are lowercase snake_case (use them unquoted in SQL). "
             'Columns with semantic_type "reference" hold Ouro object ids; '
             "ref_kind names the kind (asset or action) and refs maps those "
             "columns to {kind, asset_type?}. Use "

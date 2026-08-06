@@ -59,6 +59,7 @@ def register(mcp: FastMCP) -> None:
                     "Extended markdown body. Supports @mentions, LaTeX (\\(inline\\), "
                     "\\[display\\]), "
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
+                    "Use [text](action:<uuid>) for route runs. "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
                     '{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card","displayConfig":{...}}.'
@@ -77,13 +78,14 @@ def register(mcp: FastMCP) -> None:
         """Create a new post on Ouro from extended markdown. Provide content_markdown or content_path.
 
         Asset references:
-        - Inline links: prefer [label](post:|file:|dataset:|route:|service:|quest:<uuid>). Use [label](asset:<uuid>) only when the asset type is unknown. Do not invent URL paths.
+        - Inline links: prefer [label](post:|file:|dataset:|route:|service:|quest:<uuid>). Use [label](action:<uuid>) for route runs. Use [label](asset:<uuid>) only when the asset type is unknown. Do not invent URL paths.
         For embedded assets, use:
         ```assetComponent
         {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
         ```
         displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
         For routes, set actionId to show a compact action receipt (status, timing, output).
+        Prefer paste embed_markdown / link_markdown from route-action tools when referencing a run.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -122,6 +124,7 @@ def register(mcp: FastMCP) -> None:
                     "Replacement extended markdown body. Supports @mentions, LaTeX (\\(inline\\), "
                     "\\[display\\]), "
                     "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
+                    "Use [text](action:<uuid>) for route runs. "
                     "Use [text](asset:<uuid>) only when the asset type is unknown. "
                     "and block-level asset embeds via ```assetComponent``` using "
                     '{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card","displayConfig":{...}}.'
@@ -152,6 +155,7 @@ def register(mcp: FastMCP) -> None:
         ```
         displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
         For routes, set actionId to show a compact action receipt (status, timing, output).
+        Prefer paste embed_markdown / link_markdown from route-action tools when referencing a run.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 

@@ -288,6 +288,7 @@ class TestFormatActionResultIncludeResponse(unittest.TestCase):
         self.assertEqual(row["action_status"], "success")
         self.assertIn("output_assets", row)
         self.assertIn("embed_markdown", row)
+        self.assertIn("link_markdown", row)
 
     def test_error_without_response_keeps_compact_context(self) -> None:
         row = self.services._format_action_result(

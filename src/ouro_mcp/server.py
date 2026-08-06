@@ -84,6 +84,9 @@ which is a low-visibility catch-all. Always prefer a specific team when possible
   than JSON for wide tables.
 - Set env ``OURO_MCP_RESPONSE_FORMAT=json`` to switch list/table tools to JSON
   envelopes. ``query_dataset`` also accepts per-call ``response_format="json"|"md"``.
+- Responses are not size-truncated by default — clients apply their own context
+  budgets. Set ``OURO_MCP_MAX_RESPONSE_SIZE`` (e.g. ``50000``) to opt into a
+  soft server-side cap.
 - Single-entity tools (get_asset, create_*/update_*, get_action, get_balance,
   errors, ...) still return **JSON**.
 
@@ -121,14 +124,23 @@ These values are always resolved (never null) in get_teams/get_team responses:
 **Writing Ouro posts** — use extended markdown in create_post and update_post:
 - **Mention users**: @username
 - **Link to assets**: prefer typed markdown shorthands `[label](post:<uuid>)`, `[label](file:<uuid>)`, `[label](dataset:<uuid>)`, `[label](route:<uuid>)`, `[label](service:<uuid>)`, `[label](quest:<uuid>)`. Use `asset:<uuid>` only when the asset type is unknown. Do not invent URL paths or placeholder segments such as `entity`.
+- **Link to route actions**: `[label](action:<uuid>)` — inline chip linking to the route history page (hover shows the action receipt). Prefer pasting `link_markdown` from execute_route / get_action / list_route_actions when mentioning a run in prose.
 - **Embed assets** (block-level): ```assetComponent
   {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card", "displayConfig": {"visualizationId": "<uuid>|null", "actionId": "<uuid>|null"}}
-  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets. `displayConfig` is optional and carries type-specific display settings: for datasets, set `visualizationId` to render a specific saved dataset view; for routes, set `actionId` to show a compact action receipt (status, timing, output) with a link to full history. Legacy flat `visualizationId` is still supported but prefer `displayConfig`. Use the exact keys `id`, `assetType`, and `viewMode` here; do not use legacy embed keys like `asset_id`, `asset_type`, or `type`.
+  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets. `displayConfig` is optional and carries type-specific display settings: for datasets, set `visualizationId` to render a specific saved dataset view; for routes, set `actionId` to show a compact action receipt (status, timing, output) with a link to full history. Legacy flat `visualizationId` is still supported but prefer `displayConfig`. Use the exact keys `id`, `assetType`, and `viewMode` here; do not use legacy embed keys like `asset_id`, `asset_type`, or `type`. Paste `embed_markdown` from route-action tools when the run itself should be the content.
 - **Standard markdown**: headings, **bold**, *italic*, lists, code blocks, tables, links
 - **Math**: \\(inline\\) and \\[display\\] LaTeX
 
 **Datasets**:
 - Inspect a dataset's schema first (resource `ouro://datasets/{id}/schema` or `get_dataset`).
+- **Inspect vs bulk**: use `query_dataset` for schema peeks, small samples,
+  SQL filters, aggregations, and top-N rankings (keep responses small; prefer
+  ranking/filtering in SQL). For bulk analysis — scoring, filtering hundreds+
+  rows, or local scripts — call `download_asset` (datasets download as CSV)
+  and compute locally. Do not page large tables into chat.
+- This server talks to ``OURO_BASE_URL``. A dataset UUID visible here may be
+  absent on a different backend (e.g. a local SDK pointed at localhost).
+- Column names are lowercase snake_case — use them unquoted in SQL.
 - Columns with `semantic_type: "reference"` hold Ouro object ids backed by a real
   foreign key; `ref_kind` names the kind ("asset" -> public.assets, "action" ->
   public.actions) and an optional `asset_type` names the intended target (asset kind).
@@ -187,10 +199,12 @@ These values are always resolved (never null) in get_teams/get_team responses:
   the route's input asset names. Do not build file/dataset/post body objects by hand;
   Ouro resolves asset IDs into the service-facing request body.
 - Use execute_route(..., dry_run=true) to validate parameters without running the route.
-- execute_route returns an action_id and embed_markdown; use get_action(action_id)
+- execute_route returns an action_id, embed_markdown (block receipt), and
+  link_markdown (inline `[label](action:<uuid>)`); use get_action(action_id)
   to inspect status/output assets. Pass include_response=true only when you need
   the full action response body (same flag on list_asset_actions / list_route_actions).
-- Use list_route_actions(route_id=...) to find previous executions and get ready-to-use action embeds.
+- Use list_route_actions(route_id=...) to find previous executions and get ready-to-use
+  embed_markdown / link_markdown.
 - Use list_asset_actions(asset_id=...) to find actions that produced an asset (`created_by`)
   or used it as input (`as_input`) — prefer this over scraping posts for action IDs.
   Pass include_response=true only when you need action.response payloads.
@@ -246,6 +260,12 @@ def main():
         # FastMCP.run() does not take host/port — set them on settings first.
         mcp.settings.host = args.host
         mcp.settings.port = args.port
+        if args.host not in ("127.0.0.1", "localhost", "::1"):
+            log.warning(
+                "HTTP transport bound to %s without an auth layer — "
+                "prefer 127.0.0.1 or terminate TLS/auth at a reverse proxy",
+                args.host,
+            )
         log.info(
             "Starting ouro-mcp transport=%s on %s:%s",
             args.transport,

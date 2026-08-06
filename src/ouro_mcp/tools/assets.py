@@ -312,6 +312,11 @@ def register(mcp: FastMCP) -> None:
         Files keep their original bytes, datasets download as CSV, and posts as HTML.
         If output_path is a directory, the server-provided filename is used.
 
+        Prefer this for bulk dataset analysis (scoring, filtering hundreds+ rows,
+        local scripts): download CSV, then compute locally. Use ``query_dataset``
+        for peeks, small samples, and SQL top-N — not for paging large tables
+        into chat.
+
         When WORKSPACE_ROOT is set (agent context), output_path is sandboxed
         to that workspace; paths that escape via '..' or absolute paths
         outside the workspace are rejected.

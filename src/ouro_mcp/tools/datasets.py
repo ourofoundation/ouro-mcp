@@ -431,7 +431,8 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Optional read-only SQL query. Use `{{table}}` as a placeholder "
-                    "for the dataset table. limit/offset are folded into the SQL "
+                    "for the dataset table. Column names are lowercase snake_case — "
+                    "use them unquoted. limit/offset are folded into the SQL "
                     "automatically when it has no LIMIT/OFFSET of its own."
                 )
             ),
@@ -480,13 +481,19 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Query a dataset's contents as a compact markdown table (or JSON).
 
+        Use this for schema peeks, small samples, SQL filters, aggregations, and
+        top-N rankings. For bulk analysis (scoring/filtering hundreds+ rows or
+        local scripts), prefer ``download_asset`` (CSV) and compute locally —
+        do not page large tables into chat.
+
         By default this pages server-side so large datasets don't load fully
         into memory. Pass ``sql`` to run a read-only PostgreSQL query, mirroring
         ``ouro.datasets.query(dataset_id, sql=...)`` from ouro-py. Always
-        reference the table as ``{{table}}`` in SQL mode. Writes are rejected
+        reference the table as ``{{table}}`` in SQL mode. Column names are
+        lowercase snake_case — use them unquoted. Writes are rejected
         server-side and queries time out after 10 seconds. Tool-level
-        ``limit``/``offset`` are folded into the SQL when it has no LIMIT/OFFSET
-        of its own (so agents can pass both without failing).
+        ``limit``/``offset`` are folded into the SQL when it has no
+        LIMIT/OFFSET of its own (so agents can pass both without failing).
 
         Inspect the schema first (``ouro://datasets/{id}/schema``): columns with
         ``semantic_type: "reference"`` hold Ouro object ids (``ref_kind`` is
@@ -886,7 +893,13 @@ def register(mcp: FastMCP) -> None:
         description: Annotated[Optional[str], Field(description="Short view description")] = None,
         sql_query: Annotated[
             Optional[str],
-            Field(description="Read-only PostgreSQL query using {{table}} as the dataset table name"),
+            Field(
+                description=(
+                    "Read-only PostgreSQL query using {{table}} as the dataset "
+                    "table name. Column names are lowercase snake_case — use "
+                    "them unquoted."
+                )
+            ),
         ] = None,
         config: Annotated[
             Optional[Any],

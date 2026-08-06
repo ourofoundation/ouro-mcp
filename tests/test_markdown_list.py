@@ -6,7 +6,11 @@ import json
 
 import pytest
 
-from ouro_mcp.constants import ENV_OURO_MCP_RESPONSE_FORMAT, MAX_RESPONSE_SIZE
+from ouro_mcp.constants import (
+    ENV_OURO_MCP_MAX_RESPONSE_SIZE,
+    ENV_OURO_MCP_RESPONSE_FORMAT,
+    MAX_RESPONSE_SIZE,
+)
 from ouro_mcp.utils import (
     collapse_whitespace,
     format_search_hit,
@@ -15,6 +19,7 @@ from ouro_mcp.utils import (
     render_markdown_list,
     render_markdown_sections,
     render_markdown_table,
+    resolve_max_response_size,
     resolve_response_format,
     search_hit_line,
     truncate_response,
@@ -180,7 +185,25 @@ def test_render_markdown_table_and_format_table_response():
     assert payload["hasMore"] is False
 
 
-def test_truncate_response_markdown_at_line_boundary():
+def test_truncate_response_disabled_by_default(monkeypatch):
+    monkeypatch.delenv(ENV_OURO_MCP_MAX_RESPONSE_SIZE, raising=False)
+    assert resolve_max_response_size() is None
+
+    lines = [f"- **item {i}** — id: `{i}`" for i in range(5000)]
+    payload = "Found many results\n\n" + "\n".join(lines)
+    assert len(payload) > MAX_RESPONSE_SIZE
+    assert truncate_response(payload) == payload
+
+
+def test_truncate_response_respects_zero(monkeypatch):
+    monkeypatch.setenv(ENV_OURO_MCP_MAX_RESPONSE_SIZE, "0")
+    assert resolve_max_response_size() is None
+    payload = "x" * (MAX_RESPONSE_SIZE + 100)
+    assert truncate_response(payload) == payload
+
+
+def test_truncate_response_markdown_at_line_boundary(monkeypatch):
+    monkeypatch.setenv(ENV_OURO_MCP_MAX_RESPONSE_SIZE, str(MAX_RESPONSE_SIZE))
     # Build a payload larger than MAX_RESPONSE_SIZE with clear line breaks.
     lines = [f"- **item {i}** — id: `{i}`" for i in range(5000)]
     payload = "Found many results\n\n" + "\n".join(lines)
@@ -195,7 +218,8 @@ def test_truncate_response_markdown_at_line_boundary():
     assert body.rstrip("\n").splitlines()[-1].startswith("- **")
 
 
-def test_truncate_response_markdown_table_drops_rows():
+def test_truncate_response_markdown_table_drops_rows(monkeypatch):
+    monkeypatch.setenv(ENV_OURO_MCP_MAX_RESPONSE_SIZE, str(MAX_RESPONSE_SIZE))
     header = "Found many rows\n\n| col |\n| --- |\n"
     rows = "\n".join(f"| value-{i}-{'x' * 80} |" for i in range(2000))
     payload = header + rows

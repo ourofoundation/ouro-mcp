@@ -14,12 +14,12 @@ from ouro_mcp.constants import (
     DEFAULT_OURO_FRONTEND_URL,
     DEFAULT_RESPONSE_FORMAT,
     ENV_OURO_FRONTEND_URL,
+    ENV_OURO_MCP_MAX_RESPONSE_SIZE,
     ENV_OURO_MCP_RESPONSE_FORMAT,
     ENV_OURO_MCP_TIMEZONE,
     ENV_WORKSPACE_MOUNT,
     ENV_WORKSPACE_ROOT,
     GLOBAL_ORG_ID,
-    MAX_RESPONSE_SIZE,
 )
 
 log = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ def slim_dataset_schema(schema: Any) -> list[dict[str, Any]] | None:
     Drops duplicated ``column_name``/``data_type`` aliases and FK plumbing
     (``fk_constraint_name``, ``foreign_table_*``, ``foreign_column_name``).
     Keeps ``semantic_type``, ``ref_kind``, ``asset_type``, and ``enum_values``
-    when present.
+    when present. Column names are lowercase snake_case.
     """
     if schema is None:
         return None
@@ -248,20 +248,40 @@ def resolve_response_format(override: str | None = None) -> str:
     return DEFAULT_RESPONSE_FORMAT
 
 
-def truncate_response(data: str, context: str = "") -> str:
-    """If a response exceeds the size threshold, truncate and flag it.
+def resolve_max_response_size() -> int | None:
+    """Return the soft character budget for ``truncate_response``, or ``None`` if off.
 
-    JSON payloads with a ``rows`` list shrink by dropping rows. Markdown
-    tables drop data rows from the end. Other text is truncated at a line
-    boundary under ``MAX_RESPONSE_SIZE``.
+    ``OURO_MCP_MAX_RESPONSE_SIZE``: unset or ``<= 0`` disables truncation so
+    clients can apply their own context budgets. A positive int is a
+    ``len(response)`` cap (e.g. ``50000``).
     """
-    if len(data) <= MAX_RESPONSE_SIZE:
+    raw = os.environ.get(ENV_OURO_MCP_MAX_RESPONSE_SIZE, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def truncate_response(data: str, context: str = "") -> str:
+    """Optionally truncate oversized responses when a size budget is configured.
+
+    Off by default (``OURO_MCP_MAX_RESPONSE_SIZE`` unset/0). When enabled,
+    JSON payloads with a ``rows`` list shrink by dropping rows; markdown
+    tables drop data rows from the end; other text is cut at a line boundary.
+    """
+    max_size = resolve_max_response_size()
+    if max_size is None or len(data) <= max_size:
         return data
     try:
         parsed = json.loads(data)
         if isinstance(parsed, dict) and "rows" in parsed:
             rows = parsed["rows"]
-            while len(json.dumps(parsed)) > MAX_RESPONSE_SIZE and rows:
+            while len(json.dumps(parsed)) > max_size and rows:
                 rows.pop()
             parsed["truncated"] = True
             if context:
@@ -270,17 +290,17 @@ def truncate_response(data: str, context: str = "") -> str:
     except (json.JSONDecodeError, TypeError):
         pass
 
-    trimmed = _truncate_markdown_table(data)
-    if trimmed is not None and len(trimmed) <= MAX_RESPONSE_SIZE:
+    trimmed = _truncate_markdown_table(data, max_size)
+    if trimmed is not None and len(trimmed) <= max_size:
         return trimmed
     if trimmed is not None:
         data = trimmed
 
     # Prefer a clean line cut for markdown / plain-text responses so agents
     # don't get a half-rendered bullet.
-    budget = MAX_RESPONSE_SIZE - len(_TRUNCATION_FOOTER)
+    budget = max_size - len(_TRUNCATION_FOOTER)
     if budget <= 0:
-        return data[:MAX_RESPONSE_SIZE] + "\n... [truncated]"
+        return data[:max_size] + "\n... [truncated]"
     cut = data[:budget]
     last_nl = cut.rfind("\n")
     if last_nl > budget // 2:
@@ -288,7 +308,7 @@ def truncate_response(data: str, context: str = "") -> str:
     return cut + _TRUNCATION_FOOTER
 
 
-def _truncate_markdown_table(data: str) -> str | None:
+def _truncate_markdown_table(data: str, max_size: int) -> str | None:
     """Drop trailing markdown table data rows until under the size budget."""
     lines = data.splitlines()
     sep_idx = next(
@@ -309,7 +329,7 @@ def _truncate_markdown_table(data: str) -> str | None:
     prefix = lines[: sep_idx + 1]
     body = lines[sep_idx + 1 : end]
     suffix = lines[end:]
-    while body and len("\n".join(prefix + body + suffix)) + len(_TRUNCATION_FOOTER) > MAX_RESPONSE_SIZE:
+    while body and len("\n".join(prefix + body + suffix)) + len(_TRUNCATION_FOOTER) > max_size:
         body.pop()
     if len(body) == end - (sep_idx + 1):
         return None

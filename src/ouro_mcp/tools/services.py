@@ -102,6 +102,18 @@ def _route_action_embed(route_id: str, action_id: str) -> str:
     )
 
 
+def _route_action_link(action_id: str, label: str = "View run") -> str:
+    return f"[{label}](action:{action_id})"
+
+
+def _attach_action_markdown(
+    result: dict[str, Any], route_id: str, action_id: str
+) -> dict[str, Any]:
+    result["embed_markdown"] = _route_action_embed(route_id, action_id)
+    result["link_markdown"] = _route_action_link(action_id)
+    return result
+
+
 def _action_error_context(response: Any) -> dict[str, Any]:
     if not isinstance(response, dict):
         return {}
@@ -270,7 +282,7 @@ def _format_action_result(
     }
     if route_id:
         result["route_id"] = route_id
-        result["embed_markdown"] = _route_action_embed(route_id, str(action.id))
+        _attach_action_markdown(result, route_id, str(action.id))
     if route_name:
         result["route_name"] = route_name
     if duration_seconds is not None:
@@ -470,7 +482,7 @@ def _format_action_summary(
     if cost:
         result["cost"] = cost
     if route_id and action_id:
-        result["embed_markdown"] = _route_action_embed(route_id, action_id)
+        _attach_action_markdown(result, route_id, action_id)
 
     return {k: v for k, v in result.items() if v is not None}
 
@@ -494,14 +506,13 @@ def action_summary_line(summary: Any) -> str:
     return markdown_bullet(
         str(name),
         *parts,
-        body=summary.get("embed_markdown"),
+        body=summary.get("embed_markdown") or summary.get("link_markdown"),
     )
 
 
 def _format_log_entry(log_entry: Any) -> dict[str, Any]:
     log_entry = _as_dict(log_entry)
     result: dict[str, Any] = {
-        "id": str(log_entry.get("id", "")),
         "level": log_entry.get("level"),
         "event_type": log_entry.get("event_type"),
         "message": log_entry.get("message"),
@@ -1081,7 +1092,7 @@ def register(mcp: FastMCP) -> None:
                 ),
             }
             if action_id:
-                result["embed_markdown"] = _route_action_embed(str(route.id), action_id)
+                _attach_action_markdown(result, str(route.id), action_id)
             return dump_json(result)
 
         duration = round(time.time() - start, 2)
@@ -1100,8 +1111,8 @@ def register(mcp: FastMCP) -> None:
                 "message": (
                     "Route accepted; check progress with get_action(action_id)."
                 ),
-                "embed_markdown": _route_action_embed(str(route.id), str(action.id)),
             }
+            _attach_action_markdown(result, str(route.id), str(action.id))
             return dump_json(result)
 
         # The sync execution envelope can contain a freshly synthesized action
@@ -1176,8 +1187,8 @@ def register(mcp: FastMCP) -> None:
         `wait=true` to block until the action reaches a terminal state.
 
         By default returns status, route/action ids, compact input/output
-        assets, embed_markdown, and cost — not the full response body. Pass
-        `include_response=true` when you need `data`/`error` payloads.
+        assets, embed_markdown, link_markdown, and cost — not the full response
+        body. Pass `include_response=true` when you need `data`/`error` payloads.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -1258,8 +1269,8 @@ def register(mcp: FastMCP) -> None:
         """List previous executions for a route.
 
         Use this when you need to find prior runs to reference or embed. Each
-        result includes `embed_markdown`, a ready-to-use route preview block
-        pinned to that action's logs/output.
+        result includes `embed_markdown` (block receipt) and `link_markdown`
+        (inline `[label](action:<uuid>)` link) ready to paste into Ouro markdown.
         """
         if limit <= 0 or limit > 200:
             raise ValueError("limit must be between 1 and 200.")
@@ -1308,7 +1319,8 @@ def register(mcp: FastMCP) -> None:
                 extras=[
                     f"route_id: `{route.id}`",
                     f"route: {route.name}",
-                    "Use embed_markdown bodies to embed an action preview in Ouro markdown.",
+                    "Use embed_markdown for a block action receipt, or "
+                    "link_markdown for an inline action link.",
                 ],
             )
         )
@@ -1344,7 +1356,6 @@ def register(mcp: FastMCP) -> None:
 
         def _log_line(entry: dict[str, Any]) -> str:
             parts = [
-                markdown_id(entry.get("id")),
                 entry.get("level"),
                 entry.get("event_type"),
                 entry.get("created_at"),

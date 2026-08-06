@@ -48,6 +48,10 @@ except ImportError:  # ouro-py < 0.5.4 (pre-transport-error mapping)
 
 log = logging.getLogger(__name__)
 
+# Money-moving tools: timeouts/connection errors must not be auto-retried by
+# agents (a late success after retry could double-spend).
+_NON_RETRYABLE_TRANSPORT_TOOLS = frozenset({"send_money", "unlock_asset"})
+
 
 def _request_url(e: Exception) -> str | None:
     """Best-effort extraction of the attempted URL from an APIConnectionError."""
@@ -58,6 +62,15 @@ def _request_url(e: Exception) -> str | None:
     return str(url) if url else None
 
 
+def _server_error_object(e: APIStatusError) -> dict[str, Any] | None:
+    """Return the nested ``error`` object from an APIStatusError body, if any."""
+    body = getattr(e, "body", None)
+    if not isinstance(body, dict):
+        return None
+    error_obj = body.get("error")
+    return error_obj if isinstance(error_obj, dict) else None
+
+
 def _server_detail(e: APIStatusError) -> str | None:
     """Extract a sanitized server-side explanation from an APIStatusError.
 
@@ -65,16 +78,17 @@ def _server_detail(e: APIStatusError) -> str | None:
     string we surface in the backend), falling back to common alternates
     and finally the exception's own message.
     """
+    error_obj = _server_error_object(e)
+    if error_obj is not None:
+        for key in ("message", "detail", "reason"):
+            value = error_obj.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     body = getattr(e, "body", None)
     if isinstance(body, dict):
-        error_obj = body.get("error")
-        if isinstance(error_obj, dict):
-            for key in ("message", "detail", "reason"):
-                value = error_obj.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-        elif isinstance(error_obj, str) and error_obj.strip():
-            return error_obj.strip()
+        error_obj_raw = body.get("error")
+        if isinstance(error_obj_raw, str) and error_obj_raw.strip():
+            return error_obj_raw.strip()
         for key in ("message", "detail"):
             value = body.get(key)
             if isinstance(value, str) and value.strip():
@@ -83,6 +97,35 @@ def _server_detail(e: APIStatusError) -> str | None:
     if isinstance(message, str) and message.strip():
         return message.strip()
     return None
+
+
+def _attach_sql_diagnostics(
+    payload: dict[str, Any], e: APIStatusError, *, message: str
+) -> dict[str, Any]:
+    """Preserve backend SQL ``code``/``hint``/``details`` on query errors."""
+    error_obj = _server_error_object(e) or {}
+    for key in ("code", "hint", "details"):
+        value = error_obj.get(key)
+        if value is not None and value != "":
+            payload[key] = value
+
+    # Agents often paste mixed-case schema names without quotes; Postgres
+    # folds those to lowercase and reports "column does not exist".
+    if "column" in message.lower() and "does not exist" in message.lower():
+        payload["error"] = "invalid_dataset_query"
+        payload["retryable"] = False
+        guidance = (
+            "Re-read the dataset schema and use the exact lowercase "
+            "snake_case column names unquoted. Mixed-case names are "
+            "normalized on write."
+        )
+        existing = payload.get("hint")
+        if isinstance(existing, str) and existing.strip():
+            if "snake_case" not in existing and "schema" not in existing.lower():
+                payload["hint"] = f"{existing.strip()} {guidance}"
+        else:
+            payload["hint"] = guidance
+    return payload
 
 
 def _status_code(e: Exception) -> int | None:
@@ -110,10 +153,11 @@ def _base_error_payload(error: str, message: str, *, status: int | None = None) 
     return payload
 
 
-def _format_ouro_error(e: Exception) -> str:
+def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
     """Convert an ouro-py exception to an agent-friendly JSON error string."""
     raw = str(e)
     raw_lower = raw.lower()
+    force_non_retryable_transport = tool_name in _NON_RETRYABLE_TRANSPORT_TOOLS
 
     # Known server-side failures that agents should handle without retries.
     if "json object requested, multiple (or no) rows returned" in raw_lower or "thread depth" in raw_lower:
@@ -166,18 +210,22 @@ def _format_ouro_error(e: Exception) -> str:
             payload["retry_after_seconds"] = retry_after
         return json.dumps(payload)
     if isinstance(e, BadRequestError):
-        return json.dumps(
-            _base_error_payload("bad_request", _server_detail(e) or raw, status=400)
-        )
+        message = _server_detail(e) or raw
+        payload = _base_error_payload("bad_request", message, status=400)
+        payload["retryable"] = False
+        return json.dumps(_attach_sql_diagnostics(payload, e, message=message))
     if isinstance(e, InternalServerError):
-        detail = _server_detail(e)
-        return json.dumps(
-            _base_error_payload(
-                "server_error",
-                detail or "Ouro API error. Try again shortly.",
-                status=_status_code(e) or 500,
-            )
+        detail = _server_detail(e) or "Ouro API error. Try again shortly."
+        payload = _base_error_payload(
+            "server_error",
+            detail,
+            status=_status_code(e) or 500,
         )
+        # Dataset SQL mistakes should be 400 after the backend mapping; if a
+        # column-missing error still arrives as 500, make it actionable.
+        if "column" in detail.lower() and "does not exist" in detail.lower():
+            payload = _attach_sql_diagnostics(payload, e, message=detail)
+        return json.dumps(payload)
     if isinstance(e, ExternalServiceError):
         payload = _base_error_payload(
             "external_service_error",
@@ -210,7 +258,7 @@ def _format_ouro_error(e: Exception) -> str:
         payload = {
             "error": "timeout",
             "message": raw or "Request to Ouro API timed out.",
-            "retryable": True,
+            "retryable": False if force_non_retryable_transport else True,
         }
         url = _request_url(e)
         if url:
@@ -220,14 +268,20 @@ def _format_ouro_error(e: Exception) -> str:
         payload = {
             "error": "connection_failed",
             "message": raw or "Failed to connect to Ouro API.",
-            "retryable": True,
+            "retryable": False if force_non_retryable_transport else True,
         }
         url = _request_url(e)
         if url:
             payload["url"] = url
         return json.dumps(payload)
     if isinstance(e, TimeoutError):
-        return json.dumps({"error": "timeout", "message": raw, "retryable": True})
+        return json.dumps(
+            {
+                "error": "timeout",
+                "message": raw,
+                "retryable": False if force_non_retryable_transport else True,
+            }
+        )
     if isinstance(e, ValueError):
         return json.dumps({"error": "invalid_arguments", "message": raw, "retryable": False})
     if isinstance(e, PermissionError):
@@ -247,6 +301,8 @@ def handle_ouro_errors(fn: Callable) -> Callable:
 
     Works for both sync and async tool functions.
     """
+    tool_name = getattr(fn, "__name__", None)
+
     if asyncio.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
@@ -266,7 +322,7 @@ def handle_ouro_errors(fn: Callable) -> Callable:
                 TimeoutError,
                 Exception,
             ) as e:
-                return _format_ouro_error(e)
+                return _format_ouro_error(e, tool_name=tool_name)
 
         return async_wrapper
 
@@ -287,6 +343,6 @@ def handle_ouro_errors(fn: Callable) -> Callable:
             TimeoutError,
             Exception,
         ) as e:
-            return _format_ouro_error(e)
+            return _format_ouro_error(e, tool_name=tool_name)
 
     return wrapper

@@ -149,6 +149,7 @@ Paths outside that directory will be rejected.
 | `OURO_FRONTEND_URL` | `https://ouro.foundation` | Base URL for links returned to clients |
 | `OURO_MCP_TIMEZONE` | unset | IANA timezone used to localize timestamps |
 | `OURO_MCP_RESPONSE_FORMAT` | `md` | List/table tool output: `md` (compact) or `json` |
+| `OURO_MCP_MAX_RESPONSE_SIZE` | unset (off) | Soft character budget (`len(response)`); unset/`0` leaves truncation to the client; e.g. `50000` re-enables the old cap |
 | `WORKSPACE_ROOT` | unset | Restricts local file access to one directory |
 | `OURO_MCP_LOG_LEVEL` | `INFO` | Server log level |
 

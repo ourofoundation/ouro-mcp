@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import httpx
-from ouro import ExternalServiceError, InternalServerError, RouteExecutionError
+from ouro import BadRequestError, ExternalServiceError, InternalServerError, RouteExecutionError
 from ouro_mcp.errors import _format_ouro_error
 
 
@@ -77,3 +77,28 @@ def test_external_service_error_is_actionable() -> None:
     assert payload["status"] == 503
     assert payload["retryable"] is True
     assert payload["action_id"] == "00000000-0000-0000-0000-000000000001"
+
+
+def test_bad_request_column_missing_is_actionable_and_non_retryable() -> None:
+    body = {
+        "data": None,
+        "error": {
+            "message": 'Query failed: column "mae_ev" does not exist',
+            "code": "42703",
+            "hint": 'Perhaps you meant to reference the column "MAE_eV".',
+        },
+    }
+    error = BadRequestError(
+        'Query failed: column "mae_ev" does not exist',
+        response=_response(400, body),
+        body=body,
+    )
+
+    payload = json.loads(_format_ouro_error(error))
+
+    assert payload["error"] == "invalid_dataset_query"
+    assert payload["status"] == 400
+    assert payload["retryable"] is False
+    assert payload["code"] == "42703"
+    assert 'Perhaps you meant to reference the column "MAE_eV".' in payload["hint"]
+    assert "snake_case" in payload["hint"]
