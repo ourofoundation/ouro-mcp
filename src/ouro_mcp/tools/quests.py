@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.utils.content import description_to_markdown
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
@@ -16,6 +17,61 @@ from ouro_mcp.utils import (
     render_markdown_list,
 )
 from pydantic import Field
+
+
+def _item_description_text(description: Any, *, max_length: Optional[int] = None) -> str:
+    """Readable markdown for quest item descriptions (string or TipTap Content)."""
+    if description is not None and hasattr(description, "text"):
+        if not isinstance(description, (str, dict)):
+            description = getattr(description, "text", None) or ""
+    return description_to_markdown(description, max_length=max_length) or ""
+
+
+def _item_summary(item: Any) -> Dict[str, Any]:
+    return {
+        "id": str(item.id),
+        "description": _item_description_text(getattr(item, "description", None)),
+        "status": item.status,
+        "sort_order": getattr(item, "sort_order", None),
+        "assignee_id": (
+            str(getattr(item, "assignee_id"))
+            if getattr(item, "assignee_id", None)
+            else None
+        ),
+        "waiting_on": getattr(item, "waiting_on", None),
+        "waiting_until": getattr(item, "waiting_until", None),
+        "waiting_check_every": getattr(item, "waiting_check_every", None),
+        "reward_currency": getattr(item, "reward_currency", None),
+        "reward_amount": getattr(item, "reward_amount", None),
+        "expected_asset_type": getattr(item, "expected_asset_type", None),
+        "eval_route_id": (
+            str(getattr(item, "eval_route_id"))
+            if getattr(item, "eval_route_id", None)
+            else None
+        ),
+        "eval_score_path": getattr(item, "eval_score_path", None),
+        "eval_pass_min": getattr(item, "eval_pass_min", None),
+        "eval_pass_max": getattr(item, "eval_pass_max", None),
+        "submission_assets": getattr(item, "submission_assets", None),
+        "eval_static_inputs": getattr(item, "eval_static_inputs", None),
+    }
+
+
+def _normalize_create_items(
+    ouro: Any, items: List[Union[str, Dict[str, Any]]]
+) -> List[Dict[str, Any]]:
+    """Convert plain description strings to rich Content before create."""
+    rows: List[Dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, str):
+            rows.append({"description": content_from_markdown(ouro, item)})
+            continue
+        row = dict(item)
+        description = row.get("description")
+        if isinstance(description, str):
+            row["description"] = content_from_markdown(ouro, description)
+        rows.append(row)
+    return rows
 
 
 def register(mcp: FastMCP) -> None:
@@ -44,9 +100,12 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "List of task descriptions to create as quest items. "
-                    "Each string becomes an item with status 'pending'. "
-                    "Objects may include item fields such as description, assignee_id, "
-                    "reward_amount, eval_route_id, or submission_assets."
+                    "Each string (or object.description) is markdown TipTap content — "
+                    "supports typed asset link shorthands "
+                    "[text](post:|file:|dataset:|route:|service:|quest:<uuid>) and "
+                    "becomes an item with status 'pending'. "
+                    "Objects may also include assignee_id, reward_amount, "
+                    "eval_route_id, or submission_assets."
                 )
             ),
         ] = None,
@@ -88,6 +147,10 @@ def register(mcp: FastMCP) -> None:
         if description_markdown is not None:
             description = content_from_markdown(ouro, description_markdown)
 
+        create_items = (
+            _normalize_create_items(ouro, items) if items else None
+        )
+
         quest = ouro.quests.create(
             name=name,
             description=description,
@@ -96,7 +159,7 @@ def register(mcp: FastMCP) -> None:
             status=status,
             org_id=org_id,
             team_id=team_id,
-            items=items,
+            items=create_items,
             license_id=license_id,
             attribution=attribution,
         )
@@ -106,7 +169,7 @@ def register(mcp: FastMCP) -> None:
             result["items"] = [
                 {
                     "id": str(i.id),
-                    "description": i.description,
+                    "description": _item_description_text(i.description),
                     "status": i.status,
                     **(
                         {"assignee_id": str(getattr(i, "assignee_id"))}
@@ -243,7 +306,7 @@ def register(mcp: FastMCP) -> None:
             if row.get("quest_id"):
                 parts.append(f"quest_id: `{row['quest_id']}`")
             return markdown_bullet(
-                str(row.get("description") or "(no description)"),
+                _item_description_text(row.get("description")) or "(no description)",
                 *parts,
             )
 
@@ -288,7 +351,7 @@ def register(mcp: FastMCP) -> None:
             if getattr(i, "child_quest_id", None):
                 body_bits.append(f"child_quest_id: `{i.child_quest_id}`")
             return markdown_bullet(
-                str(i.description or "(no description)"),
+                _item_description_text(i.description) or "(no description)",
                 *parts,
                 body=" · ".join(body_bits) if body_bits else None,
             )
@@ -310,8 +373,10 @@ def register(mcp: FastMCP) -> None:
             List[Union[str, Dict[str, Any]]],
             Field(
                 description=(
-                    "Items to add. Each element is either a plain description "
-                    "string or a full item object with any of: description, "
+                    "Items to add. Each element is either a markdown description "
+                    "string (TipTap; supports typed asset link shorthands "
+                    "[text](post:|file:|dataset:|route:|service:|quest:<uuid>)) "
+                    "or a full item object with any of: description, "
                     "assignee_id, "
                     "expected_asset_type, reward_currency ('btc'|'usd'), "
                     "reward_amount (sats for btc, cents for usd), "
@@ -324,32 +389,10 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Batch-add items to an existing quest (for replanning, decomposition, or attaching rewards/eval)."""
         ouro = ctx.request_context.lifespan_context.ouro
-        created = ouro.quests.create_items(quest_id, items)
-        return dump_json(
-            [
-                {
-                    "id": str(i.id),
-                    "description": i.description,
-                    "status": i.status,
-                    "sort_order": i.sort_order,
-                    "assignee_id": (
-                        str(getattr(i, "assignee_id"))
-                        if getattr(i, "assignee_id", None)
-                        else None
-                    ),
-                    "expected_asset_type": getattr(i, "expected_asset_type", None),
-                    "reward_currency": i.reward_currency,
-                    "reward_amount": i.reward_amount,
-                    "eval_route_id": getattr(i, "eval_route_id", None),
-                    "eval_score_path": getattr(i, "eval_score_path", None),
-                    "eval_pass_min": getattr(i, "eval_pass_min", None),
-                    "eval_pass_max": getattr(i, "eval_pass_max", None),
-                    "submission_assets": getattr(i, "submission_assets", None),
-                    "eval_static_inputs": getattr(i, "eval_static_inputs", None),
-                }
-                for i in created
-            ]
+        created = ouro.quests.create_items(
+            quest_id, _normalize_create_items(ouro, items)
         )
+        return dump_json([_item_summary(i) for i in created])
 
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
@@ -361,7 +404,16 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description='"pending" | "in_progress" | "done" | "skipped"'),
         ] = None,
-        description: Annotated[Optional[str], Field(description="Updated task description")] = None,
+        description: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Updated task description as markdown TipTap content. Supports "
+                    "typed asset link shorthands "
+                    "[text](post:|file:|dataset:|route:|service:|quest:<uuid>)."
+                )
+            ),
+        ] = None,
         notes: Annotated[Optional[str], Field(description="Internal notes on this item")] = None,
         waiting_on: Annotated[
             Optional[str],
@@ -448,12 +500,17 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Update an item's metadata, status, reward, or auto-eval config. For completions with provenance, use complete_quest_item instead."""
         ouro = ctx.request_context.lifespan_context.ouro
+        description_content = (
+            content_from_markdown(ouro, description)
+            if description is not None
+            else None
+        )
         updated = ouro.quests.update_item(
             quest_id,
             item_id,
             **optional_kwargs(
                 status=status,
-                description=description,
+                description=description_content,
                 notes=notes,
                 waiting_on=waiting_on,
                 waiting_until=waiting_until,
@@ -470,24 +527,7 @@ def register(mcp: FastMCP) -> None:
                 reward_amount=reward_amount,
             ),
         )
-        return dump_json(
-            {
-                "id": str(updated.id),
-                "description": updated.description,
-                "status": updated.status,
-                "sort_order": updated.sort_order,
-                "assignee_id": (
-                    str(getattr(updated, "assignee_id"))
-                    if getattr(updated, "assignee_id", None)
-                    else None
-                ),
-                "waiting_on": getattr(updated, "waiting_on", None),
-                "waiting_until": getattr(updated, "waiting_until", None),
-                "waiting_check_every": getattr(updated, "waiting_check_every", None),
-                "reward_currency": updated.reward_currency,
-                "reward_amount": updated.reward_amount,
-            }
-        )
+        return dump_json(_item_summary(updated))
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors

@@ -39,12 +39,17 @@ class _FakeQuests:
         self.calls.append(
             {"method": "create_items", "quest_id": quest_id, "items": items}
         )
+
+        def _desc(item):
+            raw = item if isinstance(item, str) else item.get("description")
+            if hasattr(raw, "text") and not isinstance(raw, (str, dict)):
+                return raw.text
+            return raw
+
         return [
             _FakeModel(
                 id=f"item-{idx}",
-                description=(
-                    item if isinstance(item, str) else item.get("description")
-                ),
+                description=_desc(item),
                 status="pending",
                 sort_order=idx,
                 expected_asset_type=(
@@ -77,6 +82,12 @@ class _FakeQuests:
                 eval_input_key=(
                     None if isinstance(item, str) else item.get("eval_input_key")
                 ),
+                submission_assets=(
+                    None if isinstance(item, str) else item.get("submission_assets")
+                ),
+                eval_static_inputs=(
+                    None if isinstance(item, str) else item.get("eval_static_inputs")
+                ),
             )
             for idx, item in enumerate(items)
         ]
@@ -88,7 +99,20 @@ class _FakeQuests:
                 {
                     "id": "item-1",
                     "quest_id": "quest-1",
-                    "description": "Assigned task",
+                    "description": {
+                        "text": "Assigned task",
+                        "json": {
+                            "type": "doc",
+                            "content": [
+                                {
+                                    "type": "paragraph",
+                                    "content": [
+                                        {"type": "text", "text": "Assigned task"}
+                                    ],
+                                }
+                            ],
+                        },
+                    },
                     "status": "pending",
                 }
             ],
@@ -104,9 +128,12 @@ class _FakeQuests:
                 **kwargs,
             }
         )
+        description = kwargs.get("description", "updated")
+        if hasattr(description, "text") and not isinstance(description, (str, dict)):
+            description = description.text
         return _FakeModel(
             id=item_id,
-            description="updated",
+            description=description,
             status=kwargs.get("status", "pending"),
             sort_order=0,
             reward_currency=kwargs.get("reward_currency", "btc"),
@@ -303,7 +330,11 @@ def test_create_quest_items_accepts_strings_and_dicts() -> None:
 
     assert len(quests.calls) == 1
     assert quests.calls[0]["method"] == "create_items"
-    assert quests.calls[0]["items"] == payload
+    sent = quests.calls[0]["items"]
+    assert len(sent) == 2
+    assert sent[0]["description"].text == "plain description task"
+    assert sent[1]["description"].text == "Paid eval task"
+    assert sent[1]["reward_amount"] == 1500
 
     assert isinstance(result, list)
     assert result[0]["description"] == "plain description task"
@@ -331,19 +362,17 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
     )
 )
 
-    assert quests.calls == [
-        {
-            "method": "update_item",
-            "quest_id": "quest-1",
-            "item_id": "item-1",
-            "description": "patched",
-            "reward_currency": "usd",
-            "reward_amount": 2500,
-            "eval_route_id": "route-2",
-            "eval_pass_min": 0.5,
-            "eval_pass_max": 1.0,
-        }
-    ]
+    assert len(quests.calls) == 1
+    call = quests.calls[0]
+    assert call["method"] == "update_item"
+    assert call["quest_id"] == "quest-1"
+    assert call["item_id"] == "item-1"
+    assert call["description"].text == "patched"
+    assert call["reward_currency"] == "usd"
+    assert call["reward_amount"] == 2500
+    assert call["eval_route_id"] == "route-2"
+    assert call["eval_pass_min"] == 0.5
+    assert call["eval_pass_max"] == 1.0
 
 
 def test_update_quest_item_passes_waiting_fields() -> None:

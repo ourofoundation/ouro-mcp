@@ -7,6 +7,7 @@ import logging
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.utils.content import description_to_markdown
 from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
@@ -814,7 +815,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             base["items"] = [
                 {
                     "id": str(i.id),
-                    "description": i.description,
+                    "description": description_to_markdown(i.description) or "",
                     "status": i.status,
                     **({"notes": i.notes} if i.notes else {}),
                     **({"assignee_id": str(i.assignee_id)} if i.assignee_id else {}),

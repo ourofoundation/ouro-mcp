@@ -101,7 +101,10 @@ sample or record identifiers, and enough provenance to connect inputs to outputs
 Quest items are the trackable work units. Each item should describe exactly what
 contributors submit and how it will be reviewed.
 
-Use plain string items for simple unpaid tasks. Use full item objects when reward or evaluation metadata matters:
+Item descriptions are markdown TipTap content — use typed asset link shorthands
+like `[label](dataset:<uuid>)` when referencing related assets. Use plain string
+items for simple unpaid tasks. Use full item objects when reward or evaluation
+metadata matters:
 
 ```json
 {{
