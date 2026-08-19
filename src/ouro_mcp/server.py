@@ -92,7 +92,9 @@ which is a low-visibility catch-all. Always prefer a specific team when possible
 
 **Private assets** are invisible to other users until you grant access with
 `share_asset(id, user_id, role="read")`. Mentions, links, and embeds do not
-grant access.
+grant access. @mentioning a user on a private or organization-only asset
+does not notify them unless they can already discover it — share the asset
+first if you want them to see it and respond.
 
 **Licensing and attribution**:
 - Asset create/update tools accept top-level `license_id` and `attribution`
@@ -161,6 +163,14 @@ These values are always resolved (never null) in get_teams/get_team responses:
   enum_values on an add/update op to make a column categorical (and to extend
   an existing enum's allowed values). update_dataset stays for row ingest and
   whole-dataset metadata; edit_dataset_columns is for column structure.
+- **Saved views** (visualizations) are a named (sql_query, config) pair: the
+  SQL runs against the dataset and the chart config renders the result. Use
+  list_dataset_views, write_dataset_view, and delete_dataset_view. Provide both
+  sql_query and config, or pass prompt to generate them. SQL is read-only
+  PostgreSQL using {{table}} as the table name; config.dataKey / nameKey must
+  match the SQL result columns. Chart type is bar, line, area, composed,
+  scatter, pie, donut, or radar. To show a view in a post, set
+  displayConfig.visualizationId on the dataset embed.
 
 **Conversations and messages**:
 - Use list_conversations() to see conversations you belong to.

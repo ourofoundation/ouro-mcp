@@ -86,6 +86,8 @@ def register(mcp: FastMCP) -> None:
         displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
         For routes, set actionId to show a compact action receipt (status, timing, output).
         Prefer paste embed_markdown / link_markdown from route-action tools when referencing a run.
+        @mentions on private or organization-only posts do not notify the mentioned
+        user unless they can already discover the post — share it first if you want a response.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -156,6 +158,8 @@ def register(mcp: FastMCP) -> None:
         displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
         For routes, set actionId to show a compact action receipt (status, timing, output).
         Prefer paste embed_markdown / link_markdown from route-action tools when referencing a run.
+        @mentions on private or organization-only posts do not notify the mentioned
+        user unless they can already discover the post — share it first if you want a response.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 

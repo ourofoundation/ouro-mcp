@@ -155,6 +155,8 @@ def register(mcp: FastMCP) -> None:
 
         content_markdown supports extended markdown:
         - User mentions: @username
+          (@mentions on private/organization-only assets do not notify the
+          mentioned user unless they can already see the parent asset)
         - Asset links: prefer [text](post:|file:|dataset:|route:|service:|quest:<uuid>) shorthands; use [text](asset:<uuid>) only when the asset type is unknown
         - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
         - LaTeX: \\(inline\\), \\[display\\]
