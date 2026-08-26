@@ -73,11 +73,24 @@ class _FakeQuests:
                 eval_score_path=(
                     None if isinstance(item, str) else item.get("eval_score_path")
                 ),
+                eval_categories_path=(
+                    None
+                    if isinstance(item, str)
+                    else item.get("eval_categories_path")
+                ),
                 eval_pass_min=(
                     None if isinstance(item, str) else item.get("eval_pass_min")
                 ),
                 eval_pass_max=(
                     None if isinstance(item, str) else item.get("eval_pass_max")
+                ),
+                leaderboard_enabled=(
+                    False
+                    if isinstance(item, str)
+                    else bool(item.get("leaderboard_enabled"))
+                ),
+                leaderboard_order=(
+                    None if isinstance(item, str) else item.get("leaderboard_order")
                 ),
                 eval_input_key=(
                     None if isinstance(item, str) else item.get("eval_input_key")
@@ -138,6 +151,8 @@ class _FakeQuests:
             sort_order=0,
             reward_currency=kwargs.get("reward_currency", "btc"),
             reward_amount=kwargs.get("reward_amount", 0),
+            leaderboard_enabled=kwargs.get("leaderboard_enabled"),
+            leaderboard_order=kwargs.get("leaderboard_order"),
         )
 
     def create_entry(self, quest_id: str, **kwargs):
@@ -147,8 +162,42 @@ class _FakeQuests:
     def list_entries(self, quest_id: str, **kwargs):
         self.calls.append({"method": "list_entries", "quest_id": quest_id, **kwargs})
         return {
-            "data": [_FakeModel(id="entry-1", status="accepted")],
+            "data": [
+                _FakeModel(
+                    id="entry-1",
+                    status="accepted",
+                    eval_score=0.91,
+                    eval_status="passed",
+                    eval_action_id="action-1",
+                )
+            ],
             "pagination": {"hasMore": False, "limit": kwargs["limit"]},
+        }
+
+    def list_leaderboard(self, quest_id: str, item_id: str, **kwargs):
+        self.calls.append(
+            {
+                "method": "list_leaderboard",
+                "quest_id": quest_id,
+                "item_id": item_id,
+                **kwargs,
+            }
+        )
+        return {
+            "data": [
+                _FakeModel(
+                    placement=1,
+                    entry_id="entry-1",
+                    score=0.91,
+                    status="accepted",
+                    eval_status="passed",
+                    eval_action_id="action-1",
+                    category_scores={"accuracy": 0.95, "completeness": 0.8},
+                    user={"username": "ada"},
+                )
+            ],
+            "pagination": {"hasMore": False, "limit": kwargs["limit"]},
+            "item": {"id": item_id, "leaderboard_order": "desc"},
         }
 
     def review_entry(self, quest_id: str, entry_id: str, **kwargs):
@@ -314,6 +363,7 @@ def test_create_quest_items_accepts_strings_and_dicts() -> None:
             "reward_amount": 1500,
             "eval_route_id": "route-1",
             "eval_score_path": "$.eval.score",
+            "eval_categories_path": "$.eval.categories",
             "eval_pass_min": 0.7,
             "eval_pass_max": 1.0,
             "eval_input_key": "submission",
@@ -342,6 +392,7 @@ def test_create_quest_items_accepts_strings_and_dicts() -> None:
     assert result[1]["reward_currency"] == "btc"
     assert result[1]["reward_amount"] == 1500
     assert result[1]["eval_route_id"] == "route-1"
+    assert result[1]["eval_categories_path"] == "$.eval.categories"
     assert result[1]["eval_pass_min"] == 0.7
     assert result[1]["expected_asset_type"] == "dataset"
 
@@ -357,10 +408,13 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
             reward_currency="usd",
             reward_amount=2500,
             eval_route_id="route-2",
-        eval_pass_min=0.5,
-        eval_pass_max=1.0,
+            eval_categories_path="$.metrics",
+            eval_pass_min=0.5,
+            eval_pass_max=1.0,
+            leaderboard_enabled=True,
+            leaderboard_order="asc",
+        )
     )
-)
 
     assert len(quests.calls) == 1
     call = quests.calls[0]
@@ -371,8 +425,11 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
     assert call["reward_currency"] == "usd"
     assert call["reward_amount"] == 2500
     assert call["eval_route_id"] == "route-2"
+    assert call["eval_categories_path"] == "$.metrics"
     assert call["eval_pass_min"] == 0.5
     assert call["eval_pass_max"] == 1.0
+    assert call["leaderboard_enabled"] is True
+    assert call["leaderboard_order"] == "asc"
 
 
 def test_update_quest_item_passes_waiting_fields() -> None:
@@ -432,3 +489,27 @@ def test_review_quest_entry_calls_sdk() -> None:
             "review": None,
         }
     ]
+
+
+def test_list_quest_leaderboard_renders_ranked_rows() -> None:
+    quests = _FakeQuests()
+    result = _quest_tools()["list_quest_leaderboard"](
+        "quest-1",
+        "item-1",
+        _ctx(quests),
+    )
+
+    assert quests.calls == [
+        {
+            "method": "list_leaderboard",
+            "quest_id": "quest-1",
+            "item_id": "item-1",
+            "limit": 50,
+            "offset": 0,
+            "with_pagination": True,
+        }
+    ]
+    assert "score: 0.91" in result
+    assert "accuracy=0.95" in result
+    assert "@ada" in result
+    assert "item_id: `item-1`" in result

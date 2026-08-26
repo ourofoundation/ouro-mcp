@@ -118,6 +118,15 @@ into the description string — pass an object (or a plain prose string) instead
 `reward_amount` is in the smallest currency unit: sats for BTC and cents for USD.
 Confirm available budget before attaching rewards.
 
+For scored contests, attach an eval route (`eval_route_id`, `eval_score_path`,
+pass bounds) and set `leaderboard_enabled: true`. Choose `leaderboard_order`
+`"desc"` (higher wins) or `"asc"` (lower wins). If the route also returns a
+map of subcategory scores (default path `$.categories`, or set
+`eval_categories_path`), those show on the leaderboard; ranking still uses the
+main score. The leaderboard is a view over stored entry scores — it does not
+run a second ranking route. Continuous quests are the natural fit when the
+same contributor may submit many scored entries.
+
 ## Before calling create_quest
 
 Check that you can answer these questions:

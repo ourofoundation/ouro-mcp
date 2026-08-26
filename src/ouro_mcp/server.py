@@ -183,6 +183,8 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - Quest type: closable = one active entry per contributor per item (submitted/accepted); continuous = unlimited entries per item. Set type on create_quest.
 - Use submit_quest_entry(quest_id, item_id=..., description_markdown=..., assets={"<input_key>": "<uuid>"}) to contribute (e.g. {"file": "<cif-uuid>"} on eval items). On closable quests, reject the prior entry before resubmitting the same item.
 - Use list_quest_entries(quest_id=..., status=...) to review submitted, accepted, or rejected entries.
+- Use list_quest_leaderboard(quest_id=..., item_id=...) to read ranked eval scores for an item with leaderboard_enabled.
+- Item auto-eval uses eval_route_id + eval_score_path. Optional eval_categories_path (default $.categories) stores subcategory scores for display; ranking still uses the main score. Opt into a leaderboard with leaderboard_enabled and leaderboard_order ('desc' or 'asc'); this displays stored scores and does not run a second ranking route.
 - Use review_quest_entry(quest_id, entry_id, status="accepted"|"rejected") only when the caller has authority to review the quest.
 - Draft quests do not accept entries. Publish the quest with update_quest(status="open") before submit_quest_entry or complete_quest_item.
 - Use complete_quest_item only for owner/admin self-completion on open quests; normal contributors should submit entries.

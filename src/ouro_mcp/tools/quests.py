@@ -50,11 +50,22 @@ def _item_summary(item: Any) -> Dict[str, Any]:
             else None
         ),
         "eval_score_path": getattr(item, "eval_score_path", None),
+        "eval_categories_path": getattr(item, "eval_categories_path", None),
         "eval_pass_min": getattr(item, "eval_pass_min", None),
         "eval_pass_max": getattr(item, "eval_pass_max", None),
+        "leaderboard_enabled": getattr(item, "leaderboard_enabled", None),
+        "leaderboard_order": getattr(item, "leaderboard_order", None),
         "submission_assets": getattr(item, "submission_assets", None),
         "eval_static_inputs": getattr(item, "eval_static_inputs", None),
     }
+
+
+def _category_scores_part(scores: Any) -> Optional[str]:
+    if not isinstance(scores, dict) or not scores:
+        return None
+    return "categories: " + ", ".join(
+        f"{key}={value}" for key, value in scores.items()
+    )
 
 
 def _normalize_create_items(
@@ -343,6 +354,9 @@ def register(mcp: FastMCP) -> None:
                 parts.append(f"assignee: `{i.assignee_id}`")
             if getattr(i, "waiting_on", None):
                 parts.append(f"waiting_on: {i.waiting_on}")
+            if getattr(i, "leaderboard_enabled", False):
+                order = getattr(i, "leaderboard_order", None) or "desc"
+                parts.append(f"leaderboard: {order}")
             body_bits = []
             if i.notes:
                 body_bits.append(str(i.notes))
@@ -380,8 +394,11 @@ def register(mcp: FastMCP) -> None:
                     "assignee_id, "
                     "expected_asset_type, reward_currency ('btc'|'usd'), "
                     "reward_amount (sats for btc, cents for usd), "
-                    "eval_route_id, eval_score_path, eval_pass_min, "
-                    "eval_pass_max, submission_assets, eval_static_inputs."
+                    "eval_route_id, eval_score_path, eval_categories_path, "
+                    "eval_pass_min, "
+                    "eval_pass_max, leaderboard_enabled, leaderboard_order "
+                    "('desc' higher wins, 'asc' lower wins), "
+                    "submission_assets, eval_static_inputs."
                 )
             ),
         ],
@@ -467,13 +484,50 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="JSON path into the action response, defaults to $.score"),
         ] = None,
+        eval_categories_path: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "JSON path to a map of subcategory scores in the action "
+                    "response. Defaults to $.categories. Ranking still uses "
+                    "the main score."
+                )
+            ),
+        ] = None,
         eval_pass_min: Annotated[
             Optional[float],
-            Field(description="Inclusive minimum passing score"),
+            Field(
+                description=(
+                    "Inclusive minimum passing score. Omit both min and max to "
+                    "pass every scored submission."
+                )
+            ),
         ] = None,
         eval_pass_max: Annotated[
             Optional[float],
-            Field(description="Inclusive maximum passing score"),
+            Field(
+                description=(
+                    "Inclusive maximum passing score. Omit both min and max to "
+                    "pass every scored submission."
+                )
+            ),
+        ] = None,
+        leaderboard_enabled: Annotated[
+            Optional[bool],
+            Field(
+                description=(
+                    "When true, show a public ranked list of scored submissions "
+                    "for this item. Requires an eval route when enabling."
+                )
+            ),
+        ] = None,
+        leaderboard_order: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    '"desc" (higher score wins) or "asc" (lower score wins)'
+                )
+            ),
         ] = None,
         submission_assets: Annotated[
             Optional[Dict[str, Any]],
@@ -519,8 +573,11 @@ def register(mcp: FastMCP) -> None:
                 sort_order=sort_order,
                 eval_route_id=eval_route_id,
                 eval_score_path=eval_score_path,
+                eval_categories_path=eval_categories_path,
                 eval_pass_min=eval_pass_min,
                 eval_pass_max=eval_pass_max,
+                leaderboard_enabled=leaderboard_enabled,
+                leaderboard_order=leaderboard_order,
                 submission_assets=submission_assets,
                 eval_static_inputs=eval_static_inputs,
                 reward_currency=reward_currency,
@@ -674,6 +731,15 @@ def register(mcp: FastMCP) -> None:
                 parts.append(f"item_id: `{row['item_id']}`")
             if row.get("user_id"):
                 parts.append(f"user_id: `{row['user_id']}`")
+            if row.get("eval_score") is not None:
+                parts.append(f"score: {row['eval_score']}")
+            categories = _category_scores_part(row.get("eval_category_scores"))
+            if categories:
+                parts.append(categories)
+            if row.get("eval_status"):
+                parts.append(f"eval: {row['eval_status']}")
+            if row.get("eval_action_id"):
+                parts.append(f"action_id: `{row['eval_action_id']}`")
             assets = row.get("assets")
             body = None
             if assets:
@@ -692,6 +758,73 @@ def register(mcp: FastMCP) -> None:
             noun="quest entries",
             empty_text="No quest entries.",
             extras=[f"quest_id: `{quest_id}`"],
+        )
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    @handle_ouro_errors
+    def list_quest_leaderboard(
+        quest_id: Annotated[str, Field(description="Quest UUID")],
+        item_id: Annotated[str, Field(description="Leaderboard-enabled quest item UUID")],
+        ctx: Context,
+        limit: Annotated[int, Field(description="Page size, 1-200")] = 50,
+        offset: Annotated[int, Field(description="Offset for pagination")] = 0,
+    ) -> str:
+        """List ranked scored submissions for a quest item leaderboard.
+
+        Each row is one scored entry (not rolled up per user). Rejected entries
+        are omitted. Ranking uses the item's leaderboard_order (desc = higher
+        wins, asc = lower wins), then earliest submission. Subcategory scores
+        from the eval route appear on each row when present.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        result = ouro.quests.list_leaderboard(
+            quest_id,
+            item_id,
+            limit=limit,
+            offset=offset,
+            with_pagination=True,
+        )
+        rows = result.get("data", []) if isinstance(result, dict) else result
+        item = result.get("item") if isinstance(result, dict) else None
+        pagination = result.get("pagination") if isinstance(result, dict) else {}
+
+        def _row_line(row: Any) -> str:
+            data = row.model_dump(mode="json") if hasattr(row, "model_dump") else dict(row)
+            user = data.get("user") or {}
+            username = user.get("username")
+            parts = [
+                f"#{data.get('placement')}",
+                markdown_id(data.get("entry_id")),
+                f"score: {data.get('score')}" if data.get("score") is not None else None,
+            ]
+            categories = _category_scores_part(data.get("category_scores"))
+            if categories:
+                parts.append(categories)
+            if username:
+                parts.append(f"@{username}")
+            elif data.get("user"):
+                parts.append(f"user_id: `{user.get('user_id')}`")
+            if data.get("eval_status"):
+                parts.append(f"eval: {data['eval_status']}")
+            if data.get("eval_action_id"):
+                parts.append(f"action_id: `{data['eval_action_id']}`")
+            return markdown_bullet(
+                f"placement {data.get('placement')}",
+                *parts,
+            )
+
+        extras = [f"quest_id: `{quest_id}`", f"item_id: `{item_id}`"]
+        if isinstance(item, dict) and item.get("leaderboard_order"):
+            extras.append(f"order: {item['leaderboard_order']}")
+
+        return render_markdown_list(
+            rows,
+            line_fn=_row_line,
+            pagination=pagination,
+            offset=offset,
+            noun="leaderboard entries",
+            empty_text="No scored submissions on this leaderboard.",
+            extras=extras,
         )
 
     @mcp.tool(annotations={"idempotentHint": True})
