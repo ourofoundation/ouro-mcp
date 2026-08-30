@@ -118,6 +118,11 @@ into the description string — pass an object (or a plain prose string) instead
 `reward_amount` is in the smallest currency unit: sats for BTC and cents for USD.
 Confirm available budget before attaching rewards.
 
+`submission_assets` is a keyed record: each key is a contributor input name and
+each value is a declaration object with `asset_type` plus optional constraints
+such as `required`, `primary`, `input_filter`, `file_extensions`, and
+`contains_file_extensions`. Declare it directly for non-eval items.
+
 For scored contests, attach an eval route (`eval_route_id`, `eval_score_path`,
 pass bounds) and set `leaderboard_enabled: true`. Choose `leaderboard_order`
 `"desc"` (higher wins) or `"asc"` (lower wins). If the route also returns a
@@ -126,6 +131,13 @@ map of subcategory scores (default path `$.categories`, or set
 main score. The leaderboard is a view over stored entry scores — it does not
 run a second ranking route. Continuous quests are the natural fit when the
 same contributor may submit many scored entries.
+
+For an item with `eval_route_id`, do not invent or copy client-owned
+`submission_assets` keys. The server derives contributor keys from the eval
+route's input declarations after removing keys pinned in `eval_static_inputs`.
+Inspect the route before authoring pins, then inspect the created item with
+`list_quest_items` to see its effective `submission_assets` and
+`contributor_keys`.
 
 ## Before calling create_quest
 
@@ -157,4 +169,9 @@ When helping a contributor submit to a paid item, draft a clear description that
 explains why the submission satisfies the quest without revealing private asset
 contents, attach the private asset reference, and remind them that the author
 judges from the description + signals until accept.
+
+Before submitting any item, call `list_quest_items` and key `assets` with the
+exact contributor keys shown there. For eval items, inspect the eval route as
+well. Never assume a generic `file` or `artifact` key: eval contributor keys are
+derived and owned by the server from unpinned route inputs.
 """.strip()

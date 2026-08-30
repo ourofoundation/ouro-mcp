@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
-from ouro_mcp.tools.quests import register
+from mcp.server.fastmcp import FastMCP
+from ouro_mcp.tools.quests import (
+    EvalStaticInput,
+    SubmissionAssetDeclaration,
+    register,
+)
 
 
 class _CaptureMCP:
@@ -132,6 +138,39 @@ class _FakeQuests:
             "pagination": {"hasMore": False},
         }
 
+    def list_items(self, quest_id: str):
+        self.calls.append({"method": "list_items", "quest_id": quest_id})
+        return [
+            _FakeModel(
+                id="item-1",
+                description="Evaluate a structure",
+                status="pending",
+                sort_order=1,
+                reward_currency="btc",
+                reward_amount=0,
+                assignee_id=None,
+                waiting_on=None,
+                waiting_until=None,
+                child_quest_id=None,
+                notes=None,
+                leaderboard_enabled=False,
+                submission_assets={
+                    "structure": {
+                        "asset_type": "file",
+                        "required": True,
+                        "file_extensions": ["cif"],
+                    }
+                },
+                eval_static_inputs={
+                    "reference": {
+                        "asset_id": "asset-reference",
+                        "asset_type": "dataset",
+                    }
+                },
+                contributor_keys=[{"key": "structure", "required": True}],
+            )
+        ]
+
     def update_item(self, quest_id: str, item_id: str, **kwargs):
         self.calls.append(
             {
@@ -256,6 +295,19 @@ def test_list_assigned_quest_items_calls_sdk() -> None:
             "with_pagination": True,
         }
     ]
+
+
+def test_list_quest_items_exposes_effective_submission_shape() -> None:
+    quests = _FakeQuests()
+
+    result = _quest_tools()["list_quest_items"]("quest-1", _ctx(quests))
+
+    assert '"structure"' in result
+    assert '"file_extensions": ["cif"]' in result
+    assert "eval_static_inputs" in result
+    assert "asset-reference" in result
+    assert "contributor_keys" in result
+    assert quests.calls == [{"method": "list_items", "quest_id": "quest-1"}]
 
 
 def test_submit_quest_entry_passes_keyed_assets() -> None:
@@ -397,6 +449,74 @@ def test_create_quest_items_accepts_strings_and_dicts() -> None:
     assert result[1]["expected_asset_type"] == "dataset"
 
 
+def test_create_quest_items_summary_exposes_submission_shape() -> None:
+    quests = _FakeQuests()
+    result = json.loads(
+        _quest_tools()["create_quest_items"](
+            "quest-1",
+            [
+                {
+                    "description": "Submit a structure",
+                    "submission_assets": {
+                        "structure": {
+                            "asset_type": "file",
+                            "required": True,
+                            "file_extensions": ["cif"],
+                        }
+                    },
+                    "eval_static_inputs": {
+                        "reference": {
+                            "asset_id": "asset-reference",
+                            "asset_type": "dataset",
+                        }
+                    },
+                }
+            ],
+            _ctx(quests),
+        )
+    )
+
+    assert result[0]["submission_assets"]["structure"]["asset_type"] == "file"
+    assert result[0]["eval_static_inputs"]["reference"]["asset_id"] == "asset-reference"
+    assert result[0]["contributor_keys"] == [
+        {"key": "structure", "required": True}
+    ]
+
+
+def test_quest_write_tools_expose_concrete_submission_asset_schemas() -> None:
+    mcp = FastMCP("quest-schema-test")
+    register(mcp)
+    tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+
+    update_schema = tools["update_quest_item"].inputSchema
+    submission_property = update_schema["properties"]["submission_assets"]
+    declaration_ref = submission_property["anyOf"][0]["additionalProperties"]["$ref"]
+    declaration_name = declaration_ref.rsplit("/", 1)[-1]
+    declaration = update_schema["$defs"][declaration_name]
+
+    assert declaration["required"] == ["asset_type"]
+    assert set(declaration["properties"]) >= {
+        "asset_type",
+        "required",
+        "primary",
+        "input_filter",
+        "file_extensions",
+        "contains_file_extensions",
+    }
+    assert "server" in submission_property["description"]
+    assert "eval_route_id" in submission_property["description"]
+
+    for tool_name in ("create_quest", "create_quest_items"):
+        schema = tools[tool_name].inputSchema
+        item_model = schema["$defs"]["QuestItemInput"]
+        item_submission = item_model["properties"]["submission_assets"]
+        assert item_submission["anyOf"][0]["additionalProperties"]["$ref"].endswith(
+            "/SubmissionAssetDeclaration"
+        )
+        assert "server" in item_submission["description"]
+        assert "eval_route_id" in item_submission["description"]
+
+
 def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
     quests = _FakeQuests()
     json.loads(
@@ -430,6 +550,43 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
     assert call["eval_pass_max"] == 1.0
     assert call["leaderboard_enabled"] is True
     assert call["leaderboard_order"] == "asc"
+
+
+def test_update_quest_item_serializes_typed_submission_config() -> None:
+    quests = _FakeQuests()
+    _quest_tools()["update_quest_item"](
+        "quest-1",
+        "item-1",
+        _ctx(quests),
+        submission_assets={
+            "structure": SubmissionAssetDeclaration(
+                asset_type="file",
+                required=True,
+                file_extensions=["cif"],
+            )
+        },
+        eval_static_inputs={
+            "reference": EvalStaticInput(
+                asset_id="asset-reference",
+                asset_type="dataset",
+            )
+        },
+    )
+
+    call = quests.calls[0]
+    assert call["submission_assets"] == {
+        "structure": {
+            "asset_type": "file",
+            "required": True,
+            "file_extensions": ["cif"],
+        }
+    }
+    assert call["eval_static_inputs"] == {
+        "reference": {
+            "asset_id": "asset-reference",
+            "asset_type": "dataset",
+        }
+    }
 
 
 def test_update_quest_item_passes_waiting_fields() -> None:

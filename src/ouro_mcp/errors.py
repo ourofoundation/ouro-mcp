@@ -14,6 +14,7 @@ from ouro import (
     NotFoundError,
     PermissionDeniedError,
     RateLimitError,
+    UnprocessableEntityError,
 )
 
 try:
@@ -128,6 +129,22 @@ def _attach_sql_diagnostics(
     return payload
 
 
+def _attach_validation_diagnostics(
+    payload: dict[str, Any], e: APIStatusError
+) -> dict[str, Any]:
+    """Preserve structured server context for actionable 422 responses."""
+    body = getattr(e, "body", None)
+    error_obj = _server_error_object(e) or {}
+    body_obj = body if isinstance(body, dict) else {}
+    for key in ("details", "errors", "action_id"):
+        value = error_obj.get(key)
+        if value is None:
+            value = body_obj.get(key)
+        if value is not None and value != "":
+            payload[key] = value
+    return payload
+
+
 def _status_code(e: Exception) -> int | None:
     status = getattr(e, "status_code", None)
     if isinstance(status, int):
@@ -214,6 +231,11 @@ def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
         payload = _base_error_payload("bad_request", message, status=400)
         payload["retryable"] = False
         return json.dumps(_attach_sql_diagnostics(payload, e, message=message))
+    if isinstance(e, UnprocessableEntityError):
+        message = _server_detail(e) or raw
+        payload = _base_error_payload("validation_error", message, status=422)
+        payload["retryable"] = False
+        return json.dumps(_attach_validation_diagnostics(payload, e), default=str)
     if isinstance(e, InternalServerError):
         detail = _server_detail(e) or "Ouro API error. Try again shortly."
         payload = _base_error_payload(
@@ -315,6 +337,7 @@ def handle_ouro_errors(fn: Callable) -> Callable:
                 PermissionDeniedError,
                 RateLimitError,
                 BadRequestError,
+                UnprocessableEntityError,
                 InternalServerError,
                 RouteExecutionError,
                 APITimeoutError,
@@ -336,6 +359,7 @@ def handle_ouro_errors(fn: Callable) -> Callable:
             PermissionDeniedError,
             RateLimitError,
             BadRequestError,
+            UnprocessableEntityError,
             InternalServerError,
             RouteExecutionError,
             APITimeoutError,

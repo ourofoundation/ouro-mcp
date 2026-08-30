@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 
 import httpx
-from ouro import BadRequestError, ExternalServiceError, InternalServerError, RouteExecutionError
+from ouro import (
+    BadRequestError,
+    ExternalServiceError,
+    InternalServerError,
+    RouteExecutionError,
+    UnprocessableEntityError,
+)
 from ouro_mcp.errors import _format_ouro_error
 
 
@@ -102,3 +108,66 @@ def test_bad_request_column_missing_is_actionable_and_non_retryable() -> None:
     assert payload["code"] == "42703"
     assert 'Perhaps you meant to reference the column "MAE_eV".' in payload["hint"]
     assert "snake_case" in payload["hint"]
+
+
+def test_unprocessable_entity_is_actionable_and_preserves_nested_context() -> None:
+    body = {
+        "error": {
+            "message": "Quest eval configuration is invalid",
+            "details": "Pinned input 'reference' is not declared on the route",
+            "errors": [
+                {
+                    "field": "eval_static_inputs.reference",
+                    "message": "Unknown route input",
+                }
+            ],
+            "action_id": "00000000-0000-0000-0000-000000000001",
+        }
+    }
+    error = UnprocessableEntityError(
+        "Request failed with status 422",
+        response=_response(422, body),
+        body=body,
+    )
+
+    payload = json.loads(_format_ouro_error(error))
+
+    assert payload == {
+        "error": "validation_error",
+        "message": "Quest eval configuration is invalid",
+        "status": 422,
+        "retryable": False,
+        "details": "Pinned input 'reference' is not declared on the route",
+        "errors": [
+            {
+                "field": "eval_static_inputs.reference",
+                "message": "Unknown route input",
+            }
+        ],
+        "action_id": "00000000-0000-0000-0000-000000000001",
+    }
+
+
+def test_unprocessable_entity_preserves_top_level_context() -> None:
+    body = {
+        "message": "Submission does not match item requirements",
+        "details": {"expected_keys": ["structure"], "received_keys": ["file"]},
+        "errors": {"file": "Unexpected contributor key"},
+        "action_id": "00000000-0000-0000-0000-000000000002",
+    }
+    error = UnprocessableEntityError(
+        "Submission does not match item requirements",
+        response=_response(422, body),
+        body=body,
+    )
+
+    payload = json.loads(_format_ouro_error(error))
+
+    assert payload["error"] == "validation_error"
+    assert payload["retryable"] is False
+    assert payload["details"] == {
+        "expected_keys": ["structure"],
+        "received_keys": ["file"],
+    }
+    assert payload["errors"] == {"file": "Unexpected contributor key"}
+    assert payload["action_id"].endswith("0002")

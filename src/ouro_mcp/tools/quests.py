@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Dict, List, Optional, Union
+import json
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.utils.content import description_to_markdown
@@ -16,7 +17,97 @@ from ouro_mcp.utils import (
     optional_kwargs,
     render_markdown_list,
 )
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+AssetType = Literal["file", "dataset", "post"]
+
+
+class SubmissionAssetDeclaration(BaseModel):
+    """One declaration in a keyed quest-item submission_assets record."""
+
+    model_config = ConfigDict(extra="allow")
+
+    asset_type: AssetType = Field(
+        description="Asset type accepted for this contributor input"
+    )
+    required: bool = Field(
+        default=True, description="Whether contributors must provide this input"
+    )
+    primary: Optional[bool] = Field(
+        default=None, description="Whether this is the item's primary submitted asset"
+    )
+    input_filter: Optional[
+        Literal["audio", "video", "image", "pdf", "3d model", "atomic structure"]
+    ] = Field(default=None, description="Optional file-category constraint")
+    file_extensions: Optional[List[str]] = Field(
+        default=None,
+        description="Optional accepted file extensions, without leading dots",
+    )
+    contains_file_extensions: Optional[List[str]] = Field(
+        default=None,
+        description="Optional extensions that an archive/container must contain",
+    )
+
+
+class EvalStaticInput(BaseModel):
+    """A route input pinned by the quest author rather than a contributor."""
+
+    asset_id: str = Field(description="Pinned asset UUID")
+    asset_type: AssetType = Field(description="Pinned asset type")
+
+
+class QuestItemInput(BaseModel):
+    """Structured quest item accepted by create_quest and create_quest_items."""
+
+    # Keep forward compatibility with quest item fields added by the API while
+    # still publishing concrete schemas for the fields agents use today.
+    model_config = ConfigDict(extra="allow")
+
+    description: Union[str, Dict[str, Any]] = Field(
+        description="Task description as markdown or TipTap content"
+    )
+    type: Optional[str] = Field(default=None, description="Item type; usually 'task'")
+    sort_order: Optional[int] = Field(default=None, description="1-indexed display order")
+    assignee_id: Optional[str] = Field(default=None, description="Assigned user UUID")
+    expected_asset_type: Optional[AssetType] = Field(
+        default=None, description="Primary expected asset type"
+    )
+    reward_xp: Optional[int] = Field(default=None, ge=0)
+    reward_currency: Optional[Literal["btc", "usd"]] = None
+    reward_amount: Optional[int] = Field(default=None, ge=0)
+    child_quest_id: Optional[str] = None
+    eval_route_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Route UUID used for auto-evaluation. When set, contributor input keys "
+            "are derived from the route minus eval_static_inputs by the server."
+        ),
+    )
+    eval_score_path: Optional[str] = None
+    eval_categories_path: Optional[str] = None
+    eval_pass_min: Optional[float] = None
+    eval_pass_max: Optional[float] = None
+    leaderboard_enabled: Optional[bool] = None
+    leaderboard_order: Optional[Literal["desc", "asc"]] = None
+    submission_assets: Optional[Dict[str, SubmissionAssetDeclaration]] = Field(
+        default=None,
+        description=(
+            "Keyed record of contributor input names to declaration objects. Each "
+            "declaration requires asset_type and may set required, primary, "
+            "input_filter, file_extensions, or contains_file_extensions. Use this "
+            "for non-eval items. With eval_route_id, omit it: the server derives "
+            "and owns contributor keys from the route after removing pinned inputs."
+        ),
+    )
+    eval_static_inputs: Optional[Dict[str, EvalStaticInput]] = Field(
+        default=None,
+        description=(
+            "Keyed route inputs pinned by the author. Only valid with eval_route_id; "
+            "remaining route input keys become contributor-owned submission slots."
+        ),
+    )
+    notes: Optional[str] = None
 
 
 def _item_description_text(description: Any, *, max_length: Optional[int] = None) -> str:
@@ -27,36 +118,76 @@ def _item_description_text(description: Any, *, max_length: Optional[int] = None
     return description_to_markdown(description, max_length=max_length) or ""
 
 
+def _item_field(item: Any, name: str, default: Any = None) -> Any:
+    if isinstance(item, dict):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def _contributor_keys(item: Any) -> Any:
+    keys = _item_field(item, "contributor_keys")
+    if keys is not None:
+        return keys
+    declarations = _item_field(item, "submission_assets")
+    if not isinstance(declarations, dict):
+        return None
+    return [
+        {
+            "key": key,
+            "required": (
+                declaration.get("required", True)
+                if isinstance(declaration, dict)
+                else True
+            ),
+        }
+        for key, declaration in declarations.items()
+    ]
+
+
+def _dump_model_record(value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    return {
+        key: (
+            item.model_dump(exclude_none=True)
+            if isinstance(item, BaseModel)
+            else item
+        )
+        for key, item in value.items()
+    }
+
+
 def _item_summary(item: Any) -> Dict[str, Any]:
     return {
-        "id": str(item.id),
-        "description": _item_description_text(getattr(item, "description", None)),
-        "status": item.status,
-        "sort_order": getattr(item, "sort_order", None),
+        "id": str(_item_field(item, "id")),
+        "description": _item_description_text(_item_field(item, "description")),
+        "status": _item_field(item, "status"),
+        "sort_order": _item_field(item, "sort_order"),
         "assignee_id": (
-            str(getattr(item, "assignee_id"))
-            if getattr(item, "assignee_id", None)
+            str(_item_field(item, "assignee_id"))
+            if _item_field(item, "assignee_id")
             else None
         ),
-        "waiting_on": getattr(item, "waiting_on", None),
-        "waiting_until": getattr(item, "waiting_until", None),
-        "waiting_check_every": getattr(item, "waiting_check_every", None),
-        "reward_currency": getattr(item, "reward_currency", None),
-        "reward_amount": getattr(item, "reward_amount", None),
-        "expected_asset_type": getattr(item, "expected_asset_type", None),
+        "waiting_on": _item_field(item, "waiting_on"),
+        "waiting_until": _item_field(item, "waiting_until"),
+        "waiting_check_every": _item_field(item, "waiting_check_every"),
+        "reward_currency": _item_field(item, "reward_currency"),
+        "reward_amount": _item_field(item, "reward_amount"),
+        "expected_asset_type": _item_field(item, "expected_asset_type"),
         "eval_route_id": (
-            str(getattr(item, "eval_route_id"))
-            if getattr(item, "eval_route_id", None)
+            str(_item_field(item, "eval_route_id"))
+            if _item_field(item, "eval_route_id")
             else None
         ),
-        "eval_score_path": getattr(item, "eval_score_path", None),
-        "eval_categories_path": getattr(item, "eval_categories_path", None),
-        "eval_pass_min": getattr(item, "eval_pass_min", None),
-        "eval_pass_max": getattr(item, "eval_pass_max", None),
-        "leaderboard_enabled": getattr(item, "leaderboard_enabled", None),
-        "leaderboard_order": getattr(item, "leaderboard_order", None),
-        "submission_assets": getattr(item, "submission_assets", None),
-        "eval_static_inputs": getattr(item, "eval_static_inputs", None),
+        "eval_score_path": _item_field(item, "eval_score_path"),
+        "eval_categories_path": _item_field(item, "eval_categories_path"),
+        "eval_pass_min": _item_field(item, "eval_pass_min"),
+        "eval_pass_max": _item_field(item, "eval_pass_max"),
+        "leaderboard_enabled": _item_field(item, "leaderboard_enabled"),
+        "leaderboard_order": _item_field(item, "leaderboard_order"),
+        "submission_assets": _item_field(item, "submission_assets"),
+        "eval_static_inputs": _item_field(item, "eval_static_inputs"),
+        "contributor_keys": _contributor_keys(item),
     }
 
 
@@ -69,7 +200,7 @@ def _category_scores_part(scores: Any) -> Optional[str]:
 
 
 def _normalize_create_items(
-    ouro: Any, items: List[Union[str, Dict[str, Any]]]
+    ouro: Any, items: List[Union[str, QuestItemInput]]
 ) -> List[Dict[str, Any]]:
     """Convert plain description strings to rich Content before create."""
     rows: List[Dict[str, Any]] = []
@@ -77,7 +208,11 @@ def _normalize_create_items(
         if isinstance(item, str):
             rows.append({"description": content_from_markdown(ouro, item)})
             continue
-        row = dict(item)
+        row = (
+            item.model_dump(exclude_unset=True)
+            if isinstance(item, QuestItemInput)
+            else dict(item)
+        )
         description = row.get("description")
         if isinstance(description, str):
             row["description"] = content_from_markdown(ouro, description)
@@ -107,7 +242,7 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         items: Annotated[
-            Optional[List[Union[str, Dict[str, Any]]]],
+            Optional[List[Union[str, QuestItemInput]]],
             Field(
                 description=(
                     "List of task descriptions to create as quest items. "
@@ -116,7 +251,12 @@ def register(mcp: FastMCP) -> None:
                     "[text](post:|file:|dataset:|route:|service:|quest:<uuid>) and "
                     "becomes an item with status 'pending'. "
                     "Objects may also include assignee_id, reward_amount, "
-                    "eval_route_id, or submission_assets."
+                    "eval_route_id, or submission_assets. submission_assets is "
+                    "a keyed record whose values are declaration objects with "
+                    "asset_type and optional required/file constraints. When "
+                    "eval_route_id is set, omit submission_assets: contributor "
+                    "keys are derived and owned by the server from unpinned "
+                    "route inputs."
                 )
             ),
         ] = None,
@@ -177,19 +317,7 @@ def register(mcp: FastMCP) -> None:
 
         result = format_asset_summary(quest)
         if quest.items:
-            result["items"] = [
-                {
-                    "id": str(i.id),
-                    "description": _item_description_text(i.description),
-                    "status": i.status,
-                    **(
-                        {"assignee_id": str(getattr(i, "assignee_id"))}
-                        if getattr(i, "assignee_id", None)
-                        else {}
-                    ),
-                }
-                for i in quest.items
-            ]
+            result["items"] = [_item_summary(i) for i in quest.items]
         return dump_json(result)
 
     @mcp.tool(annotations={"idempotentHint": True})
@@ -316,9 +444,19 @@ def register(mcp: FastMCP) -> None:
             ]
             if row.get("quest_id"):
                 parts.append(f"quest_id: `{row['quest_id']}`")
+            body_bits = []
+            for key in ("submission_assets", "eval_static_inputs"):
+                if row.get(key):
+                    body_bits.append(f"{key}: {json.dumps(row[key], default=str)}")
+            contributor_keys = _contributor_keys(row)
+            if contributor_keys:
+                body_bits.append(
+                    f"contributor_keys: {json.dumps(contributor_keys, default=str)}"
+                )
             return markdown_bullet(
                 _item_description_text(row.get("description")) or "(no description)",
                 *parts,
+                body=" · ".join(body_bits) if body_bits else None,
             )
 
         return render_markdown_list(
@@ -364,6 +502,22 @@ def register(mcp: FastMCP) -> None:
                 body_bits.append(f"waiting_until: {i.waiting_until}")
             if getattr(i, "child_quest_id", None):
                 body_bits.append(f"child_quest_id: `{i.child_quest_id}`")
+            if getattr(i, "submission_assets", None):
+                body_bits.append(
+                    "submission_assets: "
+                    + json.dumps(i.submission_assets, default=str)
+                )
+            if getattr(i, "eval_static_inputs", None):
+                body_bits.append(
+                    "eval_static_inputs: "
+                    + json.dumps(i.eval_static_inputs, default=str)
+                )
+            contributor_keys = _contributor_keys(i)
+            if contributor_keys:
+                body_bits.append(
+                    "contributor_keys: "
+                    + json.dumps(contributor_keys, default=str)
+                )
             return markdown_bullet(
                 _item_description_text(i.description) or "(no description)",
                 *parts,
@@ -384,7 +538,7 @@ def register(mcp: FastMCP) -> None:
     def create_quest_items(
         quest_id: Annotated[str, Field(description="Quest UUID")],
         items: Annotated[
-            List[Union[str, Dict[str, Any]]],
+            List[Union[str, QuestItemInput]],
             Field(
                 description=(
                     "Items to add. Each element is either a markdown description "
@@ -398,13 +552,25 @@ def register(mcp: FastMCP) -> None:
                     "eval_pass_min, "
                     "eval_pass_max, leaderboard_enabled, leaderboard_order "
                     "('desc' higher wins, 'asc' lower wins), "
-                    "submission_assets, eval_static_inputs."
+                    "submission_assets, eval_static_inputs. submission_assets "
+                    "must be a keyed record of declaration objects, each with "
+                    "asset_type and optional required, primary, input_filter, "
+                    "file_extensions, or contains_file_extensions. For an item "
+                    "with eval_route_id, do not propose submission_assets keys: "
+                    "the server derives contributor keys from route inputs not "
+                    "listed in eval_static_inputs."
                 )
             ),
         ],
         ctx: Context,
     ) -> str:
-        """Batch-add items to an existing quest (for replanning, decomposition, or attaching rewards/eval)."""
+        """Batch-add items to an existing quest.
+
+        For non-eval items, ``submission_assets`` declares a keyed record of
+        contributor inputs. For eval items, set ``eval_route_id`` and optional
+        ``eval_static_inputs``; the server derives the remaining contributor
+        keys from the route, so do not supply competing ``submission_assets``.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
         created = ouro.quests.create_items(
             quest_id, _normalize_create_items(ouro, items)
@@ -530,12 +696,28 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         submission_assets: Annotated[
-            Optional[Dict[str, Any]],
-            Field(description="Keyed submission declarations for non-eval items"),
+            Optional[Dict[str, SubmissionAssetDeclaration]],
+            Field(
+                description=(
+                    "For non-eval items, a keyed record mapping each contributor "
+                    "input name to a declaration object. Each value requires "
+                    "asset_type and may include required, primary, input_filter, "
+                    "file_extensions, or contains_file_extensions. Do not send "
+                    "this with eval_route_id: eval contributor keys are derived "
+                    "from the route and owned by the server, so client keys are "
+                    "ignored/replaced."
+                )
+            ),
         ] = None,
         eval_static_inputs: Annotated[
-            Optional[Dict[str, str]],
-            Field(description="Pinned route inputs: key → asset UUID"),
+            Optional[Dict[str, EvalStaticInput]],
+            Field(
+                description=(
+                    "Pinned eval-route inputs keyed by route input name; each "
+                    "value contains asset_id and asset_type. Inspect the route "
+                    "before pinning. Unpinned route keys become contributor inputs."
+                )
+            ),
         ] = None,
         reward_currency: Annotated[
             Optional[str],
@@ -552,7 +734,13 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
     ) -> str:
-        """Update an item's metadata, status, reward, or auto-eval config. For completions with provenance, use complete_quest_item instead."""
+        """Update an item's metadata, status, reward, or auto-eval config.
+
+        ``submission_assets`` is for explicit non-eval declarations. With an
+        ``eval_route_id``, the server owns contributor keys and derives them
+        from route inputs minus ``eval_static_inputs``. For completions with
+        provenance, use complete_quest_item instead.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
         description_content = (
             content_from_markdown(ouro, description)
@@ -578,8 +766,8 @@ def register(mcp: FastMCP) -> None:
                 eval_pass_max=eval_pass_max,
                 leaderboard_enabled=leaderboard_enabled,
                 leaderboard_order=leaderboard_order,
-                submission_assets=submission_assets,
-                eval_static_inputs=eval_static_inputs,
+                submission_assets=_dump_model_record(submission_assets),
+                eval_static_inputs=_dump_model_record(eval_static_inputs),
                 reward_currency=reward_currency,
                 reward_amount=reward_amount,
             ),
@@ -661,8 +849,10 @@ def register(mcp: FastMCP) -> None:
             Optional[Dict[str, Union[str, Dict[str, str]]]],
             Field(
                 description=(
-                    'Asset submissions: {"<input_key>": "<uuid>"} '
-                    "(e.g. {\"file\": \"<cif-uuid>\"} on eval items)."
+                    'Asset submissions: {"<contributor_key>": "<asset_uuid>"}. '
+                    "First inspect list_quest_items (and the eval route when "
+                    "present), then use the exact contributor_keys returned "
+                    "for that item."
                 )
             ),
         ] = None,
@@ -672,8 +862,10 @@ def register(mcp: FastMCP) -> None:
         The quest must be open. Draft quests are not accepting submissions until
         the owner publishes them.
 
-        Pass ``item_id`` and ``assets`` (one UUID per submission input key from the
-        item's submission_assets / eval route). Example: ``assets={"file": "<cif-uuid>"}``.
+        Pass ``item_id`` and ``assets`` with one UUID per exact contributor key.
+        Inspect ``list_quest_items`` first; for eval items, also inspect the route.
+        The server derives these keys from unpinned route inputs, so do not guess
+        a generic file or artifact key.
 
         Provide ``description_markdown`` with the contributor's explanation. For
         paid items, the quest author reviews that description and deterministic

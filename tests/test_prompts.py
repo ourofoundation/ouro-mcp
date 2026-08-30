@@ -39,3 +39,7 @@ def test_quest_authoring_guide_includes_context_and_guidance() -> None:
     assert "agent_can_create" in prompt
     assert 'type="continuous"' in prompt
     assert "reward_amount" in prompt
+    assert "`submission_assets` is a keyed record" in prompt
+    assert "server derives contributor keys" in prompt
+    assert "list_quest_items" in prompt
+    assert "Never assume a generic `file` or `artifact` key" in prompt

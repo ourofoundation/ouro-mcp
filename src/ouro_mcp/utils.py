@@ -1405,8 +1405,8 @@ def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
 def route_request_body_without_input_assets(route: Any) -> Any:
     """Hide Ouro-resolved asset object schemas from route execution metadata.
 
-    Agents should pass IDs via ``input_assets``/``input_asset``. The backend
-    expands those IDs into the service-facing body object.
+    Agents should pass IDs via the canonical keyed ``input_assets`` mapping.
+    The backend expands those IDs into the service-facing body object.
     """
     request_body = _getv(route, "request_body")
     if not isinstance(request_body, dict):
