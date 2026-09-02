@@ -1269,26 +1269,35 @@ def format_monetization_block(asset: Any) -> dict[str, Any]:
     return {k: v for k, v in block.items() if v is not None}
 
 
+# Models fill unused optionals with blanks or string-nulls ("null", "/null")
+# instead of omitting the key or sending JSON null. Filter params only — never
+# a real org/team/user id, enum, or time_window.
+_ABSENT_OPTIONAL_STRINGS = frozenset({"null", "none", "undefined", "/null"})
+
+
+def is_absent_optional(value: Any) -> bool:
+    """True when an optional filter should be treated as omitted."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        stripped = value.strip()
+        return not stripped or stripped.lower() in _ABSENT_OPTIONAL_STRINGS
+    return False
+
+
 def optional_kwargs(**kw: Any) -> dict:
     """Build a kwargs dict, dropping any keys whose value is None."""
     return {k: v for k, v in kw.items() if v is not None}
 
 
 def present_kwargs(**kw: Any) -> dict:
-    """Like optional_kwargs, also dropping blank strings.
+    """Like optional_kwargs, also dropping blank and string-null sentinels.
 
-    Use for filter/search params where models often send ``""`` for unused
-    optionals. Do **not** use for update fields that treat ``""`` as an
-    explicit clear (e.g. quest waiting_*).
+    Use for filter/search params where models often send ``""``, ``"null"``,
+    or ``"/null"`` for unused optionals. Do **not** use for update fields
+    that treat ``""`` as an explicit clear (e.g. quest waiting_*).
     """
-    out: dict[str, Any] = {}
-    for key, value in kw.items():
-        if value is None:
-            continue
-        if isinstance(value, str) and not value.strip():
-            continue
-        out[key] = value
-    return out
+    return {k: v for k, v in kw.items() if not is_absent_optional(v)}
 
 
 def route_input_assets_summary(route: Any) -> dict[str, Any] | None:

@@ -147,8 +147,8 @@ def register(mcp: FastMCP) -> None:
         if extension:
             merged_metadata["extension"] = extension
 
-        # Models often fill unused optionals with ""; blank UUID filters 500
-        # in Postgres ("invalid input syntax for type uuid: \"\"").
+        # Models often fill unused optionals with "" or "/null"; those UUID
+        # filters 500 in Postgres ("invalid input syntax for type uuid").
         response = ouro.assets.search(
             query,
             limit=limit,
