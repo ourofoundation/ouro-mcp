@@ -199,6 +199,8 @@ These values are always resolved (never null) in get_teams/get_team responses:
 - Services default to MIT and also accept Apache-2.0, GPL-3.0-only,
   AGPL-3.0-only, MPL-2.0, and ARR.
 - Use update_service(id, ...) to change metadata (merged with existing values).
+ Set refresh_spec=true to re-fetch the service's stored remote OpenAPI spec and
+ sync its routes without resending spec_url.
 - Use create_route(service_id, method, path, ...) to add an endpoint to a service
   (e.g. for a service created without a spec); `method` + `path` must be unique
   within the service. Use update_route(id, ...) to change a route.

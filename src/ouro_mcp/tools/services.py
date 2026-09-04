@@ -716,6 +716,15 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="Storage path to an uploaded OpenAPI spec; re-parses routes."),
         ] = None,
+        refresh_spec: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Re-fetch the service's stored remote OpenAPI spec URL and "
+                    "sync its routes. No spec_url needs to be provided."
+                )
+            ),
+        ] = False,
         visibility: Annotated[
             Optional[str], Field(description='"public" | "private" | "organization"')
         ] = None,
@@ -754,7 +763,8 @@ def register(mcp: FastMCP) -> None:
 
         Service config merges into `metadata`; provenance merges into
         `attribution`. Pass only what changes. Providing `spec_url` or
-        `spec_path` re-parses the OpenAPI spec and syncs routes.
+        `spec_path` re-parses the OpenAPI spec and syncs routes. Set
+        `refresh_spec=true` to re-fetch the stored remote spec URL.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         legacy_provenance = optional_kwargs(
@@ -765,6 +775,13 @@ def register(mcp: FastMCP) -> None:
             external_url=external_url,
             relation_type=relation_type,
         )
+        if refresh_spec and spec_url is None and spec_path is None:
+            current = ouro.services.retrieve(id)
+            spec_url = current.metadata.spec_url if current.metadata else None
+            if not spec_url:
+                raise ValueError(
+                    "refresh_spec=true requires the service to have a stored spec_url"
+                )
 
         service = ouro.services.update(
             id,
