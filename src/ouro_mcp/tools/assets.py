@@ -228,7 +228,9 @@ def register(mcp: FastMCP) -> None:
 
         if asset_type == "dataset":
             result = ouro.datasets.delete(id, **delete_kwargs)
-        elif asset_type == "post":
+        elif asset_type in {"post", "comment"}:
+            # Comments share DELETE /posts/:id (permission is type-agnostic;
+            # the handler cascades the reply thread).
             result = ouro.posts.delete(id, **delete_kwargs)
         elif asset_type == "file":
             result = ouro.files.delete(id, **delete_kwargs)
@@ -236,6 +238,8 @@ def register(mcp: FastMCP) -> None:
             result = ouro.quests.delete(id, **delete_kwargs)
         elif asset_type == "service":
             result = ouro.services.delete(id, **delete_kwargs)
+        elif asset_type == "route":
+            result = ouro.routes.delete(id, **delete_kwargs)
         else:
             return dump_json(
                 {
