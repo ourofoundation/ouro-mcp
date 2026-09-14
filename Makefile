@@ -1,25 +1,18 @@
 # UV_PYTHON overrides .python-version ("ouro" is a pyenv env name, not a uv request).
 export UV_PYTHON ?= python3
 
-# Project-scoped token stored via:
-#   keyring set 'https://upload.pypi.org/legacy/?ouro-mcp' __token__
-PUBLISH_URL ?= https://upload.pypi.org/legacy/?ouro-mcp
-
-.PHONY: build publish release
+.PHONY: build release
 
 build:
 	uv build --clear
 
-publish: build
-	uv publish \
-		--username __token__ \
-		--keyring-provider subprocess \
-		--publish-url '$(PUBLISH_URL)'
-
 # usage: make release | make release minor | make release major
+# Bumps pyproject.toml. Commit, tag vX.Y.Z, and push to publish via GitHub Actions.
 release:
 	uv version --bump $(or $(filter-out $@,$(MAKECMDGOALS)),patch) --no-sync
-	$(MAKE) publish
+	@echo ""
+	@echo "Bumped to $$(uv version --short). Commit, then publish with:"
+	@echo "  git tag v$$(uv version --short) && git push origin HEAD --tags"
 
 %:
 	@:
