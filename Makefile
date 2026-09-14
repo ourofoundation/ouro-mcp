@@ -7,12 +7,11 @@ build:
 	uv build --clear
 
 # usage: make release | make release minor | make release major
-# Bumps pyproject.toml. Commit, tag vX.Y.Z, and push to publish via GitHub Actions.
+# Bumps pyproject.toml. Commit and push to main to publish via GitHub Actions.
 release:
 	uv version --bump $(or $(filter-out $@,$(MAKECMDGOALS)),patch) --no-sync
 	@echo ""
-	@echo "Bumped to $$(uv version --short). Commit, then publish with:"
-	@echo "  git tag v$$(uv version --short) && git push origin HEAD --tags"
+	@echo "Bumped to $$(uv version --short). Commit and push to main to publish."
 
 %:
 	@:
