@@ -502,6 +502,7 @@ def test_quest_write_tools_expose_concrete_submission_asset_schemas() -> None:
         "input_filter",
         "file_extensions",
         "contains_file_extensions",
+        "label",
     }
     assert "server" in submission_property["description"]
     assert "eval_route_id" in submission_property["description"]

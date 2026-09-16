@@ -1054,7 +1054,7 @@ wheels = [
 
 [[package]]
 name = "ouro-mcp"
-version = "0.7.18"
+version = "0.7.19"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },

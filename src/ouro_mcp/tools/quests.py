@@ -48,6 +48,10 @@ class SubmissionAssetDeclaration(BaseModel):
         default=None,
         description="Optional extensions that an archive/container must contain",
     )
+    label: Optional[str] = Field(
+        default=None,
+        description="Contributor-facing title shown instead of the JSON key",
+    )
 
 
 class EvalStaticInput(BaseModel):
@@ -95,9 +99,10 @@ class QuestItemInput(BaseModel):
         description=(
             "Keyed record of contributor input names to declaration objects. Each "
             "declaration requires asset_type and may set required, primary, "
-            "input_filter, file_extensions, or contains_file_extensions. Use this "
-            "for non-eval items. With eval_route_id, omit it: the server derives "
-            "and owns contributor keys from the route after removing pinned inputs."
+            "input_filter, file_extensions, contains_file_extensions, or label. "
+            "Use this for non-eval items. With eval_route_id, you may overlay "
+            "label on the derived keys (same names); do not change keys or "
+            "constraints — the server owns those from the route."
         ),
     )
     eval_static_inputs: Optional[Dict[str, EvalStaticInput]] = Field(
@@ -134,6 +139,11 @@ def _contributor_keys(item: Any) -> Any:
     return [
         {
             "key": key,
+            **(
+                {"label": declaration["label"]}
+                if isinstance(declaration, dict) and declaration.get("label")
+                else {}
+            ),
             "required": (
                 declaration.get("required", True)
                 if isinstance(declaration, dict)
@@ -253,10 +263,9 @@ def register(mcp: FastMCP) -> None:
                     "Objects may also include assignee_id, reward_amount, "
                     "eval_route_id, or submission_assets. submission_assets is "
                     "a keyed record whose values are declaration objects with "
-                    "asset_type and optional required/file constraints. When "
-                    "eval_route_id is set, omit submission_assets: contributor "
-                    "keys are derived and owned by the server from unpinned "
-                    "route inputs."
+                    "asset_type and optional required/file constraints and label. "
+                    "When eval_route_id is set, you may overlay label on derived "
+                    "keys; do not change keys or constraints."
                 )
             ),
         ] = None,
@@ -555,10 +564,9 @@ def register(mcp: FastMCP) -> None:
                     "submission_assets, eval_static_inputs. submission_assets "
                     "must be a keyed record of declaration objects, each with "
                     "asset_type and optional required, primary, input_filter, "
-                    "file_extensions, or contains_file_extensions. For an item "
-                    "with eval_route_id, do not propose submission_assets keys: "
-                    "the server derives contributor keys from route inputs not "
-                    "listed in eval_static_inputs."
+                    "file_extensions, contains_file_extensions, or label. For an "
+                    "item with eval_route_id, you may overlay label on derived "
+                    "keys; do not change keys or constraints."
                 )
             ),
         ],
@@ -568,8 +576,8 @@ def register(mcp: FastMCP) -> None:
 
         For non-eval items, ``submission_assets`` declares a keyed record of
         contributor inputs. For eval items, set ``eval_route_id`` and optional
-        ``eval_static_inputs``; the server derives the remaining contributor
-        keys from the route, so do not supply competing ``submission_assets``.
+        ``eval_static_inputs``; the server derives contributor keys from the
+        route. You may overlay ``label`` on those derived keys.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         created = ouro.quests.create_items(
@@ -702,10 +710,9 @@ def register(mcp: FastMCP) -> None:
                     "For non-eval items, a keyed record mapping each contributor "
                     "input name to a declaration object. Each value requires "
                     "asset_type and may include required, primary, input_filter, "
-                    "file_extensions, or contains_file_extensions. Do not send "
-                    "this with eval_route_id: eval contributor keys are derived "
-                    "from the route and owned by the server, so client keys are "
-                    "ignored/replaced."
+                    "file_extensions, contains_file_extensions, or label. With "
+                    "eval_route_id, you may overlay label on the derived keys; "
+                    "the server still owns keys and constraints from the route."
                 )
             ),
         ] = None,

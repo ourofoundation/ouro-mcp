@@ -36,6 +36,7 @@ def _team_summary(team: dict[str, Any]) -> dict[str, Any]:
         "default_role": team.get("default_role"),
         "source_policy": source,
         "actor_type_policy": actor,
+        "join_policy": team.get("join_policy") or "open",
         "agent_can_create": source != "web_only",
     }
     url = team_web_url(
@@ -50,6 +51,12 @@ def _team_summary(team: dict[str, Any]) -> dict[str, Any]:
         result["description"] = desc.get("text", "")
     elif desc:
         result["description"] = str(desc)
+    join_request = team.get("userJoinRequest")
+    if join_request:
+        result["join_request"] = {
+            "id": str(join_request.get("id", "")),
+            "status": join_request.get("status"),
+        }
     return result
 
 
@@ -65,11 +72,14 @@ def register(mcp: FastMCP) -> None:
         default_role: Annotated[str, Field(description='"read" | "write" | "admin"')] = "write",
         actor_type_policy: Annotated[str, Field(description='"any" | "verified_only" | "agents_only"')] = "any",
         source_policy: Annotated[str, Field(description='"any" | "web_only" | "api_only"')] = "any",
+        join_policy: Annotated[str, Field(description='"open" | "request" | "invite_only"')] = "open",
     ) -> str:
         """Create a new team in an organization.
 
         For external members, team creation is only allowed when the organization
         enables external public team creation, and visibility is "public".
+        join_policy controls membership: open (self-join), request (admin approval),
+        or invite_only (admins add members). Reading is unchanged.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         team = ouro.teams.create(
@@ -80,6 +90,7 @@ def register(mcp: FastMCP) -> None:
             default_role=default_role,
             actor_type_policy=actor_type_policy,
             source_policy=source_policy,
+            join_policy=join_policy,
         )
 
         return dump_json(_team_summary(team))
@@ -95,6 +106,7 @@ def register(mcp: FastMCP) -> None:
         default_role: Annotated[Optional[str], Field(description='"read" | "write" | "admin"')] = None,
         actor_type_policy: Annotated[Optional[str], Field(description='"any" | "verified_only" | "agents_only"')] = None,
         source_policy: Annotated[Optional[str], Field(description='"any" | "web_only" | "api_only"')] = None,
+        join_policy: Annotated[Optional[str], Field(description='"open" | "request" | "invite_only"')] = None,
     ) -> str:
         """Update a team's name, description, visibility, default_role, or policy settings."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -107,6 +119,7 @@ def register(mcp: FastMCP) -> None:
             default_role=default_role,
             actor_type_policy=actor_type_policy,
             source_policy=source_policy,
+            join_policy=join_policy,
         )
         return dump_json(_team_summary(team))
 
@@ -185,6 +198,8 @@ def register(mcp: FastMCP) -> None:
                 parts.append(str(row["visibility"]))
             if row.get("role"):
                 parts.append(f"role: {row['role']}")
+            if row.get("join_policy") and row.get("join_policy") != "open":
+                parts.append(f"join: {row['join_policy']}")
             if row.get("agent_can_create") is False:
                 parts.append("agent_can_create: false")
             if row.get("member_count") is not None:
@@ -266,7 +281,9 @@ def register(mcp: FastMCP) -> None:
 
         Joining requires membership in the team's organization and respects
         actor_type_policy: 'verified_only' blocks agents, 'agents_only' blocks
-        humans. Check get_teams(discover=True) to see policies before joining.
+        humans. join_policy further gates membership: 'request' submits a join
+        request for admin approval instead of joining immediately; 'invite_only'
+        and team bans return an error. Check get_teams(discover=True) before joining.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         result = ouro.teams.join(id) if member else ouro.teams.leave(id)
