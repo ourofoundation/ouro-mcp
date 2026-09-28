@@ -13,12 +13,18 @@ from mcp.server.fastmcp import FastMCP
 from ouro_mcp import __version__
 from ouro_mcp.constants import (
     DEFAULT_HTTP_PORT,
+    DEFAULT_OURO_MCP_AUTH_ISSUER,
     ENV_OURO_API_KEY,
     ENV_OURO_BASE_URL,
+    ENV_OURO_MCP_AUTH_ISSUER,
     ENV_OURO_MCP_LOCAL_FILES,
+    ENV_OURO_MCP_RESOURCE_URL,
+    OURO_MCP_OAUTH_SCOPE,
 )
 from ouro_mcp.http_auth import (
+    ApiKeyHeaderShim,
     ApiKeyMiddleware,
+    OuroTokenVerifier,
     RequestScopedOuro,
     bind_stdio_client,
     http_mode,
@@ -280,6 +286,28 @@ register_all_resources(mcp)
 register_all_prompts(mcp)
 
 
+def enable_http_auth(server: FastMCP, public_host: str) -> None:
+    """Require a verified bearer token on the MCP endpoint and advertise OAuth.
+
+    Unauthenticated requests get a 401 whose ``WWW-Authenticate`` header points
+    at ``/.well-known/oauth-protected-resource/mcp``, which names Supabase Auth
+    as the authorization server. That is the discovery chain MCP clients follow.
+    """
+    from mcp.server.auth.settings import AuthSettings
+
+    issuer = os.environ.get(ENV_OURO_MCP_AUTH_ISSUER, "").strip() or DEFAULT_OURO_MCP_AUTH_ISSUER
+    resource = os.environ.get(ENV_OURO_MCP_RESOURCE_URL, "").strip() or f"https://{public_host}/mcp"
+    # MCPServer only takes these in its constructor, and HTTP mode is not
+    # known until main() runs; streamable_http_app() reads both at build time.
+    server.settings.auth = AuthSettings(
+        issuer_url=issuer,
+        resource_server_url=resource,
+        required_scopes=[OURO_MCP_OAUTH_SCOPE],
+    )
+    server._token_verifier = OuroTokenVerifier()
+    log.info("OAuth enabled: resource=%s issuer=%s", resource, issuer)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ouro MCP Server")
     parser.add_argument(
@@ -331,27 +359,30 @@ def main():
             "callers send API keys as bearer tokens.",
             args.host,
         )
+    enable_http_auth(mcp, public_host)
     log.info(
-        "Starting ouro-mcp transport=%s on %s:%s (per-request API keys, local files disabled)",
+        "Starting ouro-mcp transport=%s on %s:%s (per-request credentials, local files disabled)",
         args.transport,
         args.host,
         args.port,
     )
     if args.transport == "streamable-http":
-        mcp.run(
-            transport="streamable-http",
-            host=args.host,
-            port=args.port,
+        app = mcp.streamable_http_app(
             json_response=True,
             stateless_http=True,
             transport_security=transport_security,
+            host=args.host,
         )
-        return
-    mcp.run(
-        transport="sse",
+    else:
+        app = mcp.sse_app(transport_security=transport_security, host=args.host)
+
+    import uvicorn
+
+    uvicorn.run(
+        ApiKeyHeaderShim(app),
         host=args.host,
         port=args.port,
-        transport_security=transport_security,
+        log_level=mcp.settings.log_level.lower(),
     )
 
 

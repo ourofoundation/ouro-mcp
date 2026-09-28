@@ -45,3 +45,13 @@ ENV_OURO_MCP_LOG_LEVEL = "OURO_MCP_LOG_LEVEL"
 ENV_OURO_MCP_LOG_STYLE = "OURO_MCP_LOG_STYLE"
 
 DEFAULT_HTTP_PORT = 8000
+
+# Hosted HTTP OAuth. The issuer is Supabase Auth's OAuth 2.1 server; the
+# resource URL is this server's public MCP endpoint (RFC 9728 `resource`).
+ENV_OURO_MCP_AUTH_ISSUER = "OURO_MCP_AUTH_ISSUER"
+ENV_OURO_MCP_RESOURCE_URL = "OURO_MCP_RESOURCE_URL"
+DEFAULT_OURO_MCP_AUTH_ISSUER = "https://database.ouro.foundation/auth/v1"
+# The scope advertised to MCP clients. Supabase Auth has no custom scopes, and
+# requesting `openid` fails token exchange while the project signs with HS256
+# ("HS256 is not supported for ID token signing"). `email` is its default.
+OURO_MCP_OAUTH_SCOPE = "email"

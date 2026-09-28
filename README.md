@@ -167,8 +167,16 @@ ouro-mcp
 ## Running over HTTP
 
 The default transport is `stdio`, which is the right choice for local MCP clients. HTTP mode
-does not use `OURO_API_KEY`. Each request must send the caller's personal access token, and
-local filesystem paths are disabled so a remote client cannot read the host.
+does not use `OURO_API_KEY`. Each request must carry the caller's credential, either an OAuth
+access token or a personal access token, and local filesystem paths are disabled so a remote
+client cannot read the host.
+
+HTTP mode is an OAuth 2.1 protected resource. Unauthenticated requests get a 401 pointing at
+`/.well-known/oauth-protected-resource/mcp`, which names Supabase Auth
+(`OURO_MCP_AUTH_ISSUER`, default `https://database.ouro.foundation/auth/v1`) as the
+authorization server. Clients like Claude register themselves, send the user through the
+consent page at `https://ouro.foundation/oauth/consent`, and connect with no key to paste.
+Set `OURO_MCP_RESOURCE_URL` when the public URL is not `https://$OURO_MCP_PUBLIC_HOST/mcp`.
 
 ```bash
 ouro-mcp \
@@ -178,7 +186,8 @@ ouro-mcp \
 ```
 
 The MCP endpoint is `http://127.0.0.1:8000/mcp`. The hosted server is
-`https://mcp.ouro.foundation/mcp`:
+`https://mcp.ouro.foundation/mcp`. Add it as a custom connector for OAuth, or send a
+personal access token from a client that only takes headers:
 
 ```json
 {
