@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import unittest
+from pathlib import Path
 
 from ouro_mcp.tools.files import _resolve_file_input
 
@@ -11,7 +12,7 @@ class TestResolveFileInput(unittest.TestCase):
 
     def test_file_path_passthrough(self) -> None:
         result = _resolve_file_input(file_path="/tmp/data.cif")
-        self.assertEqual(result, {"file_path": "/tmp/data.cif"})
+        self.assertEqual(result, {"file_path": str(Path("/tmp/data.cif").resolve())})
 
     def test_base64_decodes_to_bytes(self) -> None:
         raw = b"binary-content-here"

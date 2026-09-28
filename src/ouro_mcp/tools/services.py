@@ -28,6 +28,10 @@ from ouro_mcp.utils import (
 
 log = logging.getLogger(__name__)
 
+# MCP clients abort requests after 60 s by default, discarding the action_id a
+# longer wait would have returned as "pending".
+DEFAULT_WAIT_S = 45
+
 
 def _parse_json_param(value: Any, name: str) -> Optional[dict]:
     """Coerce ``body`` / ``query`` / ``params`` into a dict or fail loudly.
@@ -996,11 +1000,12 @@ def register(mcp: FastMCP) -> None:
             int,
             Field(
                 description=(
-                    "Max seconds to wait for async routes to complete before returning 'pending'. "
-                    "Bump for long-running ML/simulation routes. Ignored when wait=false."
+                    "Max seconds to wait for async routes to complete before returning "
+                    "'pending' with the action_id. Keep it under your client's request "
+                    "timeout (usually 60 s). Ignored when wait=false."
                 )
             ),
-        ] = 300,
+        ] = DEFAULT_WAIT_S,
     ) -> str:
         """Execute a platform route on Ouro. Use get_asset(route_id) first to see the route's execution schema.
 
@@ -1176,8 +1181,13 @@ def register(mcp: FastMCP) -> None:
         ] = False,
         timeout: Annotated[
             int,
-            Field(description="Max seconds to wait when `wait=true`."),
-        ] = 300,
+            Field(
+                description=(
+                    "Max seconds to wait when `wait=true`. Keep it under your "
+                    "client's request timeout (usually 60 s)."
+                )
+            ),
+        ] = DEFAULT_WAIT_S,
         include_logs: Annotated[
             bool,
             Field(description="Include recent action logs in the result"),

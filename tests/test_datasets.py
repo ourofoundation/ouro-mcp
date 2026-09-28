@@ -38,10 +38,12 @@ def test_slim_dataset_schema_keeps_name_type_and_semantics() -> None:
                 "type": "text",
                 "semantic_type": "enum",
                 "enum_values": ["todo", "done"],
+                "is_nullable": False,
             },
             {
                 "column_name": "score",
                 "data_type": "real",
+                "is_nullable": True,
             },
         ]
     ) == [
@@ -57,8 +59,9 @@ def test_slim_dataset_schema_keeps_name_type_and_semantics() -> None:
             "type": "text",
             "semantic_type": "enum",
             "enum_values": ["todo", "done"],
+            "is_nullable": False,
         },
-        {"name": "score", "type": "real"},
+        {"name": "score", "type": "real", "is_nullable": True},
     ]
 
 

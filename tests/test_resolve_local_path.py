@@ -24,7 +24,7 @@ class TestResolveLocalPathNoWorkspace(unittest.TestCase):
 
     def test_absolute_path_returned_as_is(self) -> None:
         result = resolve_local_path("/tmp/foo.cif")
-        self.assertEqual(result, Path("/tmp/foo.cif"))
+        self.assertEqual(result, Path("/tmp/foo.cif").resolve())
 
     def test_relative_path_resolved_against_cwd(self) -> None:
         result = resolve_local_path("relative.cif")

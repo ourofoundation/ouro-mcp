@@ -67,8 +67,8 @@ def slim_dataset_schema(schema: Any) -> list[dict[str, Any]] | None:
 
     Drops duplicated ``column_name``/``data_type`` aliases and FK plumbing
     (``fk_constraint_name``, ``foreign_table_*``, ``foreign_column_name``).
-    Keeps ``semantic_type``, ``ref_kind``, ``asset_type``, and ``enum_values``
-    when present. Column names are lowercase snake_case.
+    Keeps ``semantic_type``, ``ref_kind``, ``asset_type``, ``enum_values``,
+    and ``is_nullable`` when present. Column names are lowercase snake_case.
     """
     if schema is None:
         return None
@@ -86,7 +86,13 @@ def slim_dataset_schema(schema: Any) -> list[dict[str, Any]] | None:
             "name": name,
             "type": field.get("type") or field.get("data_type"),
         }
-        for key in ("semantic_type", "ref_kind", "asset_type", "enum_values"):
+        for key in (
+            "semantic_type",
+            "ref_kind",
+            "asset_type",
+            "enum_values",
+            "is_nullable",
+        ):
             if field.get(key) is not None:
                 entry[key] = field[key]
         slimmed.append(entry)

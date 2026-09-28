@@ -1067,7 +1067,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp" },
+    { name = "mcp", specifier = ">=2.0.0" },
     { name = "ouro-py", specifier = ">=0.11.11" },
     { name = "pandas" },
     { name = "pyarrow" },
