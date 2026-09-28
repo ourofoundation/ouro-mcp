@@ -11,7 +11,19 @@ from dataclasses import dataclass
 from dotenv import find_dotenv, load_dotenv
 from mcp.server.fastmcp import FastMCP
 from ouro_mcp import __version__
-from ouro_mcp.constants import DEFAULT_HTTP_PORT, ENV_OURO_API_KEY, ENV_OURO_BASE_URL
+from ouro_mcp.constants import (
+    DEFAULT_HTTP_PORT,
+    ENV_OURO_API_KEY,
+    ENV_OURO_BASE_URL,
+    ENV_OURO_MCP_LOCAL_FILES,
+)
+from ouro_mcp.http_auth import (
+    ApiKeyMiddleware,
+    RequestScopedOuro,
+    bind_stdio_client,
+    http_mode,
+    set_http_mode,
+)
 from ouro_mcp.logging_config import apply_ouro_mcp_logging, resolve_fastmcp_log_level
 
 from ouro import Ouro
@@ -31,7 +43,16 @@ class OuroContext:
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[OuroContext]:
-    """Initialize the Ouro client once at startup and share it across all tools."""
+    """Initialize the Ouro client once at startup and share it across all tools.
+
+    HTTP mode does not authenticate at startup. Each request carries the
+    caller's personal access token, and tools resolve a client from that token.
+    """
+    if http_mode():
+        log.info("HTTP mode: tool calls use the API key on each request")
+        yield OuroContext(ouro=RequestScopedOuro())
+        return
+
     log.info("Initializing Ouro client...")
 
     api_key = os.environ.get(ENV_OURO_API_KEY, "").strip()
@@ -49,7 +70,11 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[OuroContext]:
     log.info(f"Authenticated as {ouro.user.email}")
     log.info(f"Backend: {ouro.base_url}")
     log.info(f"Client: {ouro._ouro_client} ({ouro._user_agent})")
-    yield OuroContext(ouro=ouro)
+    bind_stdio_client(ouro)
+    try:
+        yield OuroContext(ouro=ouro)
+    finally:
+        bind_stdio_client(None)
 
 
 INSTRUCTIONS = """
@@ -231,9 +256,17 @@ mcp = FastMCP(
     "Ouro",
     instructions=INSTRUCTIONS,
     lifespan=app_lifespan,
-    json_response=True,
     log_level=_mcp_log_level,
+    middleware=[ApiKeyMiddleware()],
 )
+
+from starlette.requests import Request  # noqa: E402
+from starlette.responses import JSONResponse  # noqa: E402
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(_request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
 
 apply_ouro_mcp_logging(_mcp_log_level)
 
@@ -270,23 +303,56 @@ def main():
 
     if args.transport == "stdio":
         mcp.run(transport="stdio")
-    else:
-        # FastMCP.run() does not take host/port — set them on settings first.
-        mcp.settings.host = args.host
-        mcp.settings.port = args.port
-        if args.host not in ("127.0.0.1", "localhost", "::1"):
-            log.warning(
-                "HTTP transport bound to %s without an auth layer — "
-                "prefer 127.0.0.1 or terminate TLS/auth at a reverse proxy",
-                args.host,
-            )
-        log.info(
-            "Starting ouro-mcp transport=%s on %s:%s",
-            args.transport,
+        return
+
+    # One shared OURO_API_KEY would make every HTTP caller that user.
+    # Drop it so a local .env cannot become the server identity.
+    set_http_mode(True)
+    os.environ[ENV_OURO_MCP_LOCAL_FILES] = "0"
+    os.environ.pop(ENV_OURO_API_KEY, None)
+
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    public_host = os.environ.get("OURO_MCP_PUBLIC_HOST", "mcp.ouro.foundation").strip()
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[public_host, "127.0.0.1:*", "localhost:*", "[::1]:*"],
+        allowed_origins=[
+            f"https://{public_host}",
+            f"http://{public_host}",
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://[::1]:*",
+        ],
+    )
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        log.warning(
+            "HTTP transport bound to %s. Terminate TLS at a reverse proxy; "
+            "callers send API keys as bearer tokens.",
             args.host,
-            args.port,
         )
-        mcp.run(transport=args.transport)
+    log.info(
+        "Starting ouro-mcp transport=%s on %s:%s (per-request API keys, local files disabled)",
+        args.transport,
+        args.host,
+        args.port,
+    )
+    if args.transport == "streamable-http":
+        mcp.run(
+            transport="streamable-http",
+            host=args.host,
+            port=args.port,
+            json_response=True,
+            stateless_http=True,
+            transport_security=transport_security,
+        )
+        return
+    mcp.run(
+        transport="sse",
+        host=args.host,
+        port=args.port,
+        transport_security=transport_security,
+    )
 
 
 if __name__ == "__main__":

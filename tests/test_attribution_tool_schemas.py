@@ -27,6 +27,6 @@ def test_asset_write_tools_expose_top_level_license_and_attribution() -> None:
     tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
 
     for name in ATTRIBUTION_TOOLS:
-        properties = tools[name].inputSchema["properties"]
+        properties = tools[name].input_schema["properties"]
         assert "license_id" in properties, name
         assert "attribution" in properties, name

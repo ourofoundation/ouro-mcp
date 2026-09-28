@@ -6,3 +6,7 @@ try:
     __version__ = version("ouro-mcp")
 except PackageNotFoundError:  # pragma: no cover
     __version__ = "0.0.0"
+
+from ouro_mcp.fastmcp_compat import install_fastmcp_compat
+
+install_fastmcp_compat()

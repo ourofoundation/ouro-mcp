@@ -1,0 +1,22 @@
+[Unit]
+Description=Ouro MCP HTTP server
+After=network.target
+
+[Service]
+Type=simple
+User=matt
+Group=matt
+WorkingDirectory=/home/matt/ouro/ouro-mcp
+Environment=OURO_BASE_URL=https://api.ouro.foundation
+Environment=OURO_FRONTEND_URL=https://ouro.foundation
+Environment=OURO_MCP_LOCAL_FILES=0
+Environment=OURO_MCP_LOG_STYLE=plain
+Environment=OURO_MCP_PUBLIC_HOST=mcp.ouro.foundation
+# 8000 is the local Supabase API. This process stays on loopback; nginx terminates TLS.
+ExecStart=/home/matt/ouro/ouro-mcp/.venv/bin/ouro-mcp --transport streamable-http --host 127.0.0.1 --port 8095
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

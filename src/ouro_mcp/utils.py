@@ -14,6 +14,7 @@ from ouro_mcp.constants import (
     DEFAULT_OURO_FRONTEND_URL,
     DEFAULT_RESPONSE_FORMAT,
     ENV_OURO_FRONTEND_URL,
+    ENV_OURO_MCP_LOCAL_FILES,
     ENV_OURO_MCP_MAX_RESPONSE_SIZE,
     ENV_OURO_MCP_RESPONSE_FORMAT,
     ENV_OURO_MCP_TIMEZONE,
@@ -872,8 +873,17 @@ def render_markdown_sections(
     return result
 
 
+def local_files_enabled() -> bool:
+    raw = os.environ.get(ENV_OURO_MCP_LOCAL_FILES, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
 def resolve_local_path(raw: str) -> Path:
     """Resolve a user-supplied file path, sandboxing to WORKSPACE_ROOT when set.
+
+    The hosted HTTP server sets ``OURO_MCP_LOCAL_FILES=0``. Remote clients
+    must send file contents inline; a path would otherwise read or write the
+    machine that runs the server.
 
     When WORKSPACE_ROOT is set (typically to the calling agent's workspace
     directory) the resolved path MUST stay inside that root: relative paths
@@ -890,6 +900,12 @@ def resolve_local_path(raw: str) -> Path:
     standalone) the path is returned as-is after ``~`` expansion and
     resolution, with no sandboxing.
     """
+    if not local_files_enabled():
+        raise PermissionError(
+            "Local file paths are disabled on this MCP server. "
+            "Send file contents inline instead of a filesystem path."
+        )
+
     p = Path(raw).expanduser()
     workspace_env = os.environ.get(ENV_WORKSPACE_ROOT)
 

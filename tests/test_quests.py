@@ -488,7 +488,7 @@ def test_quest_write_tools_expose_concrete_submission_asset_schemas() -> None:
     register(mcp)
     tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
 
-    update_schema = tools["update_quest_item"].inputSchema
+    update_schema = tools["update_quest_item"].input_schema
     submission_property = update_schema["properties"]["submission_assets"]
     declaration_ref = submission_property["anyOf"][0]["additionalProperties"]["$ref"]
     declaration_name = declaration_ref.rsplit("/", 1)[-1]
@@ -508,7 +508,7 @@ def test_quest_write_tools_expose_concrete_submission_asset_schemas() -> None:
     assert "eval_route_id" in submission_property["description"]
 
     for tool_name in ("create_quest", "create_quest_items"):
-        schema = tools[tool_name].inputSchema
+        schema = tools[tool_name].input_schema
         item_model = schema["$defs"]["QuestItemInput"]
         item_submission = item_model["properties"]["submission_assets"]
         assert item_submission["anyOf"][0]["additionalProperties"]["$ref"].endswith(

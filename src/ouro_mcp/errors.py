@@ -200,7 +200,7 @@ def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
         return json.dumps(
             {
                 "error": "authentication_failed",
-                "message": "Authentication failed. Check your OURO_API_KEY.",
+                "message": "Authentication failed. Check your Ouro API key.",
                 "status": 401,
                 "retryable": False,
             }

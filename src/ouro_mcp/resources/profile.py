@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import FastMCP
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.http_auth import current_ouro
 from ouro_mcp.utils import dump_json
 
 
@@ -16,8 +17,8 @@ def register(mcp: FastMCP) -> None:
         annotations={"readOnlyHint": True, "idempotentHint": True},
     )
     @handle_ouro_errors
-    def get_profile(ctx: Context) -> str:
-        ouro = ctx.request_context.lifespan_context.ouro
+    def get_profile() -> str:
+        ouro = current_ouro()
 
         user_profile = ouro.users.me() or {}
         auth_user = ouro.user

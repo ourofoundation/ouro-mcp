@@ -16,6 +16,9 @@ DEFAULT_RESPONSE_FORMAT = "md"
 # Soft character budget for truncate_response. Unset or 0 = disabled (client truncates).
 ENV_OURO_MCP_MAX_RESPONSE_SIZE = "OURO_MCP_MAX_RESPONSE_SIZE"
 ENV_WORKSPACE_ROOT = "WORKSPACE_ROOT"
+# "0" / "false" / "no" / "off" rejects filesystem paths. The HTTP server sets this
+# so a remote client cannot read or write the host filesystem.
+ENV_OURO_MCP_LOCAL_FILES = "OURO_MCP_LOCAL_FILES"
 # Optional container mount path (e.g. /workspace). When set alongside
 # WORKSPACE_ROOT, absolute paths under this mount remap onto the host root.
 ENV_WORKSPACE_MOUNT = "WORKSPACE_MOUNT"

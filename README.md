@@ -166,17 +166,32 @@ ouro-mcp
 
 ## Running over HTTP
 
-The default transport is `stdio`, which is the right choice for local MCP clients. To host the
-server over HTTP:
+The default transport is `stdio`, which is the right choice for local MCP clients. HTTP mode
+does not use `OURO_API_KEY`. Each request must send the caller's personal access token, and
+local filesystem paths are disabled so a remote client cannot read the host.
 
 ```bash
-OURO_API_KEY="your-api-key" ouro-mcp \
+ouro-mcp \
   --transport streamable-http \
   --host 127.0.0.1 \
   --port 8000
 ```
 
-The MCP endpoint will be available at `http://127.0.0.1:8000/mcp`.
+The MCP endpoint is `http://127.0.0.1:8000/mcp`. The hosted server is
+`https://mcp.ouro.foundation/mcp`:
+
+```json
+{
+  "mcpServers": {
+    "ouro": {
+      "url": "https://mcp.ouro.foundation/mcp",
+      "headers": {
+        "Authorization": "Bearer your-api-key"
+      }
+    }
+  }
+}
+```
 
 ## Inspecting the server
 
