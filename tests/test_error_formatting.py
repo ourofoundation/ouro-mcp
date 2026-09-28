@@ -91,7 +91,10 @@ def test_bad_request_column_missing_is_actionable_and_non_retryable() -> None:
         "error": {
             "message": 'Query failed: column "mae_ev" does not exist',
             "code": "42703",
-            "hint": 'Perhaps you meant to reference the column "MAE_eV".',
+            "hint": (
+                "Perhaps you meant to reference the column "
+                '"dataset_01a00171f66d71d68e58b6b338d52896.MAE_eV".'
+            ),
         },
     }
     error = BadRequestError(

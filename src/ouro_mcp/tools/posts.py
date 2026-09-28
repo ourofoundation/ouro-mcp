@@ -54,17 +54,7 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         content_markdown: Annotated[
             Optional[str],
-            Field(
-                description=(
-                    "Extended markdown body. Supports @mentions, LaTeX (\\(inline\\), "
-                    "\\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
-                    "Use [text](action:<uuid>) for route runs. "
-                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
-                    "and block-level asset embeds via ```assetComponent``` using "
-                    '{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card","displayConfig":{...}}.'
-                )
-            ),
+            Field(description="Extended markdown body (syntax in the tool description)"),
         ] = None,
         content_path: Annotated[Optional[str], Field(description="Local .md/.markdown file path")] = None,
         visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "public",
@@ -77,9 +67,12 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Create a new post on Ouro from extended markdown. Provide content_markdown or content_path.
 
-        Asset references:
-        - Inline links: prefer [label](post:|file:|dataset:|route:|service:|quest:<uuid>). Use [label](action:<uuid>) for route runs. Use [label](asset:<uuid>) only when the asset type is unknown. Do not invent URL paths.
-        For embedded assets, use:
+        Extended markdown is standard markdown plus:
+        - Mentions: @username
+        - LaTeX: \\(inline\\) and \\[display\\]
+        - Inline links: [label](post:|file:|dataset:|route:|service:|quest:<uuid>), [label](action:<uuid>)
+          for route runs, or [label](asset:<uuid>) when the type is unknown. Do not invent URL paths.
+        - Block embeds:
         ```assetComponent
         {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
         ```
@@ -121,17 +114,7 @@ def register(mcp: FastMCP) -> None:
         name: Annotated[Optional[str], Field(description="New title")] = None,
         content_markdown: Annotated[
             Optional[str],
-            Field(
-                description=(
-                    "Replacement extended markdown body. Supports @mentions, LaTeX (\\(inline\\), "
-                    "\\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
-                    "Use [text](action:<uuid>) for route runs. "
-                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
-                    "and block-level asset embeds via ```assetComponent``` using "
-                    '{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card","displayConfig":{...}}.'
-                )
-            ),
+            Field(description="Replacement body in extended markdown (same syntax as create_post)"),
         ] = None,
         content_path: Annotated[
             Optional[str],
@@ -149,17 +132,7 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Update a post's content or metadata. Pass content_markdown/content_path to replace the body.
 
-        Inline links: prefer typed post:/file:/dataset:/route:/service: shorthands. Use asset:<uuid> only when the asset type is unknown. Do not invent URL paths.
-
-        For embedded assets, use:
-        ```assetComponent
-        {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
-        ```
-        displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
-        For routes, set actionId to show a compact action receipt (status, timing, output).
-        Prefer paste embed_markdown / link_markdown from route-action tools when referencing a run.
-        @mentions on private or organization-only posts do not notify the mentioned
-        user unless they can already discover the post — share it first if you want a response.
+        The body uses the same extended markdown as create_post.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 

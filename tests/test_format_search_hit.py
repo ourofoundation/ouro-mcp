@@ -38,6 +38,22 @@ def test_format_search_hit_keeps_slim_fields():
     }
 
 
+def test_format_search_hit_drops_summary_snippets():
+    hit = format_search_hit(
+        {
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "name": "magnets",
+            "asset_type": "dataset",
+            "description": "Six magnet types",
+            "snippet": "dataset: magnets Six magnet types",
+            "match_source": "summary",
+        }
+    )
+
+    assert "snippet" not in hit
+    assert "match_source" not in hit
+
+
 def test_format_search_hit_omits_absent_optional_fields():
     hit = format_search_hit(
         {

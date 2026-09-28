@@ -153,7 +153,7 @@ class TestTimestampLocalization(unittest.TestCase):
 
         self.assertEqual(payload, {"created_at": "2026-04-06T21:02:19-05:00"})
 
-    def test_dump_json_leaves_payload_unchanged_without_timezone(self) -> None:
+    def test_dump_json_defaults_to_compact_utc_without_timezone(self) -> None:
         previous = os.environ.get("OURO_MCP_TIMEZONE")
         os.environ.pop("OURO_MCP_TIMEZONE", None)
         try:
@@ -166,7 +166,7 @@ class TestTimestampLocalization(unittest.TestCase):
             if previous is not None:
                 os.environ["OURO_MCP_TIMEZONE"] = previous
 
-        self.assertEqual(payload, {"created_at": "2026-04-07T02:02:19.962000+00:00"})
+        self.assertEqual(payload, {"created_at": "2026-04-07T02:02:19+00:00"})
 
 
 if __name__ == "__main__":

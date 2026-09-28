@@ -169,14 +169,7 @@ def register(mcp: FastMCP) -> None:
         conversation_id: Annotated[str, Field(description="Conversation UUID")],
         text: Annotated[
             str,
-            Field(
-                description=(
-                    "Message body as extended Ouro markdown: @mentions, LaTeX (\\(inline\\), \\[display\\]), "
-                    "typed asset link shorthands [label](post:|file:|dataset:|route:|service:|quest:<uuid>). "
-                    "Use [label](asset:<uuid>) only when the asset type is unknown. "
-                    "```assetComponent``` blocks for embeds, etc."
-                )
-            ),
+            Field(description="Message body in extended markdown (same syntax as create_post)"),
         ],
         ctx: Context,
         message_id: Annotated[

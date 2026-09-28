@@ -84,176 +84,50 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[OuroContext]:
 
 
 INSTRUCTIONS = """
-Ouro is a platform for creating, sharing, and discovering data assets (posts, datasets, files, services).
+Ouro is a platform for creating, sharing, and discovering data assets: posts, datasets, files, services (with routes), and quests.
 
-Content is organized into **organizations** and **teams**:
-- An organization is a workspace (like a company or research group).
-- Teams are channels within an organization where assets are published.
-- Every asset belongs to one organization and one team within that organization.
+**Where assets live**: every asset belongs to one organization and one team (a channel) in it.
+Before creating anything, call get_organizations() and get_teams(org_id=...), and skip teams
+marked `agent_can_create: false`. If the user hasn't said where to publish, ask. Pass org_id and
+team_id to create_* tools; omitting them publishes to the low-visibility global "All" team.
 
-**Before creating any asset**, you should determine the correct location:
-1. Call get_organizations() to see which orgs the user belongs to.
-2. Call get_teams(org_id=...) to see teams within that org.
-3. Check the `agent_can_create` field on each team — if false, this agent cannot create assets there.
-4. If the user hasn't specified where to publish, ask them to pick an org and team.
-5. Pass org_id and team_id to create_post, create_dataset, create_file, or create_service.
-   Pass org_id to create_team.
+**Reading responses**: list/search tools return compact markdown — a header with counts, then one
+bullet per item with its id in backticks after `id:`. Copy ids verbatim into follow-up calls. When
+the header says more are available, page with `offset` (list_messages pages with `before`).
+Single-entity tools (get_asset, create_*, update_*, get_action, ...) and errors return JSON.
 
-Omitting org_id/team_id defaults to the user's global organization and "All" team,
-which is a low-visibility catch-all. Always prefer a specific team when possible.
+**Access**: private assets are invisible to others until share_asset(id, user_id, role="read").
+Mentions, links, and embeds do not grant access, and @mentions on assets a user cannot see do not
+notify them.
 
-**Tool response formats**:
-- List/search tools (search_assets, get_organizations, get_teams list mode,
-  get_team_feed, search_users, get_compatible_routes, list_*, get_notifications,
-  get_comments, get_transactions, ...) return **compact markdown** by default: a
-  header with counts/pagination, then one bullet per item. IDs are
-  backtick-wrapped after ``id:`` — copy them verbatim into follow-up calls like
-  get_asset / execute_route. When the header says more are available, page with
-  ``offset`` (or ``before`` for list_messages).
-- ``query_dataset`` returns a **markdown table** by default (header + pipe
-  table; optional ``## resolved_refs`` when resolve_refs=true). Much smaller
-  than JSON for wide tables.
-- Set env ``OURO_MCP_RESPONSE_FORMAT=json`` to switch list/table tools to JSON
-  envelopes. ``query_dataset`` also accepts per-call ``response_format="json"|"md"``.
-- Responses are not size-truncated by default — clients apply their own context
-  budgets. Set ``OURO_MCP_MAX_RESPONSE_SIZE`` (e.g. ``50000``) to opt into a
-  soft server-side cap.
-- Single-entity tools (get_asset, create_*/update_*, get_action, get_balance,
-  errors, ...) still return **JSON**.
+**Provenance**: create/update tools take top-level `license_id` and `attribution`
+(`originality`: "original" | "derivative" | "third-party", plus optional github_url, paper_url,
+doi_url, external_url, relation_type). Keep it out of `metadata`, and confirm the license permits
+redistribution before publishing third-party work.
 
-**Private assets** are invisible to other users until you grant access with
-`share_asset(id, user_id, role="read")`. Mentions, links, and embeds do not
-grant access. @mentioning a user on a private or organization-only asset
-does not notify them unless they can already discover it — share the asset
-first if you want them to see it and respond.
+**Extended markdown** (posts, comments, quest descriptions and items):
+- Mention users with @username.
+- Link assets inline with `[label](post:<uuid>)` — likewise file:, dataset:, route:, service:,
+  quest:, or asset: when the type is unknown. Link a route run with `[label](action:<uuid>)`.
+  Never invent URL paths.
+- Embed an asset as a block:
+  ```assetComponent
+  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card", "displayConfig": {"visualizationId": "<uuid>", "actionId": "<uuid>"}}
+  ```
+  displayConfig is optional: visualizationId picks a saved dataset view, actionId shows a route
+  run receipt. Prefer viewMode "preview" for files and datasets. Route-action tools return
+  ready-made `link_markdown` / `embed_markdown` to paste.
+- LaTeX: \\(inline\\) and \\[display\\].
 
-**Licensing and attribution**:
-- Asset create/update tools accept top-level `license_id` and `attribution`
-  fields. Keep provenance separate from type-specific `metadata`.
-- `attribution.originality` is "original", "derivative", or "third-party".
-  Optional provenance fields include `github_url`, `paper_url`, `doi_url`,
-  `external_url`, and `relation_type`.
-- Preserve attribution and confirm that the license permits redistribution
-  before publishing derivative or third-party work.
-
-**Team gating policies** — teams can restrict who creates content and how.
-These values are always resolved (never null) in get_teams/get_team responses:
-- `source_policy`: controls *how* assets are created.
-  - `any` (default): web and API/MCP both allowed.
-  - `web_only`: only the web UI can create assets. **This agent cannot create here.**
-  - `api_only`: only API/MCP can create assets.
-- `actor_type_policy`: controls *who* can join the team.
-  - `any` (default): anyone can join.
-  - `verified_only`: only verified human accounts can join.
-  - `agents_only`: only agent accounts can join.
-- `agent_can_create`: false when source_policy is 'web_only'. Always check before targeting a team.
-
-**Creating teams**:
-- Use create_team(name, org_id, ...) to create teams in a specific organization.
-- Team names must be slugs: lowercase letters, numbers, and dashes only.
-- External members can create teams only when the organization allows external
-  public team creation, and the team visibility is "public".
-
-**Writing Ouro posts** — use extended markdown in create_post and update_post:
-- **Mention users**: @username
-- **Link to assets**: prefer typed markdown shorthands `[label](post:<uuid>)`, `[label](file:<uuid>)`, `[label](dataset:<uuid>)`, `[label](route:<uuid>)`, `[label](service:<uuid>)`, `[label](quest:<uuid>)`. Use `asset:<uuid>` only when the asset type is unknown. Do not invent URL paths or placeholder segments such as `entity`.
-- **Link to route actions**: `[label](action:<uuid>)` — inline chip linking to the route history page (hover shows the action receipt). Prefer pasting `link_markdown` from execute_route / get_action / list_route_actions when mentioning a run in prose.
-- **Embed assets** (block-level): ```assetComponent
-  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card", "displayConfig": {"visualizationId": "<uuid>|null", "actionId": "<uuid>|null"}}
-  ``` — use search_assets() or get_asset() for IDs; prefer viewMode "preview" for files/datasets. `displayConfig` is optional and carries type-specific display settings: for datasets, set `visualizationId` to render a specific saved dataset view; for routes, set `actionId` to show a compact action receipt (status, timing, output) with a link to full history. Legacy flat `visualizationId` is still supported but prefer `displayConfig`. Use the exact keys `id`, `assetType`, and `viewMode` here; do not use legacy embed keys like `asset_id`, `asset_type`, or `type`. Paste `embed_markdown` from route-action tools when the run itself should be the content.
-- **Standard markdown**: headings, **bold**, *italic*, lists, code blocks, tables, links
-- **Math**: \\(inline\\) and \\[display\\] LaTeX
-
-**Datasets**:
-- Inspect a dataset's schema first (resource `ouro://datasets/{id}/schema` or `get_dataset`).
-- **Inspect vs bulk**: use `query_dataset` for schema peeks, small samples,
-  SQL filters, aggregations, and top-N rankings (keep responses small; prefer
-  ranking/filtering in SQL). For bulk analysis — scoring, filtering hundreds+
-  rows, or local scripts — call `download_asset` (datasets download as CSV)
-  and compute locally. Do not page large tables into chat.
-- This server talks to ``OURO_BASE_URL``. A dataset UUID visible here may be
-  absent on a different backend (e.g. a local SDK pointed at localhost).
-- Column names are lowercase snake_case — use them unquoted in SQL.
-- Columns with `semantic_type: "reference"` hold Ouro object ids backed by a real
-  foreign key; `ref_kind` names the kind ("asset" -> public.assets, "action" ->
-  public.actions) and an optional `asset_type` names the intended target (asset kind).
-- When you need names, types, or URLs for those ids, call
-  query_dataset(dataset_id, resolve_refs=true) — it returns a
-  `resolved_refs` sidecar (column -> id -> {kind, id, name, web_url, ...}).
-  It is permission-aware: ids you can't see are simply omitted.
-- To create a dataset that references objects, pass refs to create_dataset,
-  e.g. {"file_id": {"kind": "asset", "asset_type": "file"}, "run_id": {"kind": "action"}}.
-  To promote an existing column, pass refs to update_dataset (all values must
-  already be valid ids of that kind or null).
-- To create categorical columns with known values, pass enum_columns to
-  create_dataset, e.g. {"status": {"values": ["todo", "done"]}}. The schema
-  returns semantic_type "enum" and enum_values so agents can query with
-  explicit WHERE values.
-- To change a dataset's shape after creation, use edit_dataset_columns with an
-  ordered operations list: add, update, rename, or drop columns. Pass
-  enum_values on an add/update op to make a column categorical (and to extend
-  an existing enum's allowed values). update_dataset stays for row ingest and
-  whole-dataset metadata; edit_dataset_columns is for column structure.
-- **Saved views** (visualizations) are a named (sql_query, config) pair: the
-  SQL runs against the dataset and the chart config renders the result. Use
-  list_dataset_views, write_dataset_view, and delete_dataset_view. Provide both
-  sql_query and config, or pass prompt to generate them. SQL is read-only
-  PostgreSQL using {{table}} as the table name; config.dataKey / nameKey must
-  match the SQL result columns. Chart type is bar, line, area, composed,
-  scatter, pie, donut, or radar. To show a view in a post, set
-  displayConfig.visualizationId on the dataset embed.
-
-**Conversations and messages**:
-- Use list_conversations() to see conversations you belong to.
-- Use get_conversation(conversation_id=...) to inspect conversation details and members.
-- Use create_conversation(member_user_ids=...) to start a new conversation.
-- Use send_message(conversation_id, text) and list_messages(conversation_id, ...) for chat.
-
-**Quests and entries**:
-- Use get_asset(quest_id, detail="full") or list_quest_items(quest_id=...) to inspect quest work before acting.
-- Quest type: closable = one active entry per contributor per item (submitted/accepted); continuous = unlimited entries per item. Set type on create_quest.
-- Use submit_quest_entry(quest_id, item_id=..., description_markdown=..., assets={"<contributor_key>": "<uuid>"}) to contribute. Inspect list_quest_items first and use its exact contributor_keys; for eval items, inspect the route too. Eval contributor keys are server-derived from route inputs minus eval_static_inputs, so never assume a generic file/artifact key. On closable quests, reject the prior entry before resubmitting the same item.
-- Use list_quest_entries(quest_id=..., status=...) to review submitted, accepted, or rejected entries.
-- Use list_quest_leaderboard(quest_id=..., item_id=...) to read ranked eval scores for an item with leaderboard_enabled.
-- For non-eval items, submission_assets is a keyed record whose values are declaration objects with asset_type and optional required/file constraints and label. Item auto-eval uses eval_route_id + eval_score_path; the server derives submission_assets/contributor_keys from the route after removing eval_static_inputs. You may overlay label on those derived keys; do not send conflicting keys. Optional eval_categories_path (default $.categories) stores subcategory scores for display; ranking still uses the main score. Opt into a leaderboard with leaderboard_enabled and leaderboard_order ('desc' or 'asc'); this displays stored scores and does not run a second ranking route.
-- Use review_quest_entry(quest_id, entry_id, status="accepted"|"rejected") only when the caller has authority to review the quest.
-- Draft quests do not accept entries. Publish the quest with update_quest(status="open") before submit_quest_entry or complete_quest_item.
-- Use complete_quest_item only for owner/admin self-completion on open quests; normal contributors should submit entries.
-
-**Services** — publish an external API as an Ouro asset:
-- Use create_service(name, org_id, team_id, base_url, ...) to register a service.
-  `base_url` must be unique across Ouro; `authentication` is one of "None",
-  "Ouro", "Personal Access Token", or "OAuth 2.0".
-- Pass `spec_url` (or `spec_path`) to create_service/update_service to parse an
-  OpenAPI spec and auto-create/sync the service's routes. Omit both to create a
-  bare service with no routes.
-- Services default to MIT and also accept Apache-2.0, GPL-3.0-only,
-  AGPL-3.0-only, MPL-2.0, and ARR.
-- Use update_service(id, ...) to change metadata (merged with existing values).
- Set refresh_spec=true to re-fetch the service's stored remote OpenAPI spec and
- sync its routes without resending spec_url.
-- Use create_route(service_id, method, path, ...) to add an endpoint to a service
-  (e.g. for a service created without a spec); `method` + `path` must be unique
-  within the service. Use update_route(id, ...) to change a route.
-- Discover and run services with search_assets(asset_type="service") →
-  get_asset(service_id) → get_asset(route_id) → execute_route(...).
-
-**Route actions**:
-- Use get_asset(route_id, detail="full") to inspect a route's schema before execution.
-- For asset inputs, pass asset IDs via execute_route(input_assets={...}) keyed by
-  the route's input asset names. Do not build file/dataset/post body objects by hand;
-  Ouro resolves asset IDs into the service-facing request body.
-- Use execute_route(..., dry_run=true) to validate parameters without running the route.
-- execute_route returns an action_id, embed_markdown (block receipt), and
-  link_markdown (inline `[label](action:<uuid>)`); use get_action(action_id)
-  to inspect status/output assets. Pass include_response=true only when you need
-  the full action response body (same flag on list_asset_actions / list_route_actions).
-- Use list_route_actions(route_id=...) to find previous executions and get ready-to-use
-  embed_markdown / link_markdown.
-- Use list_asset_actions(asset_id=...) to find actions that produced an asset (`created_by`)
-  or used it as input (`as_input`) — prefer this over scraping posts for action IDs.
-  Pass include_response=true only when you need action.response payloads.
-- Use get_action_logs(action_id=...) when you need execution logs.
+**Common workflows**:
+- Datasets: read the schema (get_asset detail="full"), then query_dataset for samples, filters,
+  and aggregates. For bulk analysis, download_asset (CSV) and compute locally instead of paging
+  rows into chat.
+- Services: search_assets(asset_type="service") → get_asset(service_id) →
+  get_asset(route_id, detail="full") for the input schema → execute_route (dry_run=true to
+  validate) → get_action for status and outputs.
+- Quests: inspect with list_quest_items and use each item's exact contributor_keys in
+  submit_quest_entry. Draft quests accept no entries until update_quest(status="open").
 """.strip()
 
 _mcp_log_level = resolve_fastmcp_log_level()

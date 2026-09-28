@@ -52,6 +52,27 @@ class TestGetAssetCommentDetail(unittest.TestCase):
         self.assertEqual(detail["asset_type"], "comment")
         self.assertEqual(detail["content_text"], "hello from a comment")
 
+    def test_mentions_render_from_rich_content_not_stored_plaintext(self) -> None:
+        comment = _asset(Comment, "comment-1", "`{@hermes}` what is this?")
+        comment.content.data = {
+            "type": "doc",
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [
+                        {"type": "mention", "attrs": {"username": "hermes"}},
+                        {"type": "text", "text": " what is this?"},
+                    ],
+                }
+            ],
+        }
+
+        detail = assets_module._format_asset_detail(
+            comment, ouro=SimpleNamespace(comments=_FakeComments({}))
+        )
+
+        self.assertEqual(detail["content_text"], "@hermes what is this?")
+
     def test_comment_detail_includes_reply_preview(self) -> None:
         comment = _asset(Comment, "comment-1", "cc: @hermes")
         reply = _asset(Comment, "reply-1", "Already replied here.", username="hermes")

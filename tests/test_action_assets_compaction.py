@@ -285,7 +285,7 @@ class TestFormatActionResultIncludeResponse(unittest.TestCase):
         )
         self.assertNotIn("data", row)
         self.assertNotIn("error", row)
-        self.assertEqual(row["action_status"], "success")
+        self.assertEqual(row["status"], "success")
         self.assertIn("output_assets", row)
         self.assertIn("embed_markdown", row)
         self.assertIn("link_markdown", row)
@@ -309,6 +309,41 @@ class TestFormatActionResultIncludeResponse(unittest.TestCase):
         self.assertNotIn("data", row)
         self.assertEqual(row["retryable"], True)
         self.assertEqual(row["status_code"], 504)
+
+    def test_error_payload_is_omitted_when_the_summary_covers_it(self) -> None:
+        row = self.services._format_action_result(
+            self._action(
+                status="error",
+                response={
+                    "error": {
+                        "code": "external_service_error",
+                        "status": 404,
+                        "message": "External service returned HTTP 404",
+                        "retryable": False,
+                    },
+                    "statusCode": 404,
+                },
+            ),
+            include_response=True,
+        )
+        self.assertNotIn("error", row)
+        self.assertEqual(row["message"], "External service returned HTTP 404")
+        self.assertEqual(row["status_code"], 404)
+
+    def test_error_payload_is_kept_when_it_has_details(self) -> None:
+        response = {
+            "error": {
+                "code": "external_service_error",
+                "status": 422,
+                "message": "Submission could not be evaluated",
+                "details": [{"loc": ["body", "cif"], "msg": "Invalid"}],
+            }
+        }
+        row = self.services._format_action_result(
+            self._action(status="error", response=response),
+            include_response=True,
+        )
+        self.assertEqual(row["error"], response)
 
 
 if __name__ == "__main__":

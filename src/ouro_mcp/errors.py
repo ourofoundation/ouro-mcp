@@ -4,6 +4,7 @@ import asyncio
 import functools
 import json
 import logging
+import re
 from typing import Any, Callable
 
 from ouro import (
@@ -100,6 +101,9 @@ def _server_detail(e: APIStatusError) -> str | None:
     return None
 
 
+_DATASET_TABLE_QUALIFIER = re.compile(r"\bdataset_[0-9a-f]{32}\.")
+
+
 def _attach_sql_diagnostics(
     payload: dict[str, Any], e: APIStatusError, *, message: str
 ) -> dict[str, Any]:
@@ -107,6 +111,8 @@ def _attach_sql_diagnostics(
     error_obj = _server_error_object(e) or {}
     for key in ("code", "hint", "details"):
         value = error_obj.get(key)
+        if isinstance(value, str):
+            value = _DATASET_TABLE_QUALIFIER.sub("", value)
         if value is not None and value != "":
             payload[key] = value
 

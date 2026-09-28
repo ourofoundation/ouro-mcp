@@ -69,13 +69,17 @@ def slim_dataset_schema(columns: list[DatasetColumn]) -> list[dict[str, Any]]:
     Keeps only the declared ``DatasetColumn`` fields, dropping the FK
     plumbing the backend also returns (``fk_constraint_name``,
     ``foreign_table_*``, ``foreign_column_name``). Column names are
-    lowercase snake_case.
+    lowercase snake_case. Columns are nullable unless marked
+    ``is_nullable: false``.
     """
     fields = set(DatasetColumn.model_fields)
-    return [
-        column.model_dump(mode="json", include=fields, exclude_none=True)
-        for column in columns
-    ]
+    slim = []
+    for column in columns:
+        entry = column.model_dump(mode="json", include=fields, exclude_none=True)
+        if entry.get("is_nullable"):
+            del entry["is_nullable"]
+        slim.append(entry)
+    return slim
 
 
 def refs_from_schema(columns: list[DatasetColumn]) -> dict[str, dict[str, Any]]:
@@ -132,6 +136,8 @@ def _connection_endpoint(
     }
     if asset and asset.name:
         row["name"] = asset.name
+    elif asset and asset.asset_type == "user" and asset.user:
+        row["name"] = f"@{asset.user.username}"
     if asset and asset.created_at:
         row["created_at"] = asset.created_at
     return row
@@ -297,9 +303,8 @@ def _truncate_markdown_table(data: str, max_size: int) -> str | None:
     return "\n".join(prefix + body + suffix) + _TRUNCATION_FOOTER
 
 
-def _configured_timezone_name() -> str | None:
-    raw = os.environ.get(ENV_OURO_MCP_TIMEZONE, "").strip()
-    return raw or None
+def _configured_timezone_name() -> str:
+    return os.environ.get(ENV_OURO_MCP_TIMEZONE, "").strip() or "UTC"
 
 
 def _parse_timestamp_value(value: Any) -> datetime | None:
@@ -345,18 +350,15 @@ def _localize_timestamp(value: Any, tz_name: str) -> str | None:
 def enrich_timestamps(data: Any, tz_name: str | None = None) -> Any:
     """Recursively rewrite common UTC timestamp fields as compact local ISO.
 
-    With ``OURO_MCP_TIMEZONE`` set, every recognized timestamp key is
-    replaced *in place* with a single offset-bearing local ISO string
-    (e.g. ``2026-04-06T21:02:19-05:00``). The offset preserves the absolute
+    Every recognized timestamp key is replaced *in place* with a single
+    offset-bearing ISO string in ``OURO_MCP_TIMEZONE`` (default UTC), e.g.
+    ``2026-04-06T21:02:19-05:00``. The offset preserves the absolute
     instant, and using one field instead of a UTC value plus ``_local`` /
     ``_local_label`` siblings keeps tool responses small enough for agents
     listing many assets at once. Existing ``_local`` / ``_local_label``
     fields on the input are dropped so older callers don't double up.
     """
     active_tz = tz_name or _configured_timezone_name()
-    if not active_tz:
-        return data
-
     if isinstance(data, list):
         return [enrich_timestamps(item, active_tz) for item in data]
 
@@ -382,10 +384,10 @@ def dump_json(data: Any, **kwargs: Any) -> str:
     """JSON-encode a payload after rewriting timestamps to local ISO.
 
     This is the canonical tool-response serializer. Prefer it over
-    ``json.dumps`` so every response gets compact local-timezone timestamps
-    when ``OURO_MCP_TIMEZONE`` is set (see ``enrich_timestamps``).
+    ``json.dumps`` so every response gets compact timestamps in
+    ``OURO_MCP_TIMEZONE`` (see ``enrich_timestamps``).
     """
-    return json.dumps(enrich_timestamps(data), default=_json_default, **kwargs)
+    return json.dumps(enrich_timestamps(data), default=_json_default, ensure_ascii=False, **kwargs)
 
 
 def _json_default(value: Any) -> Any:
@@ -497,8 +499,9 @@ def _assert_no_parallel_header(text: str) -> None:
 def _format_timestamp_for_md(value: Any) -> str | None:
     if value is None:
         return None
-    if isinstance(value, datetime):
-        return value.isoformat()
+    localized = _localize_timestamp(value, _configured_timezone_name())
+    if localized is not None:
+        return localized
     text = str(value).strip()
     return text or None
 
@@ -535,7 +538,7 @@ def markdown_bullet(
     for part in parts:
         if part is None:
             continue
-        text = collapse_whitespace(part.isoformat() if isinstance(part, datetime) else part)
+        text = collapse_whitespace(_format_timestamp_for_md(part) if isinstance(part, datetime) else part)
         if text:
             segments.append(text)
     line = "- " + " — ".join(segments)
@@ -666,7 +669,7 @@ def render_markdown_list(
             )
         )
 
-    lines = [line for line in (line_fn(item) for item in items) if line]
+    lines = [line for line in (line_fn(enrich_timestamps(item)) for item in items) if line]
 
     header = format_markdown_list_header(
         shown=len(lines),
@@ -1112,10 +1115,13 @@ def format_search_hit(item: Any) -> dict[str, Any]:
     if user and user.get("username"):
         row["username"] = user["username"]
 
-    for key in ("snippet", "match_source"):
-        value = _getv(item, key)
-        if value:
-            row[key] = value
+    # A summary chunk is just the name and description already in the row.
+    snippet = _getv(item, "snippet")
+    match_source = _getv(item, "match_source")
+    if snippet and match_source != "summary":
+        row["snippet"] = snippet
+        if match_source:
+            row["match_source"] = match_source
 
     return row
 
@@ -1401,6 +1407,21 @@ def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
         )
 
     return result or None
+
+
+def route_description_markdown(description: str | None) -> str | None:
+    """Render ``RouteData.description``, which stores RichText as a JSON string."""
+    from ouro.utils.content import description_to_markdown
+
+    if not description:
+        return None
+    try:
+        parsed = json.loads(description)
+    except ValueError:
+        return description
+    if not isinstance(parsed, dict):
+        return description
+    return description_to_markdown(parsed) or None
 
 
 def route_request_body_without_input_assets(route: Any) -> Any:

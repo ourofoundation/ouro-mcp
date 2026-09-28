@@ -858,7 +858,13 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         config: Annotated[
             Optional[Any],
-            Field(description="Chart config as a JSON object or JSON string"),
+            Field(
+                description=(
+                    "Chart config as a JSON object or JSON string. type is bar | line | area | "
+                    "composed | scatter | pie | donut | radar; dataKey / nameKey must name "
+                    "sql_query result columns."
+                )
+            ),
         ] = None,
         prompt: Annotated[
             Optional[str],

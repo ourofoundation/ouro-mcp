@@ -7,6 +7,7 @@ from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Comment
+from ouro.utils.content import description_to_markdown
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
@@ -14,6 +15,8 @@ from ouro_mcp.utils import (
     format_asset_summary,
     markdown_bullet,
     markdown_id,
+    page_pagination,
+    render_markdown_list,
     truncate_response,
 )
 from pydantic import Field
@@ -25,20 +28,21 @@ def register(mcp: FastMCP) -> None:
     def get_comments(
         parent_id: Annotated[str, Field(description="Asset ID for top-level comments, or comment ID for replies")],
         ctx: Context,
+        limit: Annotated[int, Field(description="Page size, 1-200")] = 20,
+        offset: Annotated[int, Field(description="Offset for pagination")] = 0,
     ) -> str:
-        """List comments on an asset or replies to a comment.
+        """List comments on an asset or replies to a comment, oldest first.
 
         Pass the asset ID (e.g. a post) to get top-level comments, or a
-        comment ID to get its replies.
+        comment ID to get its replies. The first page also shows the parent.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        comments = ouro.comments.list_by_parent(parent_id)
+        page = ouro.comments.list(parent_id, limit=limit, offset=offset)
 
-        # Try to fetch the parent asset for context
         parent_context = None
         try:
-            parent = ouro.assets.retrieve(parent_id)
+            parent = ouro.assets.retrieve(parent_id) if offset == 0 else None
             if parent:
                 parent_context = {
                     "id": str(parent.id),
@@ -46,13 +50,15 @@ def register(mcp: FastMCP) -> None:
                     "name": parent.name,
                     "username": parent.user.username,
                 }
-                if isinstance(parent, Comment) and parent.text:
-                    parent_context["text"] = parent.text[:500]
+                if isinstance(parent, Comment):
+                    text = description_to_markdown(parent.content or parent.text)
+                    if text:
+                        parent_context["text"] = text[:500]
         except Exception:
             pass
 
         results = []
-        for c in comments:
+        for c in page:
             entry = {
                 "id": str(c.id),
                 "created_at": c.created_at.isoformat() if c.created_at else None,
@@ -61,8 +67,9 @@ def register(mcp: FastMCP) -> None:
             if c.user:
                 entry["author"] = c.user.username
 
-            if c.text:
-                entry["text"] = c.text[:500]
+            text = description_to_markdown(c.content or c.text)
+            if text:
+                entry["text"] = text[:500]
 
             replies = getattr(c, "replies", None)
             if replies is not None:
@@ -105,13 +112,16 @@ def register(mcp: FastMCP) -> None:
             )
             parts.append("## Comments")
 
-        if not results:
-            parts.append("No comments.")
-        else:
-            parts.append(f"Found {len(results)} comments")
-            for row in results:
-                parts.append(_comment_line(row))
-
+        parts.append(
+            render_markdown_list(
+                results,
+                line_fn=_comment_line,
+                pagination=page_pagination(page),
+                offset=offset,
+                noun="comments",
+                empty_text="No comments.",
+            )
+        )
         return truncate_response("\n".join(parts))
 
     @mcp.tool(annotations={"idempotentHint": False})
@@ -119,15 +129,7 @@ def register(mcp: FastMCP) -> None:
     def write_comment(
         content_markdown: Annotated[
             str,
-            Field(
-                description=(
-                    "Extended markdown. Supports @mentions, LaTeX (\\(inline\\), "
-                    "\\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
-                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
-                    "and block-level asset embeds via ```assetComponent```."
-                )
-            ),
+            Field(description="Extended markdown (same syntax as create_post)"),
         ],
         ctx: Context,
         parent_id: Annotated[
@@ -154,13 +156,8 @@ def register(mcp: FastMCP) -> None:
         wait for the asset creation tool to return the ID before calling write_comment.
         Do not use placeholder IDs or call them in parallel.
 
-        content_markdown supports extended markdown:
-        - User mentions: @username
-          (@mentions on private/organization-only assets do not notify the
-          mentioned user unless they can already see the parent asset)
-        - Asset links: prefer [text](post:|file:|dataset:|route:|service:|quest:<uuid>) shorthands; use [text](asset:<uuid>) only when the asset type is unknown
-        - Asset embeds: ```assetComponent\\n{"id":"<uuid>","assetType":"...","viewMode":"preview"|"card"}```
-        - LaTeX: \\(inline\\), \\[display\\]
+        @mentions on private/organization-only assets do not notify the
+        mentioned user unless they can already see the parent asset.
         """
         if (parent_id is None) == (id is None):
             raise ValueError("Provide exactly one of parent_id (to create) or id (to edit).")

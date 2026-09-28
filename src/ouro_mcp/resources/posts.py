@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.utils.content import description_to_markdown
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import dump_json, format_asset_summary
 
@@ -21,6 +22,6 @@ def register(mcp: FastMCP) -> None:
         post = ouro.posts.retrieve(id)
 
         result = format_asset_summary(post)
-        result["content_text"] = post.content.text if post.content else None
+        result["content_text"] = description_to_markdown(post.content) or None
 
         return dump_json(result)

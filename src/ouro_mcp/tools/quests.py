@@ -13,6 +13,7 @@ from ouro_mcp.utils import (
     content_from_markdown,
     dump_json,
     format_asset_summary,
+    format_one_time_cost_summary,
     markdown_bullet,
     markdown_id,
     optional_kwargs,
@@ -239,25 +240,14 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         description_markdown: Annotated[
             Optional[str],
-            Field(
-                description=(
-                    "Extended markdown body for the quest description. Supports "
-                    "@mentions, LaTeX (\\(inline\\), \\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
-                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
-                    "and block-level asset embeds via ```assetComponent``` using "
-                    '{"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}.'
-                )
-            ),
+            Field(description="Quest description in extended markdown (same syntax as create_post)"),
         ] = None,
         items: Annotated[
             Optional[List[Union[str, QuestItemInput]]],
             Field(
                 description=(
                     "List of task descriptions to create as quest items. "
-                    "Each string (or object.description) is markdown TipTap content — "
-                    "supports typed asset link shorthands "
-                    "[text](post:|file:|dataset:|route:|service:|quest:<uuid>) and "
+                    "Each string (or object.description) is extended markdown and "
                     "becomes an item with status 'pending'. "
                     "Objects may also include assignee_id, reward_amount, "
                     "eval_route_id, or submission_assets. submission_assets is "
@@ -295,10 +285,6 @@ def register(mcp: FastMCP) -> None:
 
         Quest type controls entry limits: closable allows one active submission per
         contributor per item; continuous allows unlimited submissions per item.
-
-        Asset references in description:
-        - Inline links: prefer [label](post:|file:|dataset:|route:|service:|quest:<uuid>).
-        - Use [label](asset:<uuid>) only when the asset type is unknown.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -336,16 +322,7 @@ def register(mcp: FastMCP) -> None:
         name: Annotated[Optional[str], Field(description="New title")] = None,
         description_markdown: Annotated[
             Optional[str],
-            Field(
-                description=(
-                    "Replacement extended markdown body for the quest description. Supports "
-                    "@mentions, LaTeX (\\(inline\\), \\[display\\]), "
-                    "typed asset link shorthands [text](post:|file:|dataset:|route:|service:|quest:<uuid>). "
-                    "Use [text](asset:<uuid>) only when the asset type is unknown. "
-                    "and block-level asset embeds via ```assetComponent``` using "
-                    '{"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card"}.'
-                )
-            ),
+            Field(description="Replacement quest description in extended markdown (same syntax as create_post)"),
         ] = None,
         visibility: Annotated[Optional[str], Field(description='"public" | "private" | "organization"')] = None,
         status: Annotated[
@@ -360,11 +337,7 @@ def register(mcp: FastMCP) -> None:
             Field(description="Updated top-level provenance object"),
         ] = None,
     ) -> str:
-        """Update a quest's description or metadata. Pass description_markdown to replace the body.
-
-        Inline links: prefer typed post:/file:/dataset:/route:/service: shorthands.
-        Use asset:<uuid> only when the asset type is unknown.
-        """
+        """Update a quest's description or metadata. Pass description_markdown to replace the body."""
         ouro = ctx.request_context.lifespan_context.ouro
 
         description = None
@@ -469,13 +442,12 @@ def register(mcp: FastMCP) -> None:
         done = sum(1 for i in items if i.status == "done")
 
         def _item_line(i: Any) -> str:
-            parts = [
-                markdown_id(i.id),
-                f"status: {i.status}",
-                f"order: {i.sort_order}",
-            ]
-            if i.reward_currency and i.reward_amount is not None:
-                parts.append(f"reward: {i.reward_amount} {i.reward_currency}")
+            parts = [markdown_id(i.id), f"status: {i.status}"]
+            if i.reward_currency and i.reward_amount:
+                amount = i.reward_amount / 100 if i.reward_currency == "usd" else i.reward_amount
+                parts.append(
+                    f"reward: {format_one_time_cost_summary(amount, i.reward_currency)}"
+                )
             if getattr(i, "assignee_id", None):
                 parts.append(f"assignee: `{i.assignee_id}`")
             if getattr(i, "waiting_on", None):
@@ -483,7 +455,7 @@ def register(mcp: FastMCP) -> None:
             if getattr(i, "leaderboard_enabled", False):
                 order = getattr(i, "leaderboard_order", None) or "desc"
                 parts.append(f"leaderboard: {order}")
-            body_bits = []
+            body_bits = [_item_description_text(i.description) or "(no description)"]
             if i.notes:
                 body_bits.append(str(i.notes))
             if getattr(i, "waiting_until", None):
@@ -507,9 +479,7 @@ def register(mcp: FastMCP) -> None:
                     + json.dumps(contributor_keys, default=str)
                 )
             return markdown_bullet(
-                _item_description_text(i.description) or "(no description)",
-                *parts,
-                body=" · ".join(body_bits) if body_bits else None,
+                f"Item {i.sort_order}", *parts, body=" · ".join(body_bits)
             )
 
         return render_markdown_list(
@@ -529,10 +499,8 @@ def register(mcp: FastMCP) -> None:
             List[Union[str, QuestItemInput]],
             Field(
                 description=(
-                    "Items to add. Each element is either a markdown description "
-                    "string (TipTap; supports typed asset link shorthands "
-                    "[text](post:|file:|dataset:|route:|service:|quest:<uuid>)) "
-                    "or a full item object with any of: description, "
+                    "Items to add. Each element is either an extended markdown "
+                    "description string or a full item object with any of: description, "
                     "assignee_id, "
                     "expected_asset_type, reward_currency ('btc'|'usd'), "
                     "reward_amount (sats for btc, cents for usd), "
@@ -576,13 +544,7 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         description: Annotated[
             Optional[str],
-            Field(
-                description=(
-                    "Updated task description as markdown TipTap content. Supports "
-                    "typed asset link shorthands "
-                    "[text](post:|file:|dataset:|route:|service:|quest:<uuid>)."
-                )
-            ),
+            Field(description="Updated task description in extended markdown"),
         ] = None,
         notes: Annotated[Optional[str], Field(description="Internal notes on this item")] = None,
         waiting_on: Annotated[
@@ -786,6 +748,7 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Self-complete an item. Creates an auto-accepted entry and marks the item done.
 
+        For quest owners/admins only; other contributors use submit_quest_entry.
         The quest must be open; draft quests reject entry-producing actions until
         they are published.
 

@@ -65,8 +65,8 @@ def test_slim_dataset_schema_keeps_name_type_and_semantics() -> None:
             "enum_values": ["todo", "done"],
             "is_nullable": False,
         },
-        {"name": "score", "type": "real", "is_nullable": True},
-    ]
+            {"name": "score", "type": "real"},
+        ]
 
 
 class _CaptureMCP:

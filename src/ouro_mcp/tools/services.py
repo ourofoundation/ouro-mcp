@@ -143,11 +143,31 @@ def _action_error_context(response: Any) -> dict[str, Any]:
     )
     result: dict[str, Any] = {
         "error_type": "external_service_error" if is_external else "route_execution_failed",
+        "message": error.get("message"),
         "retryable": retryable,
         "status_code": status,
         "code": code,
     }
     return {k: v for k, v in result.items() if v is not None}
+
+
+_SUMMARIZED_ERROR_KEYS = {
+    "code", "message", "retryable", "status", "statusCode", "type", "upstreamStatus",
+}
+
+
+def _error_details(response: Any) -> Any:
+    """The raw error payload, or None when `_action_error_context` covers all of it."""
+    if not isinstance(response, dict):
+        return response
+    error = response.get("error")
+    if isinstance(error, dict):
+        covered = set(error) <= _SUMMARIZED_ERROR_KEYS and set(response) <= (
+            _SUMMARIZED_ERROR_KEYS | {"error"}
+        )
+    else:
+        covered = set(response) <= _SUMMARIZED_ERROR_KEYS
+    return None if covered else response
 
 
 def _format_route_cost_preview(route: Any) -> Optional[dict[str, Any]]:
@@ -281,9 +301,8 @@ def _format_action_result(
     default to false; ``execute_route`` keeps the payload since it just ran.
     """
     result: dict[str, Any] = {
-        "status": "success" if action.is_success else action.status,
+        "status": action.status,
         "action_id": str(action.id),
-        "action_status": action.status,
     }
     if route_id:
         result["route_id"] = route_id
@@ -293,12 +312,13 @@ def _format_action_result(
     if duration_seconds is not None:
         result["duration_seconds"] = duration_seconds
 
-    # For errored actions, always surface compact error context (retryable /
-    # status_code). Full response bodies are opt-in via include_response.
+    # For errored actions, always surface compact error context (message /
+    # retryable / status_code). Full response bodies are opt-in via include_response.
     if action.is_error:
         result.update(_action_error_context(action.response))
-        if include_response:
-            result["error"] = _serialize_result(action.response)
+        details = _error_details(action.response) if include_response else None
+        if details is not None:
+            result["error"] = _serialize_result(details)
     elif include_response:
         result["data"] = _serialize_result(action.response)
 
@@ -949,7 +969,7 @@ def register(mcp: FastMCP) -> None:
     )
     @handle_ouro_errors
     def execute_route(
-        name_or_id: Annotated[
+        route_id: Annotated[
             str,
             Field(description='Route UUID or "entity_name/route_name"'),
         ],
@@ -1015,7 +1035,7 @@ def register(mcp: FastMCP) -> None:
         returned `cost` block reports the actual charge.
 
         Returns the completed action — data on success, error details on
-        failure — plus `action_id`, `action_status`, and a `cost` block for
+        failure — plus `status`, `action_id`, and a `cost` block for
         monetized pay-per-use routes. Resolved inputs and produced assets
         come back as `input_assets` / `output_assets`: lists of
         `{name, is_primary?, asset: {id, asset_type, name?, description?}}`
@@ -1039,7 +1059,7 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        route = ouro.routes.retrieve(name_or_id)
+        route = ouro.routes.retrieve(route_id)
         execution_mode = (
             getattr(route.route, "execution_mode", None) if route.route else None
         ) or "sync"
@@ -1086,7 +1106,7 @@ def register(mcp: FastMCP) -> None:
 
         try:
             action = ouro.routes.execute(
-                name_or_id,
+                route_id,
                 body=body_dict,
                 query=query_dict,
                 params=params_dict,

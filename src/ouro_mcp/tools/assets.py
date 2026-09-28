@@ -22,6 +22,7 @@ from ouro_mcp.utils import (
     present_kwargs,
     render_markdown_list,
     render_markdown_sections,
+    route_description_markdown,
     route_input_assets_summary,
     route_output_assets_summary,
     route_request_body_without_input_assets,
@@ -207,7 +208,8 @@ def register(mcp: FastMCP) -> None:
         """Delete an asset by ID. Auto-detects the asset type and routes to the appropriate delete method.
 
         Returns a summary of the deleted asset and any deleted children
-        (id, name, asset_type). Pass dry_run=true to preview first.
+        (id, name, asset_type). Comments on the asset are always deleted with it
+        and are not listed. Pass dry_run=true to preview first.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -632,9 +634,10 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
 
 
 def _comment_text(comment: Comment, config: CommentPreviewConfig) -> str | None:
-    if not comment.text or config.text_chars <= 0:
+    text = description_to_markdown(comment.content or comment.text)
+    if not text or config.text_chars <= 0:
         return None
-    return comment.text[: config.text_chars]
+    return text[: config.text_chars]
 
 
 def _format_comment_preview(comment: Any, config: CommentPreviewConfig) -> dict[str, Any]:
@@ -711,7 +714,12 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             log.debug("Failed to fetch schema for dataset %s", asset.id, exc_info=True)
             base["schema"] = None
         try:
-            base["stats"] = ouro.datasets.stats(asset_id).model_dump(mode="json")
+            stats = ouro.datasets.stats(asset_id)
+            base["stats"] = {
+                "row_count": stats.count,
+                "is_estimate": stats.is_estimate,
+                "size_bytes": stats.size_bytes,
+            }
         except Exception:
             log.debug("Failed to fetch stats for dataset %s", asset.id, exc_info=True)
             base["stats"] = None
@@ -719,10 +727,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             base["preview"] = asset.preview[:5]
 
     elif asset_type in {"post", "comment"}:
-        if asset.content:
-            base["content_text"] = asset.content.text
-        else:
-            base["content_text"] = None
+        base["content_text"] = description_to_markdown(asset.content) or None
 
     elif asset_type == "file":
         if asset.data:
@@ -741,7 +746,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
                 {
                     "id": str(r.id),
                     "name": r.name,
-                    "description": r.route.description if r.route else None,
+                    "description": route_description_markdown(r.route.description) if r.route else None,
                 }
                 for r in routes
             ]
@@ -751,7 +756,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
 
     elif asset_type == "route":
         if asset.route:
-            base["route_description"] = asset.route.description
+            base["route_description"] = route_description_markdown(asset.route.description)
             base["parameters"] = asset.route.parameters
             base["request_body"] = route_request_body_without_input_assets(asset.route)
             base["input_assets"] = route_input_assets_summary(asset.route)
