@@ -7,9 +7,10 @@ import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
+from ouro.models import AssetRef, AssetTag, Connection, DatasetColumn
 from ouro_mcp.constants import (
     DEFAULT_OURO_FRONTEND_URL,
     DEFAULT_RESPONSE_FORMAT,
@@ -62,88 +63,96 @@ def strip_heavy_fields(value: Any) -> Any:
     return cleaned
 
 
-def slim_dataset_schema(schema: Any) -> list[dict[str, Any]] | None:
+def slim_dataset_schema(columns: list[DatasetColumn]) -> list[dict[str, Any]]:
     """Agent-facing column schema: ``name``/``type`` plus semantic hints.
 
-    Drops duplicated ``column_name``/``data_type`` aliases and FK plumbing
-    (``fk_constraint_name``, ``foreign_table_*``, ``foreign_column_name``).
-    Keeps ``semantic_type``, ``ref_kind``, ``asset_type``, ``enum_values``,
-    and ``is_nullable`` when present. Column names are lowercase snake_case.
+    Keeps only the declared ``DatasetColumn`` fields, dropping the FK
+    plumbing the backend also returns (``fk_constraint_name``,
+    ``foreign_table_*``, ``foreign_column_name``). Column names are
+    lowercase snake_case.
     """
-    if schema is None:
-        return None
-    if not isinstance(schema, list):
-        return schema
+    fields = set(DatasetColumn.model_fields)
+    return [
+        column.model_dump(mode="json", include=fields, exclude_none=True)
+        for column in columns
+    ]
 
-    slimmed: list[dict[str, Any]] = []
-    for field in schema:
-        if not isinstance(field, dict):
+
+def refs_from_schema(columns: list[DatasetColumn]) -> dict[str, dict[str, Any]]:
+    """Reference columns as ``{column: {kind, asset_type?}}``."""
+    refs: dict[str, dict[str, Any]] = {}
+    for column in columns:
+        if column.semantic_type != "reference":
             continue
-        name = field.get("name") or field.get("column_name")
-        if not name:
-            continue
-        entry: dict[str, Any] = {
-            "name": name,
-            "type": field.get("type") or field.get("data_type"),
-        }
-        for key in (
-            "semantic_type",
-            "ref_kind",
-            "asset_type",
-            "enum_values",
-            "is_nullable",
-        ):
-            if field.get(key) is not None:
-                entry[key] = field[key]
-        slimmed.append(entry)
-    return slimmed
+        kind = column.ref_kind or "asset"
+        refs[column.name] = {"kind": kind}
+        if kind == "asset" and column.asset_type:
+            refs[column.name]["asset_type"] = column.asset_type
+    return refs
 
 
-def slim_asset_tags(tags: Any) -> list[dict[str, Any]] | None:
+def enum_columns_from_schema(columns: list[DatasetColumn]) -> dict[str, dict[str, list[str]]]:
+    """Enum columns as ``{column: {values}}``."""
+    return {
+        column.name: {"values": column.enum_values}
+        for column in columns
+        if column.semantic_type == "enum" and column.enum_values
+    }
+
+
+def slim_asset_tags(tags: list[AssetTag]) -> list[dict[str, Any]] | None:
     """Shrink asset tag rows for MCP — metadata only, no vectors."""
-    if not isinstance(tags, list) or not tags:
-        return None
-
-    slimmed: list[dict[str, Any]] = []
-    for row in tags:
-        if not isinstance(row, dict):
-            continue
-        tag = row.get("tag") if isinstance(row.get("tag"), dict) else {}
-        tag_summary = optional_kwargs(
-            id=str(tag["id"]) if tag.get("id") is not None else None,
-            name=tag.get("name"),
-            slug=tag.get("slug"),
-            type=tag.get("type"),
-            description=tag.get("description"),
+    slimmed = [
+        optional_kwargs(
+            source=row.source,
+            confidence=row.confidence,
+            tag=optional_kwargs(
+                id=str(row.tag.id),
+                name=row.tag.name,
+                slug=row.tag.slug,
+                type=row.tag.type,
+                description=row.tag.description,
+            ),
         )
-        entry = optional_kwargs(
-            source=row.get("source"),
-            confidence=row.get("confidence"),
-            tag=tag_summary or None,
-        )
-        if entry:
-            slimmed.append(entry)
+        for row in tags
+    ]
     return slimmed or None
 
 
+def _connection_endpoint(
+    asset: AssetRef | None, asset_id: Any, asset_type: str | None
+) -> dict[str, Any]:
+    # `asset_type` is the discriminator agents need to decide which follow-up
+    # tool to call — always emit it (possibly null). `name` is display-only
+    # and dropped when empty; the backend stores "" for nameless types like
+    # comments.
+    row: dict[str, Any] = {
+        "id": str(asset_id),
+        "asset_type": asset.asset_type if asset else asset_type,
+    }
+    if asset and asset.name:
+        row["name"] = asset.name
+    if asset and asset.created_at:
+        row["created_at"] = asset.created_at
+    return row
+
+
 def slim_connection_graph(
-    connections: Any,
+    connections: Iterable[Connection],
     current_asset_id: str | None = None,
     *,
     omit_outgoing_references: bool = False,
     omit_comments: bool = False,
-) -> Any:
+) -> dict[str, list[dict[str, Any]]]:
     """Shrink connection payloads from the Ouro API for MCP tool responses.
 
-    Each edge may include full ``source`` and ``target`` asset records
-    (descriptions, previews, metadata, pricing, etc.). That duplication
-    routinely pushes ``get_asset(detail=\"full\")`` past agent context limits
-    even for modest graphs.     Group edges by relationship type and store only
-    the connected asset summary. ``id`` and ``asset_type`` are always
-    present; ``name`` is omitted when null (display-only). ``created_at``,
-    when available, is the connected asset's timestamp, not the edge
-    timestamp. For ``type == "action"`` edges, ``action_id`` is preserved
-    when present so agents can follow up with ``get_action``.
+    Each edge may include full ``source`` and ``target`` asset records, which
+    routinely pushes ``get_asset(detail=\"full\")`` past agent context
+    limits even for modest graphs. Group edges by relationship type and keep
+    only the connected asset summary: ``id`` and ``asset_type`` always,
+    ``name`` when set, and the connected asset's ``created_at`` when known.
+    For ``type == "action"`` edges, ``action_id`` is preserved so agents can
+    follow up with ``get_action``.
 
     When ``omit_outgoing_references`` is true (datasets), skip ``reference``
     edges where the current asset is the source. Those edges duplicate IDs
@@ -155,79 +164,24 @@ def slim_connection_graph(
     ``get_asset(detail=\"full\")`` and via ``get_comments``; keeping the
     connection stubs just duplicates IDs without text.
     """
-    if not isinstance(connections, list):
-        return connections
-
-    def _slim_endpoint(node: Any) -> dict[str, Any] | None:
-        if not isinstance(node, dict):
-            return None
-        aid = node.get("id")
-        out: dict[str, Any] = {
-            "id": str(aid) if aid is not None else None,
-            # `asset_type` is the discriminator agents need to decide which
-            # follow-up tool to call — always emit it (possibly null when the
-            # backend has no record), never drop it.
-            "asset_type": node.get("asset_type"),
-        }
-        # `name` is the only field we drop when missing — it's display-only
-        # and frequently absent for endpoint stubs. Treat both `null` and the
-        # empty string the same; the backend stores `""` for nameless types
-        # like comments and we don't want either form to bloat the payload.
-        name = node.get("name")
-        if name:
-            out["name"] = name
-        if node.get("created_at") is not None:
-            out["created_at"] = node["created_at"]
-        return out
-
-    def _endpoint_from_edge(edge: dict[str, Any], side: str) -> dict[str, Any] | None:
-        endpoint = _slim_endpoint(edge.get(side))
-        if endpoint is not None:
-            return endpoint
-
-        edge_id = edge.get(f"{side}_id")
-        asset_type = edge.get(f"{side}_asset_type")
-        if edge_id is None and asset_type is None:
-            return None
-        return {
-            "id": str(edge_id) if edge_id is not None else None,
-            "name": None,
-            "asset_type": asset_type,
-        }
-
     current_id = str(current_asset_id) if current_asset_id is not None else None
     grouped: dict[str, list[dict[str, Any]]] = {}
     for edge in connections:
-        connection_type = "unknown"
-        if not isinstance(edge, dict):
-            grouped.setdefault(connection_type, []).append({"value": edge})
+        if omit_comments and edge.type == "comment":
             continue
 
-        connection_type = str(edge.get("type") or "unknown")
-        if omit_comments and connection_type == "comment":
-            continue
-
-        source = _endpoint_from_edge(edge, "source")
-        target = _endpoint_from_edge(edge, "target")
-        source_id = str(source["id"]) if source and source.get("id") is not None else None
-        target_id = str(target["id"]) if target and target.get("id") is not None else None
-
-        is_outgoing = bool(current_id and source_id == current_id)
-        if omit_outgoing_references and connection_type == "reference" and is_outgoing:
+        is_outgoing = str(edge.source_id) == current_id
+        if omit_outgoing_references and edge.type == "reference" and is_outgoing:
             continue
 
         if is_outgoing:
-            row = dict(target or {})
+            row = _connection_endpoint(edge.target, edge.target_id, edge.target_asset_type)
         else:
-            row = dict(source or {})
+            row = _connection_endpoint(edge.source, edge.source_id, edge.source_asset_type)
+        if edge.type == "action" and edge.action_id is not None:
+            row["action_id"] = str(edge.action_id)
 
-        # Action edges carry the route-execution id that produced the link.
-        # Preserve it so agents can follow up with get_action without scraping
-        # posts or guessing from lineage alone.
-        if connection_type == "action" and edge.get("action_id") is not None:
-            row["action_id"] = str(edge["action_id"])
-
-        grouped.setdefault(connection_type, []).append(row)
+        grouped.setdefault(edge.type, []).append(row)
     return grouped
 
 
@@ -431,7 +385,15 @@ def dump_json(data: Any, **kwargs: Any) -> str:
     ``json.dumps`` so every response gets compact local-timezone timestamps
     when ``OURO_MCP_TIMEZONE`` is set (see ``enrich_timestamps``).
     """
-    return json.dumps(enrich_timestamps(data), default=str, **kwargs)
+    return json.dumps(enrich_timestamps(data), default=_json_default, **kwargs)
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    return str(value)
 
 
 def list_response(
@@ -477,6 +439,15 @@ def list_response(
     if extra:
         payload.update(extra)
     return payload
+
+
+def page_pagination(page: Any) -> dict[str, Any]:
+    """The list-envelope pagination fields for an ouro-py ``Page``."""
+    return {
+        "total": page.total,
+        "hasMore": page.has_more,
+        "nextCursor": page.next_cursor,
+    }
 
 
 def resolve_list_pagination(
@@ -564,7 +535,7 @@ def markdown_bullet(
     for part in parts:
         if part is None:
             continue
-        text = collapse_whitespace(part)
+        text = collapse_whitespace(part.isoformat() if isinstance(part, datetime) else part)
         if text:
             segments.append(text)
     line = "- " + " — ".join(segments)
@@ -1126,26 +1097,25 @@ def format_search_hit(item: Any) -> dict[str, Any]:
     """
     from ouro.utils.content import description_to_markdown
 
-    data = _as_dict(item)
     row: dict[str, Any] = {
-        "id": str(data.get("id") or ""),
-        "name": data.get("name"),
-        "asset_type": data.get("asset_type"),
-        "created_at": data.get("created_at"),
+        "id": str(_getv(item, "id") or ""),
+        "name": _getv(item, "name"),
+        "asset_type": _getv(item, "asset_type"),
+        "created_at": _getv(item, "created_at"),
     }
 
-    description = description_to_markdown(data.get("description"), max_length=200)
+    description = description_to_markdown(_getv(item, "description"), max_length=200)
     if description:
         row["description"] = description
 
-    user = user_summary(data)
+    user = user_summary(item)
     if user and user.get("username"):
         row["username"] = user["username"]
 
-    if data.get("snippet"):
-        row["snippet"] = data["snippet"]
-    if data.get("match_source"):
-        row["match_source"] = data["match_source"]
+    for key in ("snippet", "match_source"):
+        value = _getv(item, key)
+        if value:
+            row[key] = value
 
     return row
 
@@ -1529,10 +1499,6 @@ def file_result(file: Any) -> dict:
     return result
 
 
-def resolve_team_policy(team: dict, field: str, default: str = "any") -> str:
+def resolve_team_policy(team: Any, field: str, default: str = "any") -> str:
     """Return the effective policy for a team, falling back to the org's policy."""
-    value = team.get(field)
-    if value:
-        return value
-    org = team.get("organization") or {}
-    return org.get(field) or default
+    return getattr(team, field) or getattr(team.organization, field, None) or default

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.models import Conversation, Message
 from ouro.resources.conversations import Messages
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
@@ -12,69 +13,35 @@ from ouro_mcp.utils import (
     dump_json,
     markdown_bullet,
     markdown_id,
+    page_pagination,
     render_markdown_list,
     truncate_response,
 )
 from pydantic import Field
 
 
-def _conversation_summary(conversation: Any) -> dict:
-    if isinstance(conversation, dict):
-        metadata = conversation.get("metadata")
-        members = metadata.get("members") if isinstance(metadata, dict) else []
-        result: dict[str, Any] = {
-            "id": str(conversation.get("id", "")),
-            "name": conversation.get("name"),
-            "summary": conversation.get("summary"),
-            "created_at": conversation.get("created_at"),
-            "last_updated": conversation.get("last_updated"),
-            "member_user_ids": [str(member) for member in (members or [])],
-        }
-        org_id = conversation.get("org_id")
-        if org_id:
-            result["org_id"] = str(org_id)
-        team_id = conversation.get("team_id")
-        if team_id:
-            result["team_id"] = str(team_id)
-        return result
-
-    metadata = getattr(conversation, "metadata", None)
-    members = getattr(metadata, "members", None) if metadata is not None else []
-
-    result: dict[str, Any] = {
-        "id": str(getattr(conversation, "id", "")),
-        "name": getattr(conversation, "name", None),
-        "summary": getattr(conversation, "summary", None),
-        "created_at": (
-            conversation.created_at.isoformat()
-            if getattr(conversation, "created_at", None)
-            else None
-        ),
-        "last_updated": (
-            conversation.last_updated.isoformat()
-            if getattr(conversation, "last_updated", None)
-            else None
-        ),
-        "member_user_ids": [str(member) for member in (members or [])],
-    }
-    org_id = getattr(conversation, "org_id", None)
-    if org_id:
-        result["org_id"] = str(org_id)
-    team_id = getattr(conversation, "team_id", None)
-    if team_id:
-        result["team_id"] = str(team_id)
-    return result
-
-
-def _message_summary(message: dict) -> dict:
+def _conversation_summary(conversation: Conversation) -> dict:
     return {
-        "id": str(message.get("id", "")),
-        "conversation_id": str(message.get("conversation_id", "")),
-        "user_id": str(message.get("user_id", "")),
-        "type": message.get("type", "message"),
-        "text": message.get("text"),
-        "json": message.get("json"),
-        "created_at": message.get("created_at"),
+        "id": str(conversation.id),
+        "name": conversation.name,
+        "summary": conversation.summary,
+        "created_at": conversation.created_at,
+        "last_updated": conversation.last_updated,
+        "member_user_ids": [str(member) for member in conversation.metadata.members],
+        "org_id": str(conversation.org_id),
+        "team_id": str(conversation.team_id),
+    }
+
+
+def _message_summary(message: Message) -> dict:
+    return {
+        "id": str(message.id),
+        "conversation_id": str(message.conversation_id),
+        "user_id": str(message.user_id),
+        "type": message.type or "message",
+        "text": message.text,
+        "json": message.data,
+        "created_at": message.created_at,
     }
 
 
@@ -85,16 +52,8 @@ def _list_conversations(
     limit: int = 20,
     offset: int = 0,
 ) -> str:
-    page = ouro.conversations.list(
-        org_id=org_id,
-        limit=limit,
-        offset=offset,
-        with_pagination=True,
-    )
-    conversations = page.get("data") or []
-    pagination = page.get("pagination")
-
-    results = [_conversation_summary(conversation) for conversation in conversations]
+    page = ouro.conversations.list(org_id=org_id, limit=limit, offset=offset)
+    results = [_conversation_summary(conversation) for conversation in page]
 
     def _conversation_line(row: dict) -> str:
         parts = [markdown_id(row.get("id"))]
@@ -106,7 +65,7 @@ def _list_conversations(
         if member_ids:
             parts.append(f"members: {len(member_ids)}")
         if row.get("last_updated"):
-            parts.append(str(row["last_updated"]))
+            parts.append(row["last_updated"])
         return markdown_bullet(
             str(row.get("name") or "(unnamed conversation)"),
             *parts,
@@ -117,7 +76,7 @@ def _list_conversations(
         render_markdown_list(
             results,
             line_fn=_conversation_line,
-            pagination=pagination,
+            pagination=page_pagination(page),
             offset=offset,
             noun="conversations",
             empty_text="No conversations.",
@@ -287,12 +246,8 @@ def register(mcp: FastMCP) -> None:
             conversation_id=conversation_id,
             limit=limit,
             before=before,
-            with_pagination=True,
         )
-        messages = page.get("data") or []
-        pagination = page.get("pagination")
-
-        results = [_message_summary(message) for message in messages]
+        results = [_message_summary(message) for message in page]
 
         def _message_line(row: dict) -> str:
             parts = [
@@ -302,7 +257,7 @@ def register(mcp: FastMCP) -> None:
             if row.get("type") and row.get("type") != "message":
                 parts.append(f"type: {row['type']}")
             if row.get("created_at"):
-                parts.append(str(row["created_at"]))
+                parts.append(row["created_at"])
             text = row.get("text") or ""
             primary = text[:80] + ("…" if len(text) > 80 else "") if text else "(empty)"
             body = text if len(text) > 80 else None
@@ -312,7 +267,7 @@ def register(mcp: FastMCP) -> None:
             render_markdown_list(
                 results,
                 line_fn=_message_line,
-                pagination=pagination,
+                pagination=page_pagination(page),
                 noun="messages",
                 empty_text="No messages.",
                 extras=[

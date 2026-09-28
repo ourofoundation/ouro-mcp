@@ -42,38 +42,35 @@ def register(mcp: FastMCP) -> None:
         """List notifications for the authenticated user, newest first."""
         ouro = ctx.request_context.lifespan_context.ouro
 
-        response = ouro.notifications.list(
+        page = ouro.notifications.list(
             offset=offset,
             limit=limit,
             org_id=org_id,
             unread_only=unread_only,
             category=category,
-            with_pagination=True,
         )
 
         results = []
-        for n in response.get("data", []):
+        for n in page:
             entry = {
-                "id": str(n.get("id", "")),
-                "type": n.get("type"),
-                "viewed": n.get("viewed"),
-                "created_at": n.get("created_at"),
+                "id": str(n.id),
+                "type": n.type,
+                "viewed": n.viewed,
+                "created_at": n.created_at,
             }
 
-            source = n.get("source_user")
-            if source:
-                entry["from"] = source.get("username") or source.get("name")
+            if n.source_user:
+                entry["from"] = n.source_user.username or n.source_user.name
 
-            content = n.get("content", {})
-            if content.get("text"):
-                entry["text"] = content["text"]
+            text = (n.content or {}).get("text")
+            if text:
+                entry["text"] = text
 
-            asset = content.get("asset") if isinstance(content, dict) else None
-            if asset and isinstance(asset, dict):
+            if n.asset:
                 entry["asset"] = {
-                    "id": str(asset.get("id", "")),
-                    "name": asset.get("name"),
-                    "asset_type": asset.get("asset_type"),
+                    "id": str(n.asset.id),
+                    "name": n.asset.name,
+                    "asset_type": n.asset.asset_type,
                 }
 
             results.append(entry)
@@ -104,7 +101,7 @@ def register(mcp: FastMCP) -> None:
             render_markdown_list(
                 results,
                 line_fn=_notification_line,
-                pagination=response.get("pagination") or {},
+                has_more=page.has_more,
                 offset=offset,
                 noun="notifications",
                 empty_text="No notifications.",

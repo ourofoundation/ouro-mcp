@@ -5,11 +5,18 @@ import json
 from types import SimpleNamespace
 
 from mcp.server.fastmcp import FastMCP
+from ouro.models import Entry, LeaderboardPage, Page, QuestItem
 from ouro_mcp.tools.quests import (
     EvalStaticInput,
     SubmissionAssetDeclaration,
     register,
 )
+
+QUEST_ID = "019df875-7957-7888-888f-f8140ff62900"
+ITEM_ID = "019df875-7957-7888-888f-f8140ff62901"
+ENTRY_ID = "019df875-7957-7888-888f-f8140ff62902"
+ACTION_ID = "019df875-7957-7888-888f-f8140ff62903"
+ADA_ID = "019df875-7957-7888-888f-f8140ff62904"
 
 
 class _CaptureMCP:
@@ -111,32 +118,34 @@ class _FakeQuests:
             for idx, item in enumerate(items)
         ]
 
-    def list_assigned_items(self, **kwargs):
+    def list_assigned_items(self, **kwargs) -> Page[QuestItem]:
         self.calls.append({"method": "list_assigned_items", **kwargs})
-        return {
-            "data": [
-                {
-                    "id": "item-1",
-                    "quest_id": "quest-1",
-                    "description": {
-                        "text": "Assigned task",
-                        "json": {
-                            "type": "doc",
-                            "content": [
-                                {
-                                    "type": "paragraph",
-                                    "content": [
-                                        {"type": "text", "text": "Assigned task"}
-                                    ],
-                                }
-                            ],
+        return Page[QuestItem].model_validate(
+            {
+                "data": [
+                    {
+                        "id": ITEM_ID,
+                        "quest_id": QUEST_ID,
+                        "description": {
+                            "text": "Assigned task",
+                            "json": {
+                                "type": "doc",
+                                "content": [
+                                    {
+                                        "type": "paragraph",
+                                        "content": [
+                                            {"type": "text", "text": "Assigned task"}
+                                        ],
+                                    }
+                                ],
+                            },
                         },
-                    },
-                    "status": "pending",
-                }
-            ],
-            "pagination": {"hasMore": False},
-        }
+                        "status": "pending",
+                    }
+                ],
+                "hasMore": False,
+            }
+        )
 
     def list_items(self, quest_id: str):
         self.calls.append({"method": "list_items", "quest_id": quest_id})
@@ -198,22 +207,25 @@ class _FakeQuests:
         self.calls.append({"method": "create_entry", "quest_id": quest_id, **kwargs})
         return _FakeModel(id="entry-1", status="submitted")
 
-    def list_entries(self, quest_id: str, **kwargs):
+    def list_entries(self, quest_id: str, **kwargs) -> Page[Entry]:
         self.calls.append({"method": "list_entries", "quest_id": quest_id, **kwargs})
-        return {
-            "data": [
-                _FakeModel(
-                    id="entry-1",
-                    status="accepted",
-                    eval_score=0.91,
-                    eval_status="passed",
-                    eval_action_id="action-1",
-                )
-            ],
-            "pagination": {"hasMore": False, "limit": kwargs["limit"]},
-        }
+        return Page[Entry].model_validate(
+            {
+                "data": [
+                    {
+                        "id": ENTRY_ID,
+                        "status": "accepted",
+                        "eval_score": 0.91,
+                        "eval_status": "passed",
+                        "eval_action_id": ACTION_ID,
+                    }
+                ],
+                "hasMore": False,
+                "limit": kwargs["limit"],
+            }
+        )
 
-    def list_leaderboard(self, quest_id: str, item_id: str, **kwargs):
+    def list_leaderboard(self, quest_id: str, item_id: str, **kwargs) -> LeaderboardPage:
         self.calls.append(
             {
                 "method": "list_leaderboard",
@@ -222,22 +234,25 @@ class _FakeQuests:
                 **kwargs,
             }
         )
-        return {
-            "data": [
-                _FakeModel(
-                    placement=1,
-                    entry_id="entry-1",
-                    score=0.91,
-                    status="accepted",
-                    eval_status="passed",
-                    eval_action_id="action-1",
-                    category_scores={"accuracy": 0.95, "completeness": 0.8},
-                    user={"username": "ada"},
-                )
-            ],
-            "pagination": {"hasMore": False, "limit": kwargs["limit"]},
-            "item": {"id": item_id, "leaderboard_order": "desc"},
-        }
+        return LeaderboardPage.model_validate(
+            {
+                "data": [
+                    {
+                        "placement": 1,
+                        "entry_id": ENTRY_ID,
+                        "score": 0.91,
+                        "status": "accepted",
+                        "eval_status": "passed",
+                        "eval_action_id": ACTION_ID,
+                        "category_scores": {"accuracy": 0.95, "completeness": 0.8},
+                        "user": {"user_id": ADA_ID, "username": "ada"},
+                    }
+                ],
+                "hasMore": False,
+                "limit": kwargs["limit"],
+                "item": {"id": item_id, "leaderboard_order": "desc"},
+            }
+        )
 
     def review_entry(self, quest_id: str, entry_id: str, **kwargs):
         self.calls.append(
@@ -292,7 +307,6 @@ def test_list_assigned_quest_items_calls_sdk() -> None:
             "team_id": "team-1",
             "limit": 5,
             "offset": 10,
-            "with_pagination": True,
         }
     ]
 
@@ -362,23 +376,26 @@ def test_submit_quest_entry_calls_sdk() -> None:
 def test_list_quest_entries_returns_markdown() -> None:
     quests = _FakeQuests()
 
-    def list_entries(quest_id: str, **kwargs):
+    def list_entries(quest_id: str, **kwargs) -> Page[Entry]:
         quests.calls.append(
             {"method": "list_entries", "quest_id": quest_id, **kwargs}
         )
-        return {
-            "data": [
-                _FakeModel(
-                    id="entry-1",
-                    status="accepted",
-                    description="submission",
-                    assets={"file": {"asset_id": "asset-1", "asset_type": "file"}},
-                    embedded_assets=[],
-                    users=[],
-                )
-            ],
-            "pagination": {"hasMore": False, "limit": kwargs["limit"]},
-        }
+        return Page[Entry].model_validate(
+            {
+                "data": [
+                    {
+                        "id": ENTRY_ID,
+                        "status": "accepted",
+                        "description": {"text": "submission"},
+                        "assets": {"file": {"asset_id": "asset-1", "asset_type": "file"}},
+                        "embedded_assets": [],
+                        "users": [],
+                    }
+                ],
+                "hasMore": False,
+                "limit": kwargs["limit"],
+            }
+        )
 
     quests.list_entries = list_entries
     result = _quest_tools()["list_quest_entries"](
@@ -390,7 +407,7 @@ def test_list_quest_entries_returns_markdown() -> None:
     )
 
     assert "quest_id: `quest-1`" in result
-    assert "id: `entry-1`" in result
+    assert f"id: `{ENTRY_ID}`" in result
     assert "status: accepted" in result
     assert "asset-1" in result
     assert quests.calls == [
@@ -400,7 +417,6 @@ def test_list_quest_entries_returns_markdown() -> None:
             "status": "accepted",
             "limit": 10,
             "offset": 20,
-            "with_pagination": True,
         }
     ]
 
@@ -653,7 +669,7 @@ def test_list_quest_leaderboard_renders_ranked_rows() -> None:
     quests = _FakeQuests()
     result = _quest_tools()["list_quest_leaderboard"](
         "quest-1",
-        "item-1",
+        ITEM_ID,
         _ctx(quests),
     )
 
@@ -661,13 +677,12 @@ def test_list_quest_leaderboard_renders_ranked_rows() -> None:
         {
             "method": "list_leaderboard",
             "quest_id": "quest-1",
-            "item_id": "item-1",
+            "item_id": ITEM_ID,
             "limit": 50,
             "offset": 0,
-            "with_pagination": True,
         }
     ]
     assert "score: 0.91" in result
     assert "accuracy=0.95" in result
     assert "@ada" in result
-    assert "item_id: `item-1`" in result
+    assert f"item_id: `{ITEM_ID}`" in result

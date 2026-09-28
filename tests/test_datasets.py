@@ -7,13 +7,16 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from ouro.models import Connection, Dataset, DatasetColumn, DatasetRows
+
 from ouro_mcp.tools.datasets import _resolve_dataset_data, register
 from ouro_mcp.utils import slim_dataset_schema
 
 
 def test_slim_dataset_schema_keeps_name_type_and_semantics() -> None:
     assert slim_dataset_schema(
-        [
+        _columns(
+            [
             {
                 "column_name": "file_id",
                 "data_type": "uuid",
@@ -45,7 +48,8 @@ def test_slim_dataset_schema_keeps_name_type_and_semantics() -> None:
                 "data_type": "real",
                 "is_nullable": True,
             },
-        ]
+            ]
+        )
     ) == [
         {
             "name": "file_id",
@@ -77,18 +81,54 @@ class _CaptureMCP:
         return decorator
 
 
+DATASET_ID = "019df875-7957-7888-888f-f8140ff62500"
+FILE_ID = "019df875-7957-7888-888f-f8140ff62564"
+
+
+def _columns(schema: list[dict]) -> list[DatasetColumn]:
+    return [DatasetColumn.model_validate(column) for column in schema]
+
+
+def _dataset(
+    name: str,
+    visibility: str,
+    ingest: dict | None,
+    ingest_warning: dict | None,
+) -> Dataset:
+    return Dataset.model_validate(
+        {
+            "id": DATASET_ID,
+            "user_id": "019df875-7957-7888-888f-f8140ff62501",
+            "org_id": "019df875-7957-7888-888f-f8140ff62502",
+            "team_id": "019df875-7957-7888-888f-f8140ff62503",
+            "name": name,
+            "asset_type": "dataset",
+            "visibility": visibility,
+            "created_at": "2026-05-02T12:00:00Z",
+            "last_updated": "2026-05-02T12:00:00Z",
+            "source": "api",
+            "metadata": {"table_name": "table_1"},
+            # ouro-py stashes partial-success ingest info on the model.
+            "row_ingest": ingest,
+            "ingest_warning": ingest_warning,
+        }
+    )
+
+
 class _FakeDatasets:
     def __init__(
         self,
-        query_page: dict | None = None,
+        rows: dict | None = None,
+        sql_result: pd.DataFrame | None = None,
         schema_response: list[dict] | None = None,
         ingest: dict | None = None,
         ingest_warning: dict | None = None,
     ) -> None:
         self.created: list[dict] = []
         self.updated: list[dict] = []
-        self.query_page = query_page
-        self.schema_response = schema_response
+        self.rows = rows or {}
+        self.sql_result = sql_result
+        self.schema_response = schema_response or []
         self.query_calls: list[dict] = []
         self.column_calls: list[dict] = []
         self.ingest = ingest
@@ -96,51 +136,25 @@ class _FakeDatasets:
 
     def create(self, **kwargs):
         self.created.append(kwargs)
-        dataset = SimpleNamespace(
-            id="dataset-1",
-            name=kwargs["name"],
-            asset_type="dataset",
-            visibility=kwargs["visibility"],
-            created_at=None,
-            last_updated=None,
-            state="success",
-            source="api",
-            description=None,
-            metadata={"table_name": "table_1"},
-        )
-        # ouro-py stashes partial-success ingest info out-of-band on the model.
-        if self.ingest is not None:
-            dataset.row_ingest = self.ingest
-        if self.ingest_warning is not None:
-            dataset.ingest_warning = self.ingest_warning
-        return dataset
+        return _dataset(kwargs["name"], kwargs["visibility"], self.ingest, self.ingest_warning)
 
-    def query(
+    def query(self, dataset_id: str, sql: str):
+        self.query_calls.append({"dataset_id": dataset_id, "sql": sql})
+        return self.sql_result
+
+    def list_rows(
         self,
         dataset_id: str,
-        sql: str | None = None,
         *,
-        limit: int | None = None,
+        limit: int = 100,
         offset: int = 0,
-        with_pagination: bool = False,
         resolve_refs: bool = False,
-    ):
-        call = {"dataset_id": dataset_id}
-        if sql is not None:
-            call["sql"] = sql
-        else:
-            call.update(
-                {
-                    "limit": limit,
-                    "offset": offset,
-                    "with_pagination": with_pagination,
-                }
-            )
-            # Only record when set so existing assertions stay stable.
-            if resolve_refs:
-                call["resolve_refs"] = resolve_refs
+    ) -> DatasetRows:
+        call = {"dataset_id": dataset_id, "limit": limit, "offset": offset}
+        if resolve_refs:
+            call["resolve_refs"] = resolve_refs
         self.query_calls.append(call)
-        return self.query_page
+        return DatasetRows.model_validate(self.rows)
 
     def add_column(
         self,
@@ -151,7 +165,7 @@ class _FakeDatasets:
         nullable: bool = True,
         label: str | None = None,
         enum_values: list[str] | None = None,
-    ):
+    ) -> None:
         self.column_calls.append(
             {
                 "method": "add",
@@ -163,7 +177,6 @@ class _FakeDatasets:
                 "enum_values": enum_values,
             }
         )
-        return {"name": name}
 
     def update_column(
         self,
@@ -174,7 +187,7 @@ class _FakeDatasets:
         type: str | None = None,
         label: str | None = None,
         enum_values: list[str] | None = None,
-    ):
+    ) -> None:
         self.column_calls.append(
             {
                 "method": "update",
@@ -186,48 +199,38 @@ class _FakeDatasets:
                 "enum_values": enum_values,
             }
         )
-        return {"name": new_name or column}
 
-    def drop_column(self, dataset_id: str, column: str):
+    def drop_column(self, dataset_id: str, column: str) -> None:
         self.column_calls.append(
             {"method": "drop", "dataset_id": dataset_id, "column": column}
         )
-        return {"dropped": column}
 
-    def schema(self, dataset_id: str):
-        return self.schema_response or []
+    def schema(self, dataset_id: str) -> list[DatasetColumn]:
+        return _columns(self.schema_response)
 
     def update(self, dataset_id: str, **kwargs):
         self.updated.append({"id": dataset_id, **kwargs})
-        dataset = SimpleNamespace(
-            id=dataset_id,
-            name=kwargs.get("name") or "dataset",
-            asset_type="dataset",
-            visibility=kwargs.get("visibility") or "private",
-            created_at=None,
-            last_updated=None,
-            state="success",
-            source="api",
-            description=None,
-            metadata={"table_name": "table_1"},
+        return _dataset(
+            kwargs.get("name") or "dataset",
+            kwargs.get("visibility") or "private",
+            self.ingest,
+            self.ingest_warning,
         )
-        if self.ingest is not None:
-            dataset.row_ingest = self.ingest
-        if self.ingest_warning is not None:
-            dataset.ingest_warning = self.ingest_warning
-        return dataset
 
 
 class _FakeAssets:
-    def connections(self, dataset_id: str):
+    def connections(self, dataset_id: str) -> list[Connection]:
         return [
-            {
-                "type": "reference",
-                "source_id": dataset_id,
-                "target_id": "file-1",
-                "target_asset_type": "file",
-                "target": {"id": "file-1", "asset_type": "file", "name": "sample.cif"},
-            }
+            Connection.model_validate(
+                {
+                    "id": "019df875-7957-7888-888f-f8140ff62599",
+                    "type": "reference",
+                    "source_id": dataset_id,
+                    "target_id": FILE_ID,
+                    "target_asset_type": "file",
+                    "target": {"id": FILE_ID, "asset_type": "file", "name": "sample.cif"},
+                }
+            )
         ]
 
 
@@ -334,20 +337,18 @@ def test_resolve_dataset_data_rejects_multiple_sources() -> None:
 
 
 def test_query_dataset_returns_markdown_table_with_pagination_and_nulls() -> None:
-    page = {
-        "data": pd.DataFrame(
-            [
-                {
-                    "name": "alpha",
-                    "value": 1.5,
-                    "missing": float("nan"),
-                    "seen_at": pd.Timestamp("2026-05-02T12:00:00Z"),
-                }
-            ]
-        ),
-        "pagination": {"hasMore": True},
+    rows = {
+        "data": [
+            {
+                "name": "alpha",
+                "value": 1.5,
+                "missing": None,
+                "seen_at": "2026-05-02T12:00:00+00:00",
+            }
+        ],
+        "hasMore": True,
     }
-    datasets = _FakeDatasets(query_page=page)
+    datasets = _FakeDatasets(rows=rows)
     tools = _dataset_tools()
 
     result = tools["query_dataset"]("dataset-1", _ctx(datasets), limit=1, offset=2)
@@ -357,7 +358,6 @@ def test_query_dataset_returns_markdown_table_with_pagination_and_nulls() -> Non
             "dataset_id": "dataset-1",
             "limit": 1,
             "offset": 2,
-            "with_pagination": True,
         }
     ]
     assert result.startswith(
@@ -368,11 +368,7 @@ def test_query_dataset_returns_markdown_table_with_pagination_and_nulls() -> Non
 
 
 def test_query_dataset_response_format_json() -> None:
-    page = {
-        "data": pd.DataFrame([{"name": "alpha", "value": 1}]),
-        "pagination": {"hasMore": False},
-    }
-    datasets = _FakeDatasets(query_page=page)
+    datasets = _FakeDatasets(rows={"data": [{"name": "alpha", "value": 1}]})
     tools = _dataset_tools()
 
     result = json.loads(
@@ -405,7 +401,7 @@ def test_query_dataset_validates_pagination_arguments() -> None:
 
 def test_query_dataset_runs_optional_sql_query() -> None:
     datasets = _FakeDatasets(
-        query_page=pd.DataFrame(
+        sql_result=pd.DataFrame(
             [
                 {
                     "category": "alpha",
@@ -441,7 +437,7 @@ def test_query_dataset_runs_optional_sql_query() -> None:
 
 def test_query_dataset_sql_response_format_json() -> None:
     datasets = _FakeDatasets(
-        query_page=pd.DataFrame([{"category": "alpha", "count": 2}])
+        sql_result=pd.DataFrame([{"category": "alpha", "count": 2}])
     )
     tools = _dataset_tools()
 
@@ -474,13 +470,7 @@ def test_create_dataset_forwards_refs() -> None:
         }
     }
     datasets = _FakeDatasets(
-        query_page={
-            "data": pd.DataFrame(
-                [{"file_id": "019df875-7957-7888-888f-f8140ff62564"}]
-            ),
-            "pagination": {"hasMore": False},
-            "resolved_refs": sidecar,
-        },
+        rows={"data": [{"file_id": FILE_ID}], "resolved_refs": sidecar},
         schema_response=[
             {
                 "column_name": "file_id",
@@ -523,8 +513,7 @@ def test_create_dataset_forwards_refs() -> None:
 
 def test_create_dataset_forwards_action_refs() -> None:
     datasets = _FakeDatasets(
-        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
-        schema_response=[
+                schema_response=[
             {
                 "column_name": "run_id",
                 "data_type": "uuid",
@@ -562,8 +551,7 @@ def test_create_dataset_forwards_action_refs() -> None:
 
 def test_create_dataset_omits_empty_proof_sidecars() -> None:
     datasets = _FakeDatasets(
-        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
-        schema_response=[{"column_name": "value", "data_type": "numeric"}],
+                schema_response=[{"column_name": "value", "data_type": "numeric"}],
     )
     tools = _dataset_tools()
     ctx = SimpleNamespace(
@@ -610,8 +598,7 @@ def test_create_dataset_surfaces_partial_ingest_warning() -> None:
         },
     }
     datasets = _FakeDatasets(
-        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
-        schema_response=[
+                schema_response=[
             {
                 "column_name": "run_id",
                 "data_type": "uuid",
@@ -644,8 +631,7 @@ def test_create_dataset_surfaces_partial_ingest_warning() -> None:
 
 def test_create_dataset_preserves_declared_asset_type_when_schema_omits_hint() -> None:
     datasets = _FakeDatasets(
-        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
-        schema_response=[
+                schema_response=[
             {
                 "column_name": "post_id",
                 "data_type": "uuid",
@@ -672,8 +658,7 @@ def test_create_dataset_preserves_declared_asset_type_when_schema_omits_hint() -
 
 def test_create_dataset_forwards_enum_columns() -> None:
     datasets = _FakeDatasets(
-        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
-        schema_response=[
+                schema_response=[
             {
                 "column_name": "status",
                 "data_type": "text",
@@ -721,12 +706,8 @@ def test_query_dataset_resolve_refs_passes_flag_and_returns_sidecar() -> None:
             }
         }
     }
-    page = {
-        "data": pd.DataFrame([{"file_id": "019df875-7957-7888-888f-f8140ff62564"}]),
-        "pagination": {"hasMore": False},
-        "resolved_refs": sidecar,
-    }
-    datasets = _FakeDatasets(query_page=page)
+    rows = {"data": [{"file_id": FILE_ID}], "resolved_refs": sidecar}
+    datasets = _FakeDatasets(rows=rows)
     tools = _dataset_tools()
 
     result = tools["query_dataset"](
@@ -769,7 +750,7 @@ def test_query_dataset_resolve_refs_rejected_with_sql() -> None:
 
 
 def test_query_dataset_sql_folds_limit_offset() -> None:
-    datasets = _FakeDatasets(query_page=pd.DataFrame([{"id": 1}]))
+    datasets = _FakeDatasets(sql_result=pd.DataFrame([{"id": 1}]))
     tools = _dataset_tools()
 
     tools["query_dataset"](
@@ -790,7 +771,7 @@ def test_query_dataset_sql_folds_limit_offset() -> None:
 
 def test_query_dataset_sql_treats_limit_zero_as_default() -> None:
     """Agents sometimes pass limit=0 to 'clear' the param after a rejection."""
-    datasets = _FakeDatasets(query_page=pd.DataFrame([{"id": 1}]))
+    datasets = _FakeDatasets(sql_result=pd.DataFrame([{"id": 1}]))
     tools = _dataset_tools()
 
     tools["query_dataset"](
@@ -805,7 +786,7 @@ def test_query_dataset_sql_treats_limit_zero_as_default() -> None:
 
 
 def test_query_dataset_sql_keeps_existing_limit() -> None:
-    datasets = _FakeDatasets(query_page=pd.DataFrame([{"id": 1}]))
+    datasets = _FakeDatasets(sql_result=pd.DataFrame([{"id": 1}]))
     tools = _dataset_tools()
 
     tools["query_dataset"](
@@ -820,8 +801,7 @@ def test_query_dataset_sql_keeps_existing_limit() -> None:
 
 def test_edit_dataset_columns_applies_operations_in_order() -> None:
     datasets = _FakeDatasets(
-        query_page={"data": pd.DataFrame([]), "resolved_refs": {}},
-        schema_response=[
+                schema_response=[
             {
                 "column_name": "priority",
                 "data_type": "text",
@@ -870,7 +850,7 @@ def test_edit_dataset_columns_applies_operations_in_order() -> None:
 
 
 def test_edit_dataset_columns_accepts_json_string() -> None:
-    datasets = _FakeDatasets(query_page={"data": pd.DataFrame([])})
+    datasets = _FakeDatasets()
     tools = _dataset_tools()
 
     json.loads(
@@ -928,7 +908,7 @@ def test_edit_dataset_columns_rename_requires_new_name() -> None:
 
 def test_update_dataset_row_only_skips_verification() -> None:
     datasets = _FakeDatasets(
-        query_page={"data": pd.DataFrame([]), "resolved_refs": {"x": {}}},
+        rows={"resolved_refs": {"x": {}}},
         schema_response=[{"column_name": "value", "data_type": "numeric"}],
     )
     tools = _dataset_tools()
@@ -961,11 +941,7 @@ def test_update_dataset_refs_includes_verification() -> None:
         }
     }
     datasets = _FakeDatasets(
-        query_page={
-            "data": pd.DataFrame([]),
-            "pagination": {"hasMore": False},
-            "resolved_refs": sidecar,
-        },
+        rows={"resolved_refs": sidecar},
         schema_response=[
             {
                 "column_name": "file_id",

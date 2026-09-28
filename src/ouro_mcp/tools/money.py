@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.models import BitcoinTransaction, UsdBalance, UsdTransaction
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
     markdown_bullet,
     markdown_id,
-    optional_kwargs,
+    page_pagination,
     render_markdown_list,
 )
 
@@ -47,13 +48,11 @@ def register(mcp: FastMCP) -> None:
         Read-only; no side effects.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.money.get_balance(currency=currency)
-        if isinstance(result, dict):
-            payload = {"currency": currency, **result}
-            if "available" not in payload and "available_cents" in payload:
-                payload["available"] = payload["available_cents"]
-            return dump_json(payload)
-        return dump_json({"currency": currency, "balance": result})
+        balance = ouro.money.get_balance(currency=currency)
+        payload = {**balance.model_dump(mode="json"), "currency": currency}
+        if isinstance(balance, UsdBalance):
+            payload["available"] = balance.available_cents
+        return dump_json(payload)
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -82,29 +81,22 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        transactions = ouro.money.get_transactions(
-            currency=currency,
-            with_pagination=True,
-            **optional_kwargs(limit=limit, offset=offset, type=type),
-        )
-        items = transactions.get("data", []) if isinstance(transactions, dict) else transactions
-        pagination = transactions.get("pagination", {}) if isinstance(transactions, dict) else {}
+        if currency == "btc":
+            transactions = ouro.money.get_transactions(currency="btc")
+            pagination = None
+        else:
+            transactions = ouro.money.get_transactions(
+                currency="usd", limit=limit, offset=offset, type=type
+            )
+            pagination = page_pagination(transactions)
 
-        def _tx_line(row: Any) -> str:
-            if not isinstance(row, dict):
-                return markdown_bullet(str(row))
-            amount = row.get("amount")
-            tx_type = row.get("type") or row.get("transaction_type") or "transaction"
-            parts = [
-                markdown_id(row.get("id")),
-                f"amount: {amount}" if amount is not None else None,
-                row.get("created_at") or row.get("timestamp"),
-            ]
-            body = row.get("message") or row.get("description")
-            return markdown_bullet(str(tx_type), *parts, body=body)
+        def _tx_line(tx: BitcoinTransaction | UsdTransaction) -> str:
+            amount = tx.value if isinstance(tx, BitcoinTransaction) else tx.amount_cents
+            parts = [markdown_id(tx.id), f"amount: {amount}", tx.status, tx.created_at]
+            return markdown_bullet(tx.type, *parts)
 
         return render_markdown_list(
-            list(items or []),
+            list(transactions),
             line_fn=_tx_line,
             pagination=pagination,
             offset=offset or 0,
@@ -143,7 +135,7 @@ def register(mcp: FastMCP) -> None:
         passing the wrong currency surfaces as a backend error.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.money.unlock_asset(
+        purchase = ouro.money.unlock_asset(
             asset_type=asset_type,
             asset_id=asset_id,
             currency=currency,
@@ -153,7 +145,7 @@ def register(mcp: FastMCP) -> None:
             "currency": currency,
             "asset_type": asset_type,
             "asset_id": asset_id,
-            **result,
+            **purchase.model_dump(mode="json"),
         })
 
     @mcp.tool(
@@ -192,7 +184,7 @@ def register(mcp: FastMCP) -> None:
           optional ``message``; BTC ignores ``message``.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.money.send(
+        transfer = ouro.money.send(
             recipient_id=recipient_id,
             amount=amount,
             currency=currency,
@@ -203,7 +195,7 @@ def register(mcp: FastMCP) -> None:
             "currency": currency,
             "recipient_id": recipient_id,
             "amount": amount,
-            **result,
+            **transfer.model_dump(mode="json"),
         })
 
     # ------------------------------------------------------------------
@@ -253,18 +245,17 @@ def register(mcp: FastMCP) -> None:
         caller.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.money.get_usage_history(
+        history = ouro.money.get_usage_history(
+            limit=limit,
             offset=offset,
             asset_id=asset_id,
             role=role,
-            with_pagination=True,
         )
-        if isinstance(result, dict):
-            return dump_json({
-                **result.get("data", {}),
-                "pagination": result.get("pagination", {}),
-            })
-        return dump_json(result)
+        return dump_json({
+            "records": [record.model_dump(mode="json") for record in history],
+            "summary": history.summary.model_dump(mode="json"),
+            "pagination": page_pagination(history),
+        })
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -277,8 +268,7 @@ def register(mcp: FastMCP) -> None:
         Stripe-linked account yet. All amounts are in cents. Read-only.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.money.get_pending_earnings()
-        return dump_json(result)
+        return dump_json(ouro.money.get_pending_earnings().model_dump(mode="json"))
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors

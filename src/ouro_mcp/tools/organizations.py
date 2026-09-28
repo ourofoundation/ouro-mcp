@@ -33,17 +33,15 @@ def register(mcp: FastMCP) -> None:
         results = []
         for org in orgs:
             entry = {
-                "id": str(org.get("id", "")),
-                "name": org.get("name"),
-                "display_name": org.get("display_name"),
-                "mission": org.get("mission"),
-                "join_policy": org.get("join_policy"),
+                "id": str(org.id),
+                "name": org.name,
+                "display_name": org.display_name,
+                "mission": org.mission,
+                "join_policy": org.join_policy,
             }
-            if not discover:
-                membership = org.get("membership", {})
-                if membership:
-                    entry["role"] = membership.get("role")
-                    entry["membership_type"] = membership.get("membership_type")
+            if not discover and org.membership:
+                entry["role"] = org.membership.role
+                entry["membership_type"] = org.membership.membership_type
             results.append(entry)
 
         def _org_line(row: dict) -> str:

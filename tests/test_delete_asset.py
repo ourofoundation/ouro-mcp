@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from ouro.models import DeleteResult
+
 from ouro_mcp.tools.assets import register
+
+COMMENT_ID = "019df875-7957-7888-888f-f8140ff62601"
+ROUTE_ID = "019df875-7957-7888-888f-f8140ff62602"
 
 
 class _CaptureMCP:
@@ -24,19 +29,15 @@ class _FakeDeleter:
         self.name = name
         self.delete_calls: list[dict] = []
 
-    def delete(self, id: str, *, delete_children: bool = False, dry_run: bool = False) -> dict:
+    def delete(
+        self, id: str, *, delete_children: bool = False, dry_run: bool = False
+    ) -> DeleteResult:
         self.delete_calls.append(
             {"id": id, "delete_children": delete_children, "dry_run": dry_run}
         )
-        payload = {
-            "id": id,
-            "name": self.name,
-            "asset_type": self.asset_type,
-            "deleted_children": [],
-        }
-        if dry_run:
-            payload["dry_run"] = True
-        return payload
+        return DeleteResult(
+            id=id, name=self.name, asset_type=self.asset_type, dry_run=dry_run
+        )
 
 
 class _FakeAssets:
@@ -65,37 +66,37 @@ def _asset_tools() -> dict[str, object]:
 
 
 def test_delete_asset_deletes_comments() -> None:
-    comment = SimpleNamespace(id="comment-1", name="", asset_type="comment")
+    comment = SimpleNamespace(id=COMMENT_ID, name="", asset_type="comment")
     posts = _FakeDeleter("comment")
     tools = _asset_tools()
 
     result = json.loads(
         tools["delete_asset"](
-            id="comment-1", ctx=_ctx(_FakeAssets(comment), posts=posts)
+            id=COMMENT_ID, ctx=_ctx(_FakeAssets(comment), posts=posts)
         )
     )
 
     assert result == {
         "deleted": True,
-        "id": "comment-1",
+        "id": COMMENT_ID,
         "name": "hello",
         "asset_type": "comment",
         "deleted_children": [],
         "deleted_children_count": 0,
     }
     assert posts.delete_calls == [
-        {"id": "comment-1", "delete_children": False, "dry_run": False}
+        {"id": COMMENT_ID, "delete_children": False, "dry_run": False}
     ]
 
 
 def test_delete_asset_dry_run_previews_comments() -> None:
-    comment = SimpleNamespace(id="comment-1", name="", asset_type="comment")
+    comment = SimpleNamespace(id=COMMENT_ID, name="", asset_type="comment")
     posts = _FakeDeleter("comment")
     tools = _asset_tools()
 
     result = json.loads(
         tools["delete_asset"](
-            id="comment-1",
+            id=COMMENT_ID,
             ctx=_ctx(_FakeAssets(comment), posts=posts),
             dry_run=True,
         )
@@ -104,31 +105,31 @@ def test_delete_asset_dry_run_previews_comments() -> None:
     assert result["deleted"] is False
     assert result["dry_run"] is True
     assert posts.delete_calls == [
-        {"id": "comment-1", "delete_children": False, "dry_run": True}
+        {"id": COMMENT_ID, "delete_children": False, "dry_run": True}
     ]
 
 
 def test_delete_asset_deletes_routes() -> None:
-    route = SimpleNamespace(id="route-1", name="predict", asset_type="route")
+    route = SimpleNamespace(id=ROUTE_ID, name="predict", asset_type="route")
     routes = _FakeDeleter("route", name="predict")
     tools = _asset_tools()
 
     result = json.loads(
         tools["delete_asset"](
-            id="route-1", ctx=_ctx(_FakeAssets(route), routes=routes)
+            id=ROUTE_ID, ctx=_ctx(_FakeAssets(route), routes=routes)
         )
     )
 
     assert result == {
         "deleted": True,
-        "id": "route-1",
+        "id": ROUTE_ID,
         "name": "predict",
         "asset_type": "route",
         "deleted_children": [],
         "deleted_children_count": 0,
     }
     assert routes.delete_calls == [
-        {"id": "route-1", "delete_children": False, "dry_run": False}
+        {"id": ROUTE_ID, "delete_children": False, "dry_run": False}
     ]
 
 

@@ -6,6 +6,7 @@ import json
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.models import Entry, QuestItem, QuestLeaderboardRow
 from ouro.utils.content import description_to_markdown
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
@@ -15,6 +16,7 @@ from ouro_mcp.utils import (
     markdown_bullet,
     markdown_id,
     optional_kwargs,
+    page_pagination,
     render_markdown_list,
 )
 from pydantic import BaseModel, ConfigDict, Field
@@ -117,10 +119,7 @@ class QuestItemInput(BaseModel):
 
 def _item_description_text(description: Any, *, max_length: Optional[int] = None) -> str:
     """Readable markdown for quest item descriptions (string or TipTap Content)."""
-    if description is not None and hasattr(description, "text"):
-        if not isinstance(description, (str, dict)):
-            description = getattr(description, "text", None) or ""
-    return description_to_markdown(description, max_length=max_length) or ""
+    return description_to_markdown(description, max_length=max_length)
 
 
 def _item_field(item: Any, name: str, default: Any = None) -> Any:
@@ -419,59 +418,39 @@ def register(mcp: FastMCP) -> None:
         submit_quest_entry, or complete_quest_item depending on permissions.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.quests.list_assigned_items(
+        page = ouro.quests.list_assigned_items(
             status=status,
             assignee_id=assignee_id,
             org_id=org_id,
             team_id=team_id,
             limit=limit,
             offset=offset,
-            with_pagination=True,
         )
-        if isinstance(result, dict):
-            items = result.get("data") or result.get("results") or []
-            pagination = result.get("pagination") or {}
-        else:
-            items = list(result or [])
-            pagination = {}
 
-        def _item_line(item: Any) -> str:
-            if hasattr(item, "model_dump"):
-                row = item.model_dump(mode="json")
-            elif isinstance(item, dict):
-                row = item
-            else:
-                row = {
-                    "id": getattr(item, "id", None),
-                    "description": getattr(item, "description", None),
-                    "status": getattr(item, "status", None),
-                    "quest_id": getattr(item, "quest_id", None),
-                }
-            parts = [
-                markdown_id(row.get("id")),
-                f"status: {row['status']}" if row.get("status") else None,
-            ]
-            if row.get("quest_id"):
-                parts.append(f"quest_id: `{row['quest_id']}`")
+        def _item_line(item: QuestItem) -> str:
+            parts = [markdown_id(item.id), f"status: {item.status}"]
+            if item.quest_id:
+                parts.append(f"quest_id: `{item.quest_id}`")
             body_bits = []
             for key in ("submission_assets", "eval_static_inputs"):
-                if row.get(key):
-                    body_bits.append(f"{key}: {json.dumps(row[key], default=str)}")
-            contributor_keys = _contributor_keys(row)
+                value = getattr(item, key)
+                if value:
+                    body_bits.append(f"{key}: {json.dumps(value, default=str)}")
+            contributor_keys = _contributor_keys(item)
             if contributor_keys:
                 body_bits.append(
                     f"contributor_keys: {json.dumps(contributor_keys, default=str)}"
                 )
             return markdown_bullet(
-                _item_description_text(row.get("description")) or "(no description)",
+                _item_description_text(item.description) or "(no description)",
                 *parts,
                 body=" · ".join(body_bits) if body_bits else None,
             )
 
         return render_markdown_list(
-            items,
+            list(page),
             line_fn=_item_line,
-            pagination=pagination,
+            pagination=page_pagination(page),
             offset=offset,
             noun="assigned quest items",
             empty_text="No assigned quest items.",
@@ -815,13 +794,13 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
         content = content_from_markdown(ouro, description) if description else None
-        result = ouro.quests.complete_item(
+        completion = ouro.quests.complete_item(
             quest_id,
             item_id,
             assets=assets,
             description=content,
         )
-        return dump_json(result)
+        return dump_json(completion.model_dump(mode="json"))
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -909,50 +888,38 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """List contributor entries for a quest."""
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.quests.list_entries(
+        page = ouro.quests.list_entries(
             quest_id,
             status=status,
             limit=limit,
             offset=offset,
-            with_pagination=True,
         )
-        entries = [
-            entry.model_dump(mode="json")
-            for entry in result.get("data", [])
-        ]
 
-        def _entry_line(row: dict[str, Any]) -> str:
-            parts = [
-                markdown_id(row.get("id")),
-                f"status: {row['status']}" if row.get("status") else None,
-            ]
-            if row.get("item_id"):
-                parts.append(f"item_id: `{row['item_id']}`")
-            if row.get("user_id"):
-                parts.append(f"user_id: `{row['user_id']}`")
-            if row.get("eval_score") is not None:
-                parts.append(f"score: {row['eval_score']}")
-            categories = _category_scores_part(row.get("eval_category_scores"))
+        def _entry_line(entry: Entry) -> str:
+            parts = [markdown_id(entry.id), f"status: {entry.status}"]
+            if entry.item_id:
+                parts.append(f"item_id: `{entry.item_id}`")
+            if entry.user_id:
+                parts.append(f"user_id: `{entry.user_id}`")
+            if entry.eval_score is not None:
+                parts.append(f"score: {entry.eval_score}")
+            categories = _category_scores_part(entry.eval_category_scores)
             if categories:
                 parts.append(categories)
-            if row.get("eval_status"):
-                parts.append(f"eval: {row['eval_status']}")
-            if row.get("eval_action_id"):
-                parts.append(f"action_id: `{row['eval_action_id']}`")
-            assets = row.get("assets")
-            body = None
-            if assets:
-                body = f"assets: {assets}"
+            if entry.eval_status:
+                parts.append(f"eval: {entry.eval_status}")
+            if entry.eval_action_id:
+                parts.append(f"action_id: `{entry.eval_action_id}`")
             return markdown_bullet(
-                str(row.get("description") or row.get("status") or "entry"),
+                _item_description_text(entry.description) or entry.status,
                 *parts,
-                body=body,
+                body=f"assets: {entry.assets}" if entry.assets else None,
             )
 
         return render_markdown_list(
-            entries,
+            list(page),
             line_fn=_entry_line,
-            pagination=result.get("pagination"),
+            pagination=page_pagination(page),
             offset=offset,
             noun="quest entries",
             empty_text="No quest entries.",
@@ -976,50 +943,40 @@ def register(mcp: FastMCP) -> None:
         from the eval route appear on each row when present.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.quests.list_leaderboard(
+        page = ouro.quests.list_leaderboard(
             quest_id,
             item_id,
             limit=limit,
             offset=offset,
-            with_pagination=True,
         )
-        rows = result.get("data", []) if isinstance(result, dict) else result
-        item = result.get("item") if isinstance(result, dict) else None
-        pagination = result.get("pagination") if isinstance(result, dict) else {}
 
-        def _row_line(row: Any) -> str:
-            data = row.model_dump(mode="json") if hasattr(row, "model_dump") else dict(row)
-            user = data.get("user") or {}
-            username = user.get("username")
+        def _row_line(row: QuestLeaderboardRow) -> str:
             parts = [
-                f"#{data.get('placement')}",
-                markdown_id(data.get("entry_id")),
-                f"score: {data.get('score')}" if data.get("score") is not None else None,
+                f"#{row.placement}",
+                markdown_id(row.entry_id),
+                f"score: {row.score}" if row.score is not None else None,
             ]
-            categories = _category_scores_part(data.get("category_scores"))
+            categories = _category_scores_part(row.category_scores)
             if categories:
                 parts.append(categories)
-            if username:
-                parts.append(f"@{username}")
-            elif data.get("user"):
-                parts.append(f"user_id: `{user.get('user_id')}`")
-            if data.get("eval_status"):
-                parts.append(f"eval: {data['eval_status']}")
-            if data.get("eval_action_id"):
-                parts.append(f"action_id: `{data['eval_action_id']}`")
-            return markdown_bullet(
-                f"placement {data.get('placement')}",
-                *parts,
-            )
+            if row.user and row.user.username:
+                parts.append(f"@{row.user.username}")
+            elif row.user:
+                parts.append(f"user_id: `{row.user.user_id}`")
+            if row.eval_status:
+                parts.append(f"eval: {row.eval_status}")
+            if row.eval_action_id:
+                parts.append(f"action_id: `{row.eval_action_id}`")
+            return markdown_bullet(f"placement {row.placement}", *parts)
 
         extras = [f"quest_id: `{quest_id}`", f"item_id: `{item_id}`"]
-        if isinstance(item, dict) and item.get("leaderboard_order"):
-            extras.append(f"order: {item['leaderboard_order']}")
+        if page.item and page.item.leaderboard_order:
+            extras.append(f"order: {page.item.leaderboard_order}")
 
         return render_markdown_list(
-            rows,
+            list(page),
             line_fn=_row_line,
-            pagination=pagination,
+            pagination=page_pagination(page),
             offset=offset,
             noun="leaderboard entries",
             empty_text="No scored submissions on this leaderboard.",

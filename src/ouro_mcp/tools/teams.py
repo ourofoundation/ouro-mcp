@@ -6,6 +6,7 @@ from typing import Annotated, Any, Optional
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.models import Team
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
@@ -21,41 +22,34 @@ from ouro_mcp.utils import (
 )
 
 
-def _team_summary(team: dict[str, Any]) -> dict[str, Any]:
+def _org_name(team: Team) -> str | None:
+    org = team.organization
+    return (org.name or org.display_name) if org else None
+
+
+def _team_summary(team: Team) -> dict[str, Any]:
     source = resolve_team_policy(team, "source_policy")
     actor = resolve_team_policy(team, "actor_type_policy")
-    org = team.get("organization") if isinstance(team.get("organization"), dict) else None
-    org_name = None
-    if org:
-        org_name = org.get("name") or org.get("display_name")
     result = {
-        "id": str(team.get("id", "")),
-        "name": team.get("name"),
-        "org_id": str(team.get("org_id", "")),
-        "visibility": team.get("visibility"),
-        "default_role": team.get("default_role"),
+        "id": str(team.id),
+        "name": team.name,
+        "org_id": str(team.org_id or ""),
+        "visibility": team.visibility,
+        "default_role": team.default_role,
         "source_policy": source,
         "actor_type_policy": actor,
-        "join_policy": team.get("join_policy") or "open",
+        "join_policy": team.join_policy or "open",
         "agent_can_create": source != "web_only",
     }
-    url = team_web_url(
-        name=team.get("name"),
-        org_id=team.get("org_id"),
-        org_name=org_name,
-    )
+    url = team_web_url(name=team.name, org_id=team.org_id, org_name=_org_name(team))
     if url:
         result["url"] = url
-    desc = team.get("description")
-    if desc and isinstance(desc, dict):
-        result["description"] = desc.get("text", "")
-    elif desc:
-        result["description"] = str(desc)
-    join_request = team.get("userJoinRequest")
-    if join_request:
+    if team.description:
+        result["description"] = team.description.text
+    if team.user_join_request:
         result["join_request"] = {
-            "id": str(join_request.get("id", "")),
-            "status": join_request.get("status"),
+            "id": str(team.user_join_request.id),
+            "status": team.user_join_request.status,
         }
     return result
 
@@ -146,19 +140,18 @@ def register(mcp: FastMCP) -> None:
         if id:
             team = ouro.teams.retrieve(id, include_members=include_members)
             result = _team_summary(team)
-            org = team.get("organization")
-            if org:
-                result["organization_name"] = org.get("name") or org.get("display_name")
-            members = team.get("members", [])
-            result["member_count"] = team.get("memberCount", len(members))
+            if team.organization:
+                result["organization_name"] = _org_name(team)
+            members = team.members or []
+            result["member_count"] = (
+                team.member_count if team.member_count is not None else len(members)
+            )
             if include_members:
                 result["members"] = [
                     {
-                        "user_id": str(m.get("user_id", "")),
-                        "role": m.get("role"),
-                        "username": (
-                            m.get("user", {}).get("username") if m.get("user") else None
-                        ),
+                        "user_id": str(m.user_id),
+                        "role": m.role,
+                        "username": m.user.username if m.user else None,
                     }
                     for m in members
                 ]
@@ -173,17 +166,14 @@ def register(mcp: FastMCP) -> None:
         for team in teams:
             entry = _team_summary(team)
 
-            org = team.get("organization")
-            if org:
-                entry["organization_name"] = org.get("name") or org.get("display_name")
+            if team.organization:
+                entry["organization_name"] = _org_name(team)
 
-            membership = team.get("userMembership")
-            if membership and not discover:
-                entry["role"] = membership.get("role")
+            if team.user_membership and not discover:
+                entry["role"] = team.user_membership.role
 
-            member_count = team.get("memberCount")
-            if member_count is not None:
-                entry["member_count"] = member_count
+            if team.member_count is not None:
+                entry["member_count"] = team.member_count
 
             results.append(entry)
 
@@ -237,27 +227,21 @@ def register(mcp: FastMCP) -> None:
 
         extras: list[str] = [f"team_id: `{id}`"]
         if unread_only:
-            page_limit = max(1, min(limit, 50))
-            raw = ouro.teams.unread_preview(
-                id=id, offset=max(offset, 0), limit=page_limit
+            page = ouro.teams.unread_preview(
+                id=id, offset=max(offset, 0), limit=max(1, min(limit, 50))
             )
-            items = raw.get("results", [])
-            pagination = raw.get("pagination", {})
-            extras.append(f"unread_count: {int(raw.get('unread_count', 0) or 0)}")
+            extras.append(f"unread_count: {page.unread_count}")
         else:
-            raw = ouro.teams.activity(
+            page = ouro.teams.activity(
                 id, offset=offset, limit=limit, asset_type=asset_type,
             )
-            items = raw.get("data", [])
-            pagination = raw.get("pagination", {})
-
-        results = [format_search_hit(item) for item in items]
 
         return truncate_response(
             render_markdown_list(
-                results,
+                [format_search_hit(item) for item in page],
                 line_fn=search_hit_line,
-                pagination=pagination,
+                total=page.total,
+                has_more=page.has_more,
                 offset=offset,
                 noun="feed items",
                 empty_text="No feed items.",
@@ -286,5 +270,8 @@ def register(mcp: FastMCP) -> None:
         and team bans return an error. Check get_teams(discover=True) before joining.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        result = ouro.teams.join(id) if member else ouro.teams.leave(id)
-        return dump_json({"success": True, "member": member, "result": result})
+        if not member:
+            ouro.teams.leave(id)
+            return dump_json({"success": True, "member": False})
+        team = ouro.teams.join(id)
+        return dump_json({"success": True, "member": True, "team": _team_summary(team)})

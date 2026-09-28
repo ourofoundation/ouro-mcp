@@ -6,6 +6,7 @@ import json
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.models import Comment
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
@@ -45,8 +46,8 @@ def register(mcp: FastMCP) -> None:
                     "name": parent.name,
                     "username": parent.user.username,
                 }
-                if parent.asset_type == "comment" and parent.content:
-                    parent_context["text"] = parent.content.text[:500] if parent.content.text else None
+                if isinstance(parent, Comment) and parent.text:
+                    parent_context["text"] = parent.text[:500]
         except Exception:
             pass
 
@@ -60,8 +61,8 @@ def register(mcp: FastMCP) -> None:
             if c.user:
                 entry["author"] = c.user.username
 
-            if c.content:
-                entry["text"] = c.content.text[:500] if c.content.text else None
+            if c.text:
+                entry["text"] = c.text[:500]
 
             replies = getattr(c, "replies", None)
             if replies is not None:

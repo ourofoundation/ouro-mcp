@@ -5,6 +5,8 @@ import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+from ouro.models import Team
+
 from ouro_mcp.constants import ENV_OURO_FRONTEND_URL, GLOBAL_ORG_ID
 from ouro_mcp.tools.teams import _team_summary
 from ouro_mcp.utils import (
@@ -176,16 +178,18 @@ class TestTeamSummaryUrl(unittest.TestCase):
         os.environ.pop(ENV_OURO_FRONTEND_URL, None)
         try:
             summary = _team_summary(
-                {
-                    "id": "team-1",
-                    "name": "permanent-magnets",
-                    "org_id": GLOBAL_ORG_ID,
-                    "visibility": "public",
-                    "default_role": "write",
-                    "source_policy": "any",
-                    "actor_type_policy": "any",
-                    "organization": {"name": "all"},
-                }
+                Team.model_validate(
+                    {
+                        "id": "019df875-7957-7888-888f-f8140ff62700",
+                        "name": "permanent-magnets",
+                        "org_id": GLOBAL_ORG_ID,
+                        "visibility": "public",
+                        "default_role": "write",
+                        "source_policy": "any",
+                        "actor_type_policy": "any",
+                        "organization": {"id": GLOBAL_ORG_ID, "name": "all"},
+                    }
+                )
             )
             self.assertEqual(
                 summary["url"],

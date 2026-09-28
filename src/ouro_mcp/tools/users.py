@@ -18,19 +18,17 @@ def register(mcp: FastMCP) -> None:
     def get_me(ctx: Context) -> str:
         """Get the authenticated user's own profile (user ID, username, email)."""
         ouro = ctx.request_context.lifespan_context.ouro
-        profile = ouro.users.me() or {}
-        auth_user = ouro.user
-        actor_type = profile.get("actor_type")
+        profile = ouro.users.me()
 
         return dump_json(
             {
-                "id": str(profile.get("user_id", getattr(auth_user, "id", "?"))),
-                "username": profile.get("username"),
-                "email": profile.get("email") or getattr(auth_user, "email", None),
-                "display_name": profile.get("display_name"),
-                "bio": profile.get("bio"),
-                "actor_type": actor_type,
-                "is_agent": profile.get("is_agent", actor_type == "agent"),
+                "id": str(profile.user_id),
+                "username": profile.username,
+                "email": ouro.user.email,
+                "display_name": profile.name,
+                "bio": profile.bio,
+                "actor_type": profile.actor_type,
+                "is_agent": profile.is_agent,
             }
         )
 
@@ -44,16 +42,10 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Search for users on Ouro by name or username."""
         ouro = ctx.request_context.lifespan_context.ouro
-        results = ouro.users.search(query)
-
-        users = []
-        for u in results:
-            users.append(
-                {
-                    "user_id": str(u.get("user_id", u.get("id", ""))),
-                    "username": u.get("username"),
-                }
-            )
+        users = [
+            {"user_id": str(u.user_id), "username": u.username}
+            for u in ouro.users.search(query)
+        ]
 
         def _user_line(row: dict) -> str:
             return markdown_bullet(
@@ -111,28 +103,10 @@ def register(mcp: FastMCP) -> None:
         outcomes of posts, datasets, and quests — not just whether items completed.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        name_or_id = user
-        if not name_or_id:
-            profile = ouro.users.me() or {}
-            name_or_id = str(
-                profile.get("user_id")
-                or profile.get("username")
-                or getattr(ouro.user, "id", "")
-            )
-        if not name_or_id:
-            return dump_json({"error": "Could not resolve user for impact"})
-
-        # Prefer batch assets.impact when specific ids are given.
-        if asset_ids:
-            impact_fn = getattr(getattr(ouro, "assets", None), "impact", None)
-            if callable(impact_fn):
-                data = impact_fn(asset_ids, since=since) or {}
-                return dump_json(data)
-
-        data = ouro.users.impact(
-            name_or_id,
+        impact = ouro.users.impact(
+            user or str(ouro.users.me().user_id),
             since=since,
             limit=limit,
             asset_ids=asset_ids,
         )
-        return dump_json(data or {})
+        return dump_json(impact.model_dump(mode="json"))

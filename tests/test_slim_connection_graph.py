@@ -1,228 +1,144 @@
 from __future__ import annotations
 
 import json
-import unittest
+from datetime import datetime, timezone
+from uuid import NAMESPACE_URL, uuid5
 
-from ouro_mcp.utils import slim_connection_graph
+from ouro.models import Connection
+
+from ouro_mcp.utils import dump_json, slim_connection_graph
 
 
-class TestSlimConnectionGraph(unittest.TestCase):
-    def test_strips_bloated_source_target(self) -> None:
-        heavy = {"description": "x" * 5000, "preview": [1, 2, 3], "metadata": {"a": "b"}}
-        conns = [
+def _id(name: str) -> str:
+    return str(uuid5(NAMESPACE_URL, name))
+
+
+def _edge(type: str, source: dict, target: dict, **extra) -> Connection:
+    return Connection.model_validate(
+        {
+            "id": _id(f"{source['id']}->{target['id']}"),
+            "type": type,
+            "source_id": _id(source["id"]),
+            "target_id": _id(target["id"]),
+            "source": {**source, "id": _id(source["id"])},
+            "target": {**target, "id": _id(target["id"])},
+            **extra,
+        }
+    )
+
+
+def test_strips_bloated_source_target() -> None:
+    heavy = {"description": "x" * 5000, "visibility": "public"}
+    conn = _edge(
+        "derivative",
+        {"id": "s1", "name": "Src", "asset_type": "file", "created_at": "2026-01-01T00:00:00+00:00", **heavy},
+        {"id": "t1", "name": "Tgt", "asset_type": "dataset", **heavy},
+    )
+
+    out = slim_connection_graph([conn], current_asset_id=_id("t1"))
+
+    assert out == {
+        "derivative": [
             {
-                "id": "e1",
-                "type": "derivative",
-                "source_id": "s1",
-                "target_id": "t1",
-                "source": {
-                    "id": "s1",
-                    "name": "Src",
-                    "asset_type": "file",
-                    "created_at": "2026-01-01T00:00:00+00:00",
-                    **heavy,
-                },
-                "target": {"id": "t1", "name": "Tgt", "asset_type": "dataset", **heavy},
-            }
-        ]
-        out = slim_connection_graph(conns, current_asset_id="t1")
-        self.assertEqual(set(out), {"derivative"})
-        self.assertEqual(len(out["derivative"]), 1)
-        self.assertEqual(
-            out["derivative"][0],
-            {
-                "id": "s1",
+                "id": _id("s1"),
                 "name": "Src",
                 "asset_type": "file",
-                "created_at": "2026-01-01T00:00:00+00:00",
-            },
-        )
-        self.assertNotIn("asset", out["derivative"][0])
-        self.assertNotIn("target", out["derivative"][0])
-        self.assertNotIn("description", json.dumps(out))
-
-    def test_null_name_is_omitted_but_asset_type_is_preserved(self) -> None:
-        # `name` drops out when null (display-only). `asset_type` is the
-        # discriminator agents use to pick the next tool, so it must stay
-        # in the response — even as `null` — to avoid silently changing
-        # the shape based on backend completeness.
-        conns = [{"id": "e1", "source": {"id": "x", "asset_type": "file"}}]
-        out = slim_connection_graph(conns)
-        self.assertEqual(out["unknown"][0], {"id": "x", "asset_type": "file"})
-
-    def test_null_asset_type_is_still_emitted(self) -> None:
-        conns = [{"id": "e1", "source": {"id": "x"}}]
-        out = slim_connection_graph(conns)
-        endpoint = out["unknown"][0]
-        self.assertIn("asset_type", endpoint)
-        self.assertIsNone(endpoint["asset_type"])
-        self.assertNotIn("name", endpoint)
-
-    def test_empty_string_name_is_dropped(self) -> None:
-        # Real data: comments come back with `name: ""` from the backend
-        # (nameless asset type). Treat the empty string the same as null
-        # so the slimmed shape doesn't carry purely decorative `, "name": ""`
-        # on every comment edge.
-        conns = [
-            {
-                "id": "e1",
-                "type": "reference",
-                "source": {"id": "c1", "name": "", "asset_type": "comment"},
+                "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
             }
         ]
-        out = slim_connection_graph(conns)
-        self.assertEqual(out["reference"][0], {"id": "c1", "asset_type": "comment"})
-
-    def test_present_name_and_asset_type_are_preserved(self) -> None:
-        conns = [{"id": "e1", "source": {"id": "x", "name": "X", "asset_type": "file"}}]
-        out = slim_connection_graph(conns)
-        self.assertEqual(out["unknown"][0], {"id": "x", "asset_type": "file", "name": "X"})
-
-    def test_outgoing_connection_uses_other_endpoint(self) -> None:
-        conns = [
-            {
-                "id": "e1",
-                "type": "link",
-                "source_id": "current",
-                "target_id": "other",
-                "source": {"id": "current", "name": "Current", "asset_type": "post"},
-                "target": {"id": "other", "name": "Other", "asset_type": "route"},
-            }
-        ]
-        out = slim_connection_graph(conns, current_asset_id="current")
-        self.assertEqual(out["link"][0], {"id": "other", "name": "Other", "asset_type": "route"})
-
-    def test_action_edges_preserve_action_id(self) -> None:
-        conns = [
-            {
-                "id": "e1",
-                "type": "action",
-                "action_id": "act-1",
-                "source_id": "cif",
-                "target_id": "relaxed",
-                "source": {"id": "cif", "name": "CIF", "asset_type": "file"},
-                "target": {"id": "relaxed", "name": "Relaxed", "asset_type": "file"},
-            }
-        ]
-        out = slim_connection_graph(conns, current_asset_id="cif")
-        self.assertEqual(
-            out["action"][0],
-            {
-                "id": "relaxed",
-                "name": "Relaxed",
-                "asset_type": "file",
-                "action_id": "act-1",
-            },
-        )
-
-    def test_non_list_passthrough(self) -> None:
-        self.assertIsNone(slim_connection_graph(None))
-        self.assertEqual(slim_connection_graph({}), {})
-
-    def test_malformed_edge_preserved(self) -> None:
-        self.assertEqual(slim_connection_graph(["keep"]), {"unknown": [{"value": "keep"}]})
-
-    def test_omit_outgoing_references_keeps_incoming(self) -> None:
-        conns = [
-            {
-                "id": "out",
-                "type": "reference",
-                "source_id": "dataset",
-                "target_id": "cif",
-                "source": {"id": "dataset", "name": "DS", "asset_type": "dataset"},
-                "target": {"id": "cif", "name": "CIF", "asset_type": "file"},
-            },
-            {
-                "id": "in",
-                "type": "reference",
-                "source_id": "other",
-                "target_id": "dataset",
-                "source": {"id": "other", "name": "Shortlist", "asset_type": "dataset"},
-                "target": {"id": "dataset", "name": "DS", "asset_type": "dataset"},
-            },
-            {
-                "id": "link",
-                "type": "link",
-                "source_id": "dataset",
-                "target_id": "post",
-                "source": {"id": "dataset", "name": "DS", "asset_type": "dataset"},
-                "target": {"id": "post", "name": "Writeup", "asset_type": "post"},
-            },
-        ]
-        out = slim_connection_graph(
-            conns,
-            current_asset_id="dataset",
-            omit_outgoing_references=True,
-        )
-        self.assertEqual(set(out), {"reference", "link"})
-        self.assertEqual(
-            out["reference"],
-            [{"id": "other", "name": "Shortlist", "asset_type": "dataset"}],
-        )
-        self.assertEqual(
-            out["link"],
-            [{"id": "post", "name": "Writeup", "asset_type": "post"}],
-        )
-
-    def test_omit_outgoing_references_can_empty_graph(self) -> None:
-        conns = [
-            {
-                "id": "out",
-                "type": "reference",
-                "source_id": "dataset",
-                "target_id": "cif",
-                "source": {"id": "dataset", "asset_type": "dataset"},
-                "target": {"id": "cif", "asset_type": "file"},
-            }
-        ]
-        out = slim_connection_graph(
-            conns,
-            current_asset_id="dataset",
-            omit_outgoing_references=True,
-        )
-        self.assertEqual(out, {})
-
-    def test_omit_comments_drops_comment_edges_keeps_others(self) -> None:
-        conns = [
-            {
-                "id": "c1",
-                "type": "comment",
-                "source_id": "comment-1",
-                "target_id": "post-1",
-                "source": {"id": "comment-1", "name": "", "asset_type": "comment"},
-                "target": {"id": "post-1", "name": "Post", "asset_type": "post"},
-            },
-            {
-                "id": "l1",
-                "type": "link",
-                "source_id": "post-1",
-                "target_id": "file-1",
-                "source": {"id": "post-1", "name": "Post", "asset_type": "post"},
-                "target": {"id": "file-1", "name": "CIF", "asset_type": "file"},
-            },
-        ]
-        out = slim_connection_graph(
-            conns,
-            current_asset_id="post-1",
-            omit_comments=True,
-        )
-        self.assertEqual(set(out), {"link"})
-        self.assertEqual(
-            out["link"],
-            [{"id": "file-1", "name": "CIF", "asset_type": "file"}],
-        )
-
-    def test_omit_comments_false_keeps_comment_edges(self) -> None:
-        conns = [
-            {
-                "id": "c1",
-                "type": "comment",
-                "source": {"id": "comment-1", "asset_type": "comment"},
-            }
-        ]
-        out = slim_connection_graph(conns, omit_comments=False)
-        self.assertEqual(out["comment"][0], {"id": "comment-1", "asset_type": "comment"})
+    }
+    assert "x" * 100 not in dump_json(out)
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_empty_or_missing_name_is_dropped_but_asset_type_is_kept() -> None:
+    conns = [
+        _edge("reference", {"id": "c1", "name": "", "asset_type": "comment"}, {"id": "p1"}),
+        _edge("reference", {"id": "c2"}, {"id": "p1"}),
+    ]
+
+    out = slim_connection_graph(conns, current_asset_id=_id("p1"))
+
+    assert out["reference"] == [
+        {"id": _id("c1"), "asset_type": "comment"},
+        {"id": _id("c2"), "asset_type": None},
+    ]
+
+
+def test_outgoing_connection_uses_other_endpoint() -> None:
+    conn = _edge(
+        "link",
+        {"id": "current", "name": "Current", "asset_type": "post"},
+        {"id": "other", "name": "Other", "asset_type": "route"},
+    )
+
+    out = slim_connection_graph([conn], current_asset_id=_id("current"))
+
+    assert out["link"] == [{"id": _id("other"), "name": "Other", "asset_type": "route"}]
+
+
+def test_endpoint_falls_back_to_edge_columns_without_join() -> None:
+    conn = Connection.model_validate(
+        {
+            "id": _id("e"),
+            "type": "link",
+            "source_id": _id("a"),
+            "target_id": _id("b"),
+            "source_asset_type": "file",
+        }
+    )
+
+    out = slim_connection_graph([conn], current_asset_id=_id("b"))
+
+    assert out["link"] == [{"id": _id("a"), "asset_type": "file"}]
+
+
+def test_action_edges_preserve_action_id() -> None:
+    conn = _edge(
+        "action",
+        {"id": "cif", "name": "CIF", "asset_type": "file"},
+        {"id": "relaxed", "name": "Relaxed", "asset_type": "file"},
+        action_id=_id("act-1"),
+    )
+
+    out = slim_connection_graph([conn], current_asset_id=_id("cif"))
+
+    assert out["action"] == [
+        {"id": _id("relaxed"), "name": "Relaxed", "asset_type": "file", "action_id": _id("act-1")}
+    ]
+
+
+def test_omit_outgoing_references_keeps_incoming() -> None:
+    dataset = {"id": "dataset", "name": "DS", "asset_type": "dataset"}
+    conns = [
+        _edge("reference", dataset, {"id": "cif", "name": "CIF", "asset_type": "file"}),
+        _edge("reference", {"id": "other", "name": "Shortlist", "asset_type": "dataset"}, dataset),
+        _edge("link", dataset, {"id": "post", "name": "Writeup", "asset_type": "post"}),
+    ]
+
+    out = slim_connection_graph(
+        conns, current_asset_id=_id("dataset"), omit_outgoing_references=True
+    )
+
+    assert out == {
+        "reference": [{"id": _id("other"), "name": "Shortlist", "asset_type": "dataset"}],
+        "link": [{"id": _id("post"), "name": "Writeup", "asset_type": "post"}],
+    }
+
+
+def test_omit_comments_drops_only_comment_edges() -> None:
+    post = {"id": "post-1", "name": "Post", "asset_type": "post"}
+    conns = [
+        _edge("comment", {"id": "comment-1", "name": "", "asset_type": "comment"}, post),
+        _edge("link", post, {"id": "file-1", "name": "CIF", "asset_type": "file"}),
+    ]
+
+    kept = slim_connection_graph(conns, current_asset_id=_id("post-1"))
+    omitted = slim_connection_graph(conns, current_asset_id=_id("post-1"), omit_comments=True)
+
+    assert set(kept) == {"comment", "link"}
+    assert omitted == {"link": [{"id": _id("file-1"), "name": "CIF", "asset_type": "file"}]}
+
+
+def test_empty_graph() -> None:
+    assert slim_connection_graph([]) == {}
+    assert json.loads(dump_json(slim_connection_graph([]))) == {}

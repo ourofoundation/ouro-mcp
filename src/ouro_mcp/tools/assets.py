@@ -7,6 +7,7 @@ import logging
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.models import Action, Comment
 from ouro.utils.content import description_to_markdown
 from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
@@ -17,6 +18,7 @@ from ouro_mcp.utils import (
     markdown_bullet,
     markdown_id,
     optional_kwargs,
+    page_pagination,
     present_kwargs,
     render_markdown_list,
     render_markdown_sections,
@@ -149,11 +151,10 @@ def register(mcp: FastMCP) -> None:
 
         # Models often fill unused optionals with "" or "/null"; those UUID
         # filters 500 in Postgres ("invalid input syntax for type uuid").
-        response = ouro.assets.search(
+        page = ouro.assets.search(
             query,
             limit=limit,
             offset=offset,
-            with_pagination=True,
             **present_kwargs(
                 asset_type=asset_type,
                 scope=scope,
@@ -167,12 +168,10 @@ def register(mcp: FastMCP) -> None:
             ),
         )
 
-        assets = [format_search_hit(item) for item in response.get("data", [])]
-
         return render_markdown_list(
-            assets,
+            [format_search_hit(item) for item in page],
             line_fn=search_hit_line,
-            pagination=response.get("pagination") or {},
+            pagination=page_pagination(page),
             offset=offset,
             noun="assets",
             empty_text="No assets found.",
@@ -248,14 +247,16 @@ def register(mcp: FastMCP) -> None:
                 }
             )
 
-        deleted_children = (result or {}).get("deleted_children") or []
         payload = {
             "deleted": not dry_run,
-            "id": (result or {}).get("id") or id,
-            "name": (result or {}).get("name") or name,
-            "asset_type": (result or {}).get("asset_type") or asset_type,
-            "deleted_children": deleted_children,
-            "deleted_children_count": len(deleted_children),
+            "id": str(result.id),
+            "name": result.name or name,
+            "asset_type": result.asset_type,
+            "deleted_children": [
+                child.model_dump(mode="json", exclude_none=True)
+                for child in result.deleted_children
+            ],
+            "deleted_children_count": len(result.deleted_children),
         }
         if dry_run:
             payload["dry_run"] = True
@@ -330,13 +331,8 @@ def register(mcp: FastMCP) -> None:
 
         ouro = ctx.request_context.lifespan_context.ouro
         resolved_path = str(resolve_local_path(output_path))
-        result = ouro.assets.download(id, output_path=resolved_path, asset_type=asset_type)
-        return dump_json(
-            {
-                "downloaded": True,
-                **result,
-            }
-        )
+        download = ouro.assets.download(id, output_path=resolved_path, asset_type=asset_type)
+        return dump_json({"downloaded": True, **download.model_dump(mode="json")})
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
@@ -363,7 +359,7 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
         omit_outgoing_refs = False
         try:
-            omit_outgoing_refs = getattr(ouro.assets.retrieve(id), "asset_type", None) == "dataset"
+            omit_outgoing_refs = ouro.assets.retrieve(id).asset_type == "dataset"
         except Exception:
             log.debug("Failed to resolve asset type for connections on %s", id, exc_info=True)
         connections = slim_connection_graph(
@@ -372,20 +368,15 @@ def register(mcp: FastMCP) -> None:
             omit_outgoing_references=omit_outgoing_refs,
             omit_comments=True,
         )
-        if not isinstance(connections, dict):
-            connections = {"connections": list(connections or [])}
 
-        def _connection_line(row: Any) -> str:
-            if not isinstance(row, dict):
-                return markdown_bullet(str(row))
-            name = row.get("name") or "(unnamed)"
-            parts = [markdown_id(row.get("id"))]
+        def _connection_line(row: dict[str, Any]) -> str:
+            parts = [markdown_id(row["id"])]
             if row.get("action_id"):
                 parts.append(f"action_id: `{row['action_id']}`")
-            created = row.get("created_at")
-            if created:
-                parts.append(str(created))
-            return markdown_bullet(str(name), *parts, kind=row.get("asset_type"))
+            parts.append(row.get("created_at"))
+            return markdown_bullet(
+                str(row.get("name") or "(unnamed)"), *parts, kind=row["asset_type"]
+            )
 
         return truncate_response(
             render_markdown_sections(
@@ -476,15 +467,13 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             **optional_kwargs(status=status),
         )
-        created_by = bundle.get("created_by")
-        as_input = list(bundle.get("as_input") or [])
-        pagination = bundle.get("pagination") or {}
+        as_input = bundle.as_input
 
         sections: dict[str, list[Any]] = {}
         if role in {"output", "both"}:
             sections["created_by"] = (
-                [_format_action_summary(created_by, include_response=include_response)]
-                if created_by is not None
+                [_format_action_summary(bundle.created_by, include_response=include_response)]
+                if bundle.created_by is not None
                 else []
             )
         if role in {"input", "both"}:
@@ -495,9 +484,8 @@ def register(mcp: FastMCP) -> None:
 
         extras: list[str] = [f"asset_id: `{asset_id}`", f"role: {role}"]
         if role in {"input", "both"}:
-            has_more = bool(pagination.get("hasMore"))
             extras.append(f"as_input showing {len(as_input)} (offset={offset}, limit={limit})")
-            if has_more:
+            if bundle.has_more:
                 extras.append(
                     f"more as_input available — call again with offset={offset + len(as_input)}"
                 )
@@ -543,36 +531,29 @@ def register(mcp: FastMCP) -> None:
             limit=limit,
             offset=offset,
             sort=sort,
-            with_pagination=True,
         )
-        routes = page.get("data") or []
-        results = []
-        for r in routes:
-            entry: dict[str, Any] = {
-                "id": str(r.get("id", "")),
-                "name": r.get("name"),
-                "asset_type": r.get("asset_type", "route"),
-            }
-            if r.get("description"):
-                desc = r["description"]
-                if isinstance(desc, dict):
-                    entry["description"] = desc.get("text", "")[:200]
-                else:
-                    entry["description"] = str(desc)[:200]
-            results.append(entry)
+        results = [
+            optional_kwargs(
+                id=str(route.id),
+                name=route.name,
+                asset_type=route.asset_type,
+                description=(route.description.text[:200] or None) if route.description else None,
+            )
+            for route in page
+        ]
 
         def _route_line(row: dict[str, Any]) -> str:
             return markdown_bullet(
                 str(row.get("name") or "(untitled)"),
-                markdown_id(row.get("id")),
-                kind=row.get("asset_type") or "route",
+                markdown_id(row["id"]),
+                kind=row["asset_type"],
                 body=row.get("description"),
             )
 
         return render_markdown_list(
             results,
             line_fn=_route_line,
-            pagination=page.get("pagination") or {},
+            pagination=page_pagination(page),
             offset=offset,
             noun="compatible routes",
             empty_text="No compatible routes.",
@@ -594,63 +575,34 @@ def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
         log.debug("Failed to fetch counts for asset %s", asset_id, exc_info=True)
         return
 
-    if not counts:
-        return
-
     nonzero = {
-        k: counts.get(k, 0)
+        k: getattr(counts, k)
         for k in ("views", "comments", "reactions", "downloads")
-        if counts.get(k, 0)
+        if getattr(counts, k)
     }
     if nonzero:
         result["counts"] = nonzero
 
 
-def _compact_creation_action(created_by: Any) -> dict[str, Any] | None:
+def _compact_creation_action(created_by: Action) -> dict[str, Any]:
     """Pointer-only producer action for get_asset(detail=full).
 
     Full action payloads (response, assets, metadata) belong on
     ``list_asset_actions`` / ``get_action``, not inline on every full asset read.
     """
-    if created_by is None:
-        return None
-    if hasattr(created_by, "model_dump"):
-        raw = created_by.model_dump(mode="json")
-    elif isinstance(created_by, dict):
-        raw = created_by
-    else:
-        raw = {
-            "id": getattr(created_by, "id", None),
-            "status": getattr(created_by, "status", None),
-            "route_id": getattr(created_by, "route_id", None),
-        }
-        route = getattr(created_by, "route", None)
-        if route is not None and raw.get("route_id") is None:
-            raw["route_id"] = getattr(route, "id", None) or (
-                route.get("id") if isinstance(route, dict) else None
-            )
-
-    action_id = raw.get("id") or raw.get("action_id")
-    if not action_id:
-        return None
-    pointer: dict[str, Any] = {"action_id": str(action_id)}
-    status = raw.get("status") or raw.get("action_status")
-    if status:
-        pointer["action_status"] = status
-    route_id = raw.get("route_id") or (raw.get("route") or {}).get("id")
-    if route_id:
-        pointer["route_id"] = str(route_id)
-    return pointer
+    return {
+        "action_id": str(created_by.id),
+        "action_status": created_by.status,
+        "route_id": str(created_by.route_id),
+    }
 
 
 def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
     """Best-effort merge of provenance, connections, and tags into an asset result dict."""
     try:
-        bundle = ouro.assets.actions(asset_id, role="output")
-        created_by = bundle.get("created_by") if isinstance(bundle, dict) else None
-        pointer = _compact_creation_action(created_by)
-        if pointer:
-            result["creation_action"] = pointer
+        created_by = ouro.assets.actions(asset_id, role="output").created_by
+        if created_by is not None:
+            result["creation_action"] = _compact_creation_action(created_by)
     except Exception:
         log.debug("Failed to fetch creation action for %s", asset_id, exc_info=True)
 
@@ -679,12 +631,10 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
         log.debug("Failed to fetch tags for %s", asset_id, exc_info=True)
 
 
-def _comment_text(comment: Any, config: CommentPreviewConfig) -> str | None:
-    content = getattr(comment, "content", None)
-    text = getattr(content, "text", None) if content else None
-    if not text or config.text_chars <= 0:
+def _comment_text(comment: Comment, config: CommentPreviewConfig) -> str | None:
+    if not comment.text or config.text_chars <= 0:
         return None
-    return str(text)[: config.text_chars]
+    return comment.text[: config.text_chars]
 
 
 def _format_comment_preview(comment: Any, config: CommentPreviewConfig) -> dict[str, Any]:
@@ -761,8 +711,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             log.debug("Failed to fetch schema for dataset %s", asset.id, exc_info=True)
             base["schema"] = None
         try:
-            stats = ouro.datasets.stats(asset_id)
-            base["stats"] = stats
+            base["stats"] = ouro.datasets.stats(asset_id).model_dump(mode="json")
         except Exception:
             log.debug("Failed to fetch stats for dataset %s", asset.id, exc_info=True)
             base["stats"] = None

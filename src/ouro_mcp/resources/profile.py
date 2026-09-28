@@ -20,24 +20,21 @@ def register(mcp: FastMCP) -> None:
     def get_profile() -> str:
         ouro = current_ouro()
 
-        user_profile = ouro.users.me() or {}
-        auth_user = ouro.user
+        user = ouro.users.me()
         profile = {
-            "id": str(user_profile.get("user_id", getattr(auth_user, "id", "?"))),
-            "username": user_profile.get("username"),
-            "email": user_profile.get("email") or getattr(auth_user, "email", None),
-            "display_name": user_profile.get("display_name"),
+            "id": str(user.user_id),
+            "username": user.username,
+            "email": ouro.user.email,
+            "display_name": user.name,
+            "organizations": [
+                {
+                    "id": str(org.id),
+                    "name": org.name,
+                    "display_name": org.display_name,
+                    "role": org.membership.role if org.membership else None,
+                }
+                for org in ouro.organizations.list()
+            ],
         }
-
-        orgs = ouro.organizations.list()
-        profile["organizations"] = [
-            {
-                "id": str(org.get("id", "")),
-                "name": org.get("name"),
-                "display_name": org.get("display_name"),
-                "role": (org.get("membership") or {}).get("role"),
-            }
-            for org in orgs
-        ]
 
         return dump_json(profile)

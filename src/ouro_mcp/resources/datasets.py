@@ -7,7 +7,13 @@ import logging
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, format_asset_summary, slim_dataset_schema
+from ouro_mcp.utils import (
+    dump_json,
+    enum_columns_from_schema,
+    format_asset_summary,
+    refs_from_schema,
+    slim_dataset_schema,
+)
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +40,7 @@ def register(mcp: FastMCP) -> None:
             result["schema"] = None
 
         try:
-            result["stats"] = ouro.datasets.stats(id)
+            result["stats"] = ouro.datasets.stats(id).model_dump(mode="json")
         except Exception:
             log.debug("Failed to fetch stats for dataset %s", id, exc_info=True)
             result["stats"] = None
@@ -63,31 +69,12 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def get_dataset_schema(id: str, ctx: Context) -> str:
         ouro = ctx.request_context.lifespan_context.ouro
-        schema = slim_dataset_schema(ouro.datasets.schema(id))
-        refs = {}
-        enum_columns = {}
-        for field in schema or []:
-            if not isinstance(field, dict):
-                continue
-            if field.get("semantic_type") == "reference":
-                column = field.get("name")
-                if not column:
-                    continue
-                kind = field.get("ref_kind") or "asset"
-                entry = {"kind": kind}
-                if kind == "asset" and field.get("asset_type"):
-                    entry["asset_type"] = field["asset_type"]
-                refs[column] = entry
-            elif field.get("semantic_type") == "enum":
-                column = field.get("name")
-                values = field.get("enum_values")
-                if column and isinstance(values, list):
-                    enum_columns[column] = {"values": values}
+        columns = ouro.datasets.schema(id)
         return dump_json(
             {
                 "dataset_id": id,
-                "schema": schema,
-                "refs": refs,
-                "enum_columns": enum_columns,
+                "schema": slim_dataset_schema(columns),
+                "refs": refs_from_schema(columns),
+                "enum_columns": enum_columns_from_schema(columns),
             }
         )

@@ -3,7 +3,14 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from ouro.models import Team
+
+from ouro_mcp.constants import ENV_OURO_FRONTEND_URL
 from ouro_mcp.tools.teams import register
+
+TEAM_ID = "019df875-7957-7888-888f-f8140ff62700"
+ALICE = "019df875-7957-7888-888f-f8140ff62701"
+BOB = "019df875-7957-7888-888f-f8140ff62702"
 
 
 class _CaptureMCP:
@@ -23,12 +30,12 @@ class _FakeTeams:
         self.team = team
         self.retrieve_calls: list[dict] = []
 
-    def retrieve(self, team_id: str, *, include_members: bool = False) -> dict:
+    def retrieve(self, team_id: str, *, include_members: bool = False) -> Team:
         self.retrieve_calls.append(
             {"team_id": team_id, "include_members": include_members}
         )
         assert team_id == self.team["id"]
-        return self.team
+        return Team.model_validate(self.team)
 
     def list(self, **_kwargs):
         raise AssertionError("list should not be called")
@@ -44,23 +51,23 @@ def _ctx(teams: _FakeTeams) -> SimpleNamespace:
 
 def _sample_team() -> dict:
     return {
-        "id": "team-1",
+        "id": TEAM_ID,
         "name": "matsci",
         "org_id": "00000000-0000-0000-0000-000000000000",
         "visibility": "public",
         "default_role": "write",
         "source_policy": "any",
         "actor_type_policy": "any",
-        "organization": {"name": "all"},
+        "organization": {"id": "00000000-0000-0000-0000-000000000000", "name": "all"},
         "memberCount": 2,
         "members": [
             {
-                "user_id": "user-1",
+                "user_id": ALICE,
                 "role": "admin",
                 "user": {"username": "alice"},
             },
             {
-                "user_id": "user-2",
+                "user_id": BOB,
                 "role": "write",
                 "user": {"username": "bob"},
             },
@@ -68,17 +75,18 @@ def _sample_team() -> dict:
     }
 
 
-def test_get_teams_detail_omits_members_by_default():
+def test_get_teams_detail_omits_members_by_default(monkeypatch):
+    monkeypatch.delenv(ENV_OURO_FRONTEND_URL, raising=False)
     mcp = _CaptureMCP()
     register(mcp)
     get_teams = mcp.tools["get_teams"]
     teams = _FakeTeams(_sample_team())
     ctx = _ctx(teams)
 
-    payload = json.loads(get_teams(ctx=ctx, id="team-1"))
+    payload = json.loads(get_teams(ctx=ctx, id=TEAM_ID))
 
     assert teams.retrieve_calls == [
-        {"team_id": "team-1", "include_members": False}
+        {"team_id": TEAM_ID, "include_members": False}
     ]
     assert payload["member_count"] == 2
     assert "members" not in payload
@@ -92,13 +100,13 @@ def test_get_teams_detail_includes_members_when_requested():
     teams = _FakeTeams(_sample_team())
     ctx = _ctx(teams)
 
-    payload = json.loads(get_teams(ctx=ctx, id="team-1", include_members=True))
+    payload = json.loads(get_teams(ctx=ctx, id=TEAM_ID, include_members=True))
 
     assert teams.retrieve_calls == [
-        {"team_id": "team-1", "include_members": True}
+        {"team_id": TEAM_ID, "include_members": True}
     ]
     assert payload["member_count"] == 2
     assert payload["members"] == [
-        {"user_id": "user-1", "role": "admin", "username": "alice"},
-        {"user_id": "user-2", "role": "write", "username": "bob"},
+        {"user_id": ALICE, "role": "admin", "username": "alice"},
+        {"user_id": BOB, "role": "write", "username": "bob"},
     ]

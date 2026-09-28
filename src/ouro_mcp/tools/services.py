@@ -19,6 +19,7 @@ from ouro_mcp.utils import (
     markdown_bullet,
     markdown_id,
     optional_kwargs,
+    page_pagination,
     render_markdown_list,
     route_input_assets_summary,
     route_output_assets_summary,
@@ -561,10 +562,8 @@ def _fetch_action_logs(
         limit=limit,
         offset=offset,
         sort_order=sort_order,
-        with_pagination=True,
     )
-    logs = [_format_log_entry(item) for item in (page.get("data") or [])]
-    return logs, page.get("pagination") or {}
+    return [_format_log_entry(item) for item in page], page_pagination(page)
 
 
 _LICENSE_DESC = (
@@ -1315,20 +1314,15 @@ def register(mcp: FastMCP) -> None:
             include_other_users=include_other_users,
             limit=limit,
             offset=offset,
-            with_pagination=True,
         )
-        actions = page.get("data") or []
+        actions = list(page)
         if status:
             allowed = {"queued", "in-progress", "success", "error", "timed-out"}
             if status not in allowed:
                 raise ValueError(
                     f"Invalid status={status!r}. Must be one of: {sorted(allowed)}."
                 )
-            actions = [
-                action
-                for action in actions
-                if _as_dict(action).get("status") == status
-            ]
+            actions = [action for action in actions if action.status == status]
 
         results = [
             _format_action_summary(action, include_response=include_response)
@@ -1339,7 +1333,7 @@ def register(mcp: FastMCP) -> None:
             render_markdown_list(
                 results,
                 line_fn=action_summary_line,
-                pagination=page.get("pagination") or {},
+                pagination=page_pagination(page),
                 offset=offset,
                 noun="route actions",
                 empty_text="No route actions.",

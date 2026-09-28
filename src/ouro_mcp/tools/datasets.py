@@ -9,14 +9,17 @@ from typing import Annotated, Any, Optional
 
 import pandas as pd
 from mcp.server.fastmcp import Context, FastMCP
+from ouro.models import Dataset, ResolvedRef
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
+    enum_columns_from_schema,
     format_asset_summary,
     format_table_response,
     markdown_bullet,
     markdown_id,
     optional_kwargs,
+    refs_from_schema,
     render_markdown_list,
     resolve_local_path,
     slim_connection_graph,
@@ -176,7 +179,7 @@ def _coerce_column_operations(value: Any) -> list[dict[str, Any]]:
     return value
 
 
-def _apply_column_op(ouro: Any, dataset_id: str, op: dict[str, Any]) -> dict[str, Any]:
+def _apply_column_op(ouro: Any, dataset_id: str, op: dict[str, Any]) -> None:
     kind = op.get("op")
     if kind not in _COLUMN_OPS:
         raise ValueError(f"operation.op must be one of: {', '.join(_COLUMN_OPS)}.")
@@ -249,35 +252,6 @@ def _json_records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
     return rows
 
 
-def _refs_from_schema(schema: Any) -> dict[str, dict[str, Any]]:
-    refs: dict[str, dict[str, Any]] = {}
-    for field in schema or []:
-        if not isinstance(field, dict) or field.get("semantic_type") != "reference":
-            continue
-        column = field.get("name") or field.get("column_name")
-        if not column:
-            continue
-        kind = field.get("ref_kind") or "asset"
-        entry: dict[str, Any] = {"kind": kind}
-        if kind == "asset" and field.get("asset_type"):
-            entry["asset_type"] = field["asset_type"]
-        refs[str(column)] = entry
-    return refs
-
-
-def _enum_columns_from_schema(schema: Any) -> dict[str, dict[str, list[str]]]:
-    columns: dict[str, dict[str, list[str]]] = {}
-    for field in schema or []:
-        if not isinstance(field, dict) or field.get("semantic_type") != "enum":
-            continue
-        column = field.get("name") or field.get("column_name")
-        values = field.get("enum_values")
-        if not column or not isinstance(values, list):
-            continue
-        columns[str(column)] = {"values": [str(value) for value in values]}
-    return columns
-
-
 def _normalize_refs_for_result(value: Optional[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     refs: dict[str, dict[str, Any]] = {}
     for column, hint in (value or {}).items():
@@ -332,7 +306,7 @@ def _merge_enum_column_hints(
     return merged
 
 
-def _ingest_summary(dataset: Any) -> dict[str, Any]:
+def _ingest_summary(dataset: Dataset) -> dict[str, Any]:
     """Surface partial-success ingest info stashed on the dataset by ouro-py.
 
     Reference columns are FK-enforced, so rows with bad/missing ref ids are
@@ -341,13 +315,23 @@ def _ingest_summary(dataset: Any) -> dict[str, Any]:
     column so an agent can fix and retry them.
     """
     summary: dict[str, Any] = {}
-    row_ingest = getattr(dataset, "row_ingest", None)
-    if row_ingest:
-        summary["row_ingest"] = row_ingest
-    warning = getattr(dataset, "ingest_warning", None)
-    if warning:
-        summary["ingest_warning"] = warning
+    if dataset.row_ingest:
+        summary["row_ingest"] = dataset.row_ingest.model_dump(mode="json", exclude_none=True)
+    if dataset.ingest_warning:
+        summary["ingest_warning"] = dataset.ingest_warning
     return summary
+
+
+def _dump_resolved_refs(
+    resolved_refs: dict[str, dict[str, ResolvedRef]],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    return {
+        column: {
+            ref_id: ref.model_dump(mode="json", exclude_none=True)
+            for ref_id, ref in refs.items()
+        }
+        for column, refs in resolved_refs.items()
+    }
 
 
 def _dataset_proof(
@@ -374,11 +358,11 @@ def _dataset_proof(
         schema = ouro.datasets.schema(dataset_id)
         proof["schema"] = slim_dataset_schema(schema)
         proof["refs"] = _merge_ref_hints(
-            _refs_from_schema(schema),
+            refs_from_schema(schema),
             declared_refs,
         )
         proof["enum_columns"] = _merge_enum_column_hints(
-            _enum_columns_from_schema(schema),
+            enum_columns_from_schema(schema),
             declared_enum_columns,
         )
     except Exception:
@@ -389,29 +373,22 @@ def _dataset_proof(
         )
 
     try:
-        page = ouro.datasets.query(
-            dataset_id,
-            limit=5,
-            with_pagination=True,
-            resolve_refs=True,
-        )
-        resolved = page.get("resolved_refs") or {}
-        if resolved:
-            proof["resolved_refs_preview"] = resolved
+        rows = ouro.datasets.list_rows(dataset_id, limit=5, resolve_refs=True)
+        if rows.resolved_refs:
+            proof["resolved_refs_preview"] = _dump_resolved_refs(rows.resolved_refs)
     except Exception:
         pass
 
     try:
-        if hasattr(ouro, "assets"):
-            connections = slim_connection_graph(
-                ouro.assets.connections(dataset_id),
-                current_asset_id=dataset_id,
-                # Outgoing dataset refs duplicate column IDs; keep incoming.
-                omit_outgoing_references=True,
-                omit_comments=True,
-            )
-            if connections:
-                proof["connections"] = connections
+        connections = slim_connection_graph(
+            ouro.assets.connections(dataset_id),
+            current_asset_id=dataset_id,
+            # Outgoing dataset refs duplicate column IDs; keep incoming.
+            omit_outgoing_references=True,
+            omit_comments=True,
+        )
+        if connections:
+            proof["connections"] = connections
     except Exception:
         pass
 
@@ -538,24 +515,19 @@ def register(mcp: FastMCP) -> None:
 
         ouro = ctx.request_context.lifespan_context.ouro
 
-        page = ouro.datasets.query(
+        page = ouro.datasets.list_rows(
             dataset_id,
             limit=limit,
             offset=offset,
-            with_pagination=True,
             resolve_refs=resolve_refs,
         )
-        df = page["data"]
-        pagination = page.get("pagination") or {}
-
-        rows = _json_records_from_dataframe(df)
 
         result = format_table_response(
-            rows,
+            page.data,
             offset=offset,
             limit=limit,
-            has_more=bool(pagination.get("hasMore")),
-            resolved_refs=(page.get("resolved_refs") or {}) if resolve_refs else None,
+            has_more=page.has_more,
+            resolved_refs=_dump_resolved_refs(page.resolved_refs) if resolve_refs else None,
             response_format=response_format,
         )
 
@@ -656,7 +628,7 @@ def register(mcp: FastMCP) -> None:
         )
 
         result = format_asset_summary(dataset)
-        result["table_name"] = dataset.metadata.get("table_name") if dataset.metadata else None
+        result["table_name"] = dataset.metadata.table_name if dataset.metadata else None
         result.update(
             _dataset_proof(
                 ouro,
@@ -819,8 +791,8 @@ def register(mcp: FastMCP) -> None:
 
         applied: list[dict[str, Any]] = []
         for op in ops:
-            result = _apply_column_op(ouro, dataset_id, op)
-            applied.append({"op": op.get("op"), "result": result})
+            _apply_column_op(ouro, dataset_id, op)
+            applied.append({"op": op["op"], "name": op["name"]})
 
         payload: dict[str, Any] = {"dataset_id": dataset_id, "operations": applied}
         payload.update(_dataset_proof(ouro, dataset_id))
@@ -839,27 +811,10 @@ def register(mcp: FastMCP) -> None:
         A dataset view is a saved visualization definition with SQL and chart config.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        views = ouro.datasets.list_views(dataset_id)
-
-        results: list[dict[str, Any]] = []
-        for view in views or []:
-            if isinstance(view, dict):
-                row = view
-            elif hasattr(view, "model_dump"):
-                row = view.model_dump(mode="json")
-            else:
-                row = {
-                    "id": getattr(view, "id", None),
-                    "name": getattr(view, "name", None),
-                    "description": getattr(view, "description", None),
-                }
-            results.append(
-                {
-                    "id": row.get("id"),
-                    "name": row.get("name"),
-                    "description": row.get("description"),
-                }
-            )
+        results = [
+            {"id": str(view.id), "name": view.name, "description": view.description}
+            for view in ouro.datasets.list_views(dataset_id)
+        ]
 
         def _view_line(row: dict[str, Any]) -> str:
             return markdown_bullet(
@@ -922,7 +877,7 @@ def register(mcp: FastMCP) -> None:
         if view_id is None:
             if not name:
                 raise ValueError("name is required when creating a dataset view (omit view_id to create).")
-            result = ouro.datasets.create_view(
+            view = ouro.datasets.create_view(
                 dataset_id,
                 name=name,
                 description=description,
@@ -931,7 +886,7 @@ def register(mcp: FastMCP) -> None:
                 prompt=prompt,
             )
         else:
-            result = ouro.datasets.update_view(
+            view = ouro.datasets.update_view(
                 dataset_id,
                 view_id,
                 name=name,
@@ -940,7 +895,7 @@ def register(mcp: FastMCP) -> None:
                 config=cfg,
                 prompt=prompt,
             )
-        return dump_json(result)
+        return dump_json(view.model_dump(mode="json"))
 
     @mcp.tool(annotations={"destructiveHint": True})
     @handle_ouro_errors

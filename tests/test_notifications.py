@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from ouro.models import Notification, Page
+
 from ouro_mcp.tools.notifications import register
+
+NOTIFICATION_ID = "019df875-7957-7888-888f-f8140ff62801"
+ALICE_ID = "019df875-7957-7888-888f-f8140ff62802"
+ASSET_ID = "019df875-7957-7888-888f-f8140ff62803"
 
 
 class _CaptureMCP:
@@ -28,30 +34,25 @@ class _FakeNotifications:
         if nid in self.fail_ids:
             raise RuntimeError(f"boom:{nid}")
         self.read_calls.append(nid)
-        return {
-            "id": nid,
-            "type": "comment",
-            "viewed": True,
-            "created_at": "2026-07-28T12:00:00Z",
-            "source_user": {"username": "alice"},
-            "content": {"text": "hi"},
-        }
 
-    def list(self, **kwargs):
+    def list(self, **kwargs) -> Page[Notification]:
         self.list_calls.append(kwargs)
-        return {
-            "data": [
-                {
-                    "id": "n1",
-                    "type": "mention",
-                    "viewed": False,
-                    "created_at": "2026-07-28T12:00:00Z",
-                    "source_user": {"username": "alice"},
-                    "content": {"text": "hey", "asset": {"id": "a1", "name": "P", "asset_type": "post"}},
-                }
-            ],
-            "pagination": {"hasMore": False},
-        }
+        return Page[Notification].model_validate(
+            {
+                "data": [
+                    {
+                        "id": NOTIFICATION_ID,
+                        "type": "mention",
+                        "viewed": False,
+                        "created_at": "2026-07-28T12:00:00Z",
+                        "source_user": {"user_id": ALICE_ID, "username": "alice"},
+                        "content": {"text": "hey"},
+                        "asset": {"id": ASSET_ID, "name": "P", "asset_type": "post"},
+                    }
+                ],
+                "hasMore": False,
+            }
+        )
 
 
 def _ctx(notifications: _FakeNotifications) -> SimpleNamespace:
@@ -127,9 +128,8 @@ def test_get_notifications_passes_category() -> None:
             "org_id": None,
             "unread_only": True,
             "category": "mentions,comments,shares",
-            "with_pagination": True,
         }
     ]
-    assert "id: `n1`" in result
+    assert f"id: `{NOTIFICATION_ID}`" in result
     assert "mention" in result
     assert "@alice" in result
