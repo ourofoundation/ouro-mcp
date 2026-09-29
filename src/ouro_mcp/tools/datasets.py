@@ -395,6 +395,65 @@ def _dataset_proof(
     return proof
 
 
+_VIEW_CONFIG_DESCRIPTION = (
+    "Chart config as a JSON object or JSON string. Every key names a sql_query "
+    "result column. Shape: {type: bar|line|area|composed|scatter|pie|donut|radar, "
+    "layout?: 'vertical' (horizontal bars; only flips orientation), "
+    "category: {dataKey, label?, type?: 'category'|'number', format?, decimals?, angle?}, "
+    "value?: {label?, format?, decimals?, scale?: 'linear'|'log', min?, max?}, "
+    "series: [{dataKey, name?, type?, stackId?, errorKey? | errorLowKey?+errorHighKey?, "
+    "strokeDasharray?, dot?}], legend?, referenceLines?: [{axis: 'value'|'category', "
+    "value, label?}]}. category.dataKey is the label/x column, never a series. "
+    "Formats: date, date-short, date-month, date-year, number, compact, percent, "
+    "fixed. Pie/donut: nameKey + dataKey. Omit fill for well-spaced default colors. "
+    "Example: {\"type\":\"bar\",\"layout\":\"vertical\",\"category\":{\"dataKey\":\"name\"},"
+    "\"value\":{\"label\":\"Cost (USD)\",\"format\":\"fixed\",\"decimals\":2},"
+    "\"series\":[{\"dataKey\":\"cost\",\"name\":\"Cost\"}]}. "
+    "Full JSON Schema: GET /visualizations/schema."
+)
+
+_VIEW_KEYS = {"name", "description", "prompt", "sql_query", "config"}
+
+
+def _dataset_embed_markdown(dataset_id: str, view_id: Optional[str] = None) -> str:
+    embed: dict[str, Any] = {
+        "id": dataset_id,
+        "assetType": "dataset",
+        "viewMode": "preview",
+    }
+    if view_id:
+        embed["displayConfig"] = {"visualizationId": view_id}
+    return "```assetComponent\n" + json.dumps(embed) + "\n```"
+
+
+def _view_result(view: Any, dataset_id: str) -> dict[str, Any]:
+    """A saved view plus ready-to-paste embed markdown.
+
+    The API adds ``warnings`` and ``sample_rows`` on writes; they come through
+    as extra model fields.
+    """
+    result = view.model_dump(mode="json")
+    result["embed_markdown"] = _dataset_embed_markdown(dataset_id, str(view.id))
+    return result
+
+
+def _coerce_view_spec(value: Any) -> Optional[dict[str, Any]]:
+    spec = _coerce_json_object(value, parameter_name="view")
+    if spec is None:
+        return None
+    unknown = set(spec) - _VIEW_KEYS
+    if unknown:
+        raise ValueError(
+            f"Unknown view key(s): {', '.join(sorted(unknown))}. "
+            f"Allowed: {', '.join(sorted(_VIEW_KEYS))}."
+        )
+    if not spec.get("prompt") and not (spec.get("sql_query") and spec.get("config")):
+        raise ValueError("view needs a prompt, or both sql_query and config.")
+    if "config" in spec:
+        spec["config"] = _coerce_json_object(spec["config"], parameter_name="view.config")
+    return spec
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -588,8 +647,25 @@ def register(mcp: FastMCP) -> None:
             Optional[dict[str, Any]],
             Field(description="Top-level provenance object; separate from dataset metadata"),
         ] = None,
+        view: Annotated[
+            Optional[str | dict[str, Any]],
+            Field(
+                description=(
+                    "Optional saved view (chart) to create with the dataset: "
+                    '{"name": ..., "prompt": "..."} to have the API write the SQL '
+                    'and chart, or {"name": ..., "sql_query": ..., "config": ...}. '
+                    "name defaults to the dataset name. The result's embed_markdown "
+                    "then renders this chart."
+                )
+            ),
+        ] = None,
     ) -> str:
         """Create a new dataset on Ouro. Provide data or data_path (one required).
+
+        The result includes ``embed_markdown``, a ready-to-paste post embed. Pass
+        ``view`` to also save a chart; the embed then shows it. If the view is
+        rejected, the dataset is still created and ``view_error`` says why; fix
+        it with ``write_dataset_view``.
 
         To make a column reference Ouro objects, pass ``refs``. Reference
         columns get a real DB foreign key, show up as
@@ -611,6 +687,7 @@ def register(mcp: FastMCP) -> None:
         declared_enum_columns = _coerce_json_object(
             enum_columns, parameter_name="enum_columns"
         )
+        view_spec = _coerce_view_spec(view)
 
         dataset = ouro.datasets.create(
             name=name,
@@ -638,6 +715,31 @@ def register(mcp: FastMCP) -> None:
             )
         )
         result.update(_ingest_summary(dataset))
+
+        dataset_id = str(dataset.id)
+        result["embed_markdown"] = _dataset_embed_markdown(dataset_id)
+        if view_spec is not None:
+            # The dataset exists either way, so a rejected view is reported,
+            # not raised.
+            try:
+                saved = ouro.datasets.create_view(
+                    dataset_id,
+                    name=view_spec.get("name") or name,
+                    description=view_spec.get("description"),
+                    sql_query=view_spec.get("sql_query"),
+                    config=view_spec.get("config"),
+                    prompt=view_spec.get("prompt"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["view_error"] = str(exc)
+            else:
+                view_result = _view_result(saved, dataset_id)
+                result["embed_markdown"] = view_result.pop("embed_markdown")
+                result["view"] = {
+                    key: view_result[key]
+                    for key in ("id", "name", "description", "warnings", "sample_rows")
+                    if view_result.get(key) is not None
+                }
         return dump_json(result)
 
     @mcp.tool(annotations={"idempotentHint": False})
@@ -858,13 +960,7 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         config: Annotated[
             Optional[Any],
-            Field(
-                description=(
-                    "Chart config as a JSON object or JSON string. type is bar | line | area | "
-                    "composed | scatter | pie | donut | radar; dataKey / nameKey must name "
-                    "sql_query result columns."
-                )
-            ),
+            Field(description=_VIEW_CONFIG_DESCRIPTION),
         ] = None,
         prompt: Annotated[
             Optional[str],
@@ -876,6 +972,10 @@ def register(mcp: FastMCP) -> None:
         Omit view_id to create a new view; pass view_id to update an existing one.
         A view is a (sql_query, config) pair: it runs the SQL and renders the chart
         config. Provide both, or pass a prompt to have the API generate them via AI.
+
+        The API runs the SQL and checks the config against the result; a bad view
+        is rejected with the errors to fix. The result includes ``warnings``, a few
+        ``sample_rows``, and ``embed_markdown`` to paste into a post.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         cfg = _coerce_json_object(config, parameter_name="config")
@@ -901,7 +1001,7 @@ def register(mcp: FastMCP) -> None:
                 config=cfg,
                 prompt=prompt,
             )
-        return dump_json(view.model_dump(mode="json"))
+        return dump_json(_view_result(view, dataset_id))
 
     @mcp.tool(annotations={"destructiveHint": True})
     @handle_ouro_errors

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from ouro.models import Connection, Dataset, DatasetColumn, DatasetRows
+from ouro.models import Connection, Dataset, DatasetColumn, DatasetRows, DatasetView
 
 from ouro_mcp.tools.datasets import _resolve_dataset_data, register
 from ouro_mcp.utils import slim_dataset_schema
@@ -137,6 +137,25 @@ class _FakeDatasets:
     def create(self, **kwargs):
         self.created.append(kwargs)
         return _dataset(kwargs["name"], kwargs["visibility"], self.ingest, self.ingest_warning)
+
+    view_error: Exception | None = None
+
+    def create_view(self, dataset_id: str, **kwargs):
+        self.views_created = getattr(self, "views_created", [])
+        self.views_created.append({"dataset_id": dataset_id, **kwargs})
+        if self.view_error:
+            raise self.view_error
+        return DatasetView.model_validate(
+            {
+                "id": VIEW_ID,
+                "dataset_id": dataset_id,
+                "name": kwargs["name"],
+                "sql_query": kwargs.get("sql_query") or "SELECT 1",
+                "config": kwargs.get("config") or {"type": "bar"},
+                "warnings": [],
+                "sample_rows": [{"layout": "a", "n": 1}],
+            }
+        )
 
     def query(self, dataset_id: str, sql: str):
         self.query_calls.append({"dataset_id": dataset_id, "sql": sql})
@@ -975,3 +994,82 @@ def test_update_dataset_refs_includes_verification() -> None:
     assert result["resolved_refs_preview"] == sidecar
     # Outgoing dataset→file reference edges are omitted; schema/refs cover them.
     assert "connections" not in result
+
+
+VIEW_ID = "01a0ed0c-af5f-7e8c-ba00-837e2fc8bad0"
+
+
+def test_create_dataset_returns_plain_embed_without_view() -> None:
+    datasets = _FakeDatasets()
+    result = json.loads(
+        _dataset_tools()["create_dataset"](
+            name="plain",
+            org_id="org-1",
+            team_id="team-1",
+            ctx=_ctx(datasets),
+            data='[{"layout":"a","n":1}]',
+        )
+    )
+    embed = json.loads(result["embed_markdown"].split("\n")[1])
+    assert embed["assetType"] == "dataset"
+    assert "displayConfig" not in embed
+    assert "view" not in result
+
+
+def test_create_dataset_creates_view_and_embeds_it() -> None:
+    datasets = _FakeDatasets()
+    result = json.loads(
+        _dataset_tools()["create_dataset"](
+            name="costs",
+            org_id="org-1",
+            team_id="team-1",
+            ctx=_ctx(datasets),
+            data='[{"layout":"a","n":1}]',
+            view={"prompt": "Bar chart of n by layout"},
+        )
+    )
+    call = datasets.views_created[0]
+    assert call["name"] == "costs"
+    assert call["prompt"] == "Bar chart of n by layout"
+    assert result["view"]["id"] == VIEW_ID
+    assert result["view"]["sample_rows"] == [{"layout": "a", "n": 1}]
+    assert result["embed_markdown"].startswith("```assetComponent\n")
+    embed = json.loads(result["embed_markdown"].split("\n")[1])
+    assert embed["displayConfig"] == {"visualizationId": VIEW_ID}
+    assert embed["id"] == call["dataset_id"]
+
+
+def test_create_dataset_reports_rejected_view_without_failing() -> None:
+    datasets = _FakeDatasets()
+    datasets.view_error = RuntimeError("Invalid view: category column 'x' is not in the query result.")
+    result = json.loads(
+        _dataset_tools()["create_dataset"](
+            name="costs",
+            org_id="org-1",
+            team_id="team-1",
+            ctx=_ctx(datasets),
+            data='[{"layout":"a","n":1}]',
+            view='{"name":"Chart","sql_query":"SELECT * FROM {{table}}","config":{"type":"bar"}}',
+        )
+    )
+    assert "category column 'x'" in result["view_error"]
+    assert "displayConfig" not in result["embed_markdown"]
+    assert datasets.created
+
+
+@pytest.mark.parametrize(
+    "view",
+    [{"name": "x"}, {"prompt": "p", "colour": "red"}, {"sql_query": "SELECT 1"}],
+)
+def test_create_dataset_rejects_bad_view_spec_before_creating(view) -> None:
+    datasets = _FakeDatasets()
+    out = _dataset_tools()["create_dataset"](
+        name="costs",
+        org_id="org-1",
+        team_id="team-1",
+        ctx=_ctx(datasets),
+        data='[{"layout":"a","n":1}]',
+        view=view,
+    )
+    assert "view" in out
+    assert not datasets.created
