@@ -22,6 +22,12 @@ def _resolve_post_markdown(
     content_markdown: Optional[str],
     content_path: Optional[str],
 ) -> Optional[str]:
+    # Some clients send "" for optional fields they meant to leave unset; treat blanks as absent.
+    if content_markdown is not None and not content_markdown.strip():
+        content_markdown = None
+    if content_path is not None and not content_path.strip():
+        content_path = None
+
     provided = [
         ("content_markdown", content_markdown is not None),
         ("content_path", content_path is not None),
