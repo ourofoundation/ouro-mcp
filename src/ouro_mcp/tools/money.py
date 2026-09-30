@@ -232,11 +232,11 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         role: Annotated[Optional[str], Field(description='"consumer" (spending) or "creator" (earnings)')] = None,
     ) -> str:
-        """List pay-per-use route billing records (USD). Read-only.
+        """List pay-per-use route charges (USD). Read-only.
 
-        Each record captures a single metered route invocation: which
-        asset was called, the resulting charge in cents, and when it was
-        billed. Use ``role="consumer"`` to see what the user spent and
+        Each record is one paid route call: which asset was called, the
+        charge in cents (paid from the caller's Ouro balance when the call
+        completed), and when. Use ``role="consumer"`` to see what the user spent and
         ``role="creator"`` to see what they earned. Filter to a single
         asset with ``asset_id`` to audit one route.
 
@@ -260,12 +260,13 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_pending_earnings(ctx: Context) -> str:
-        """Read pending creator earnings from usage-based billing (USD, cents).
+        """Read creator route earnings (USD, cents). Read-only.
 
-        Returns the backend's pending-earnings summary — revenue from
-        routes and assets the user has published that buyers have called
-        or purchased but which haven't been paid out to the user's
-        Stripe-linked account yet. All amounts are in cents. Read-only.
+        Route revenue lands in the user's Ouro balance as each paid call
+        completes (after the platform fee), so ``total_pending_cents`` is 0;
+        ``total_paid_out_cents`` is everything earned, ``in_progress_cents``
+        covers calls still running, and ``assets`` breaks it down per route.
+        Earnings are spendable immediately and withdrawable after 7 days.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         return dump_json(ouro.money.get_pending_earnings().model_dump(mode="json"))
