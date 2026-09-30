@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import json
 from base64 import b64decode
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, file_result, optional_kwargs, resolve_local_path
+from ouro_mcp.utils import (
+    PRICE_CURRENCY_DESC,
+    UNLOCK_PRICE_DESC,
+    dump_json,
+    file_result,
+    optional_kwargs,
+    resolve_local_path,
+    unlock_pricing_kwargs,
+)
 from pydantic import Field
 
 
@@ -97,7 +105,13 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
-        visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "public",
+        visibility: Annotated[
+            str, Field(description='"public" | "private" | "organization" | "monetized"')
+        ] = "public",
+        price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
+        price_currency: Annotated[
+            Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
+        ] = None,
         description: Annotated[Optional[str], Field(description="File description")] = None,
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
         attribution: Annotated[
@@ -141,6 +155,7 @@ def register(mcp: FastMCP) -> None:
             license_id=license_id,
             attribution=attribution,
             **file_kwargs,
+            **unlock_pricing_kwargs(visibility, price, price_currency),
         )
 
         return dump_json(file_result(file))
@@ -176,7 +191,13 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         name: Annotated[Optional[str], Field(description="New name")] = None,
         description: Annotated[Optional[str], Field(description="New description")] = None,
-        visibility: Annotated[Optional[str], Field(description='"public" | "private" | "organization"')] = None,
+        visibility: Annotated[
+            Optional[str], Field(description='"public" | "private" | "organization" | "monetized"')
+        ] = None,
+        price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
+        price_currency: Annotated[
+            Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
+        ] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
         license_id: Annotated[Optional[str], Field(description="New asset license identifier")] = None,
@@ -189,8 +210,8 @@ def register(mcp: FastMCP) -> None:
 
         To replace the file data, provide one of file_path,
         file_content_base64, or file_content_text (see create_file for
-        details).  Pass name, description, or visibility to update
-        metadata only.
+        details).  Pass name, description, visibility, or pricing to
+        update metadata only.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -213,6 +234,7 @@ def register(mcp: FastMCP) -> None:
                 license_id=license_id,
                 attribution=attribution,
             ),
+            **unlock_pricing_kwargs(visibility, price, price_currency),
         )
 
         return dump_json(file_result(file))

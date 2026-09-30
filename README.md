@@ -94,7 +94,10 @@ Ouro content lives in organizations and teams:
 When creating content, agents should choose an organization and team explicitly. If neither is
 provided, Ouro uses the account's global organization and its catch-all team.
 
-Assets can be public, private, or monetized. Mentioning or embedding a private asset does not grant
+Assets can be public, private, or monetized. To sell a post, file, or dataset, pass
+`visibility="monetized"` with a one-time `price`; to charge per route call, pass it with a
+`unit_cost`. Set `price_currency` to `"usd"` (dollars) or `"btc"` (sats). Any other visibility
+makes the asset free again. Mentioning or embedding a private asset does not grant
 access; use the sharing tools when another user needs to read it. @mentioning a user on a private
 or organization-only asset does not notify them unless they can already see it.
 

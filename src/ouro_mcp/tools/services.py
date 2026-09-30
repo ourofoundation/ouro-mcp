@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    PRICE_CURRENCY_DESC,
+    UNIT_COST_DESC,
     dump_json,
     format_asset_summary,
     format_one_time_cost_summary,
@@ -20,6 +22,7 @@ from ouro_mcp.utils import (
     markdown_id,
     optional_kwargs,
     page_pagination,
+    per_use_pricing_kwargs,
     render_markdown_list,
     route_input_assets_summary,
     route_output_assets_summary,
@@ -213,8 +216,9 @@ def _format_action_cost(
 ) -> Optional[dict[str, Any]]:
     """Build a `cost` block for an action.
 
-    USD routes: data comes from the joined `usage_record` row (Stripe meter
-    lifecycle: reserved → confirmed → invoiced).
+    USD routes: data comes from the joined `usage_record` row. The cost is
+    held on the caller's Ouro balance while the call runs ("reserved") and
+    settled to the creator when it completes ("confirmed").
 
     BTC routes: data comes from the joined `transactions` rows (Spark wallet
     transfer settled atomically per call). RLS filters to the rows visible
@@ -229,24 +233,16 @@ def _format_action_cost(
     if ur:
         total_cents = ur.get("total_cents")
         status = ur.get("status")
-        invoice_id = ur.get("stripe_invoice_id")
         cost: dict[str, Any] = {
             "currency": "usd",
             "total_cents": total_cents,
             "unit_cost_cents": ur.get("unit_cost_cents"),
             "quantity": ur.get("quantity"),
             "cost_unit": ur.get("cost_unit"),
-            "status": status,  # "reserved" (in-flight) or "confirmed" (metered)
-            "stripe_invoice_id": invoice_id,
+            "status": status,
         }
         if total_cents is not None:
-            suffix = (
-                " (in-progress)"
-                if status == "reserved"
-                else " (billed on invoice)"
-                if invoice_id
-                else " (pending invoice)"
-            )
+            suffix = " held (in-progress)" if status == "reserved" else " charged"
             cost["cost_summary"] = f"${total_cents / 100:.2f}" + suffix
         return {k: v for k, v in cost.items() if v is not None}
 
@@ -843,7 +839,19 @@ def register(mcp: FastMCP) -> None:
         description: Annotated[Optional[str], Field(description="Route description")] = None,
         visibility: Annotated[
             Optional[str],
-            Field(description='"public" | "private" | "organization"; defaults to the service\'s'),
+            Field(
+                description=(
+                    '"public" | "private" | "organization" | "monetized"; '
+                    "defaults to the service's"
+                )
+            ),
+        ] = None,
+        unit_cost: Annotated[Optional[float], Field(description=UNIT_COST_DESC)] = None,
+        price_currency: Annotated[
+            Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
+        ] = None,
+        cost_unit: Annotated[
+            Optional[str], Field(description='What one charge covers; defaults to "call"')
         ] = None,
         parameters: Annotated[
             Optional[Any],
@@ -881,6 +889,9 @@ def register(mcp: FastMCP) -> None:
         `create_service` to expose individual endpoints, or when a service was
         created without an OpenAPI spec. `org_id`, `team_id`, and `visibility`
         default to the parent service's values.
+
+        To charge per call, set visibility="monetized" with unit_cost and
+        price_currency.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -900,6 +911,7 @@ def register(mcp: FastMCP) -> None:
                 license_id=license_id,
                 attribution=attribution,
             ),
+            **per_use_pricing_kwargs(visibility, unit_cost, price_currency, cost_unit),
         )
 
         return dump_json(format_asset_summary(route))
@@ -914,7 +926,15 @@ def register(mcp: FastMCP) -> None:
         name: Annotated[Optional[str], Field(description="New display name")] = None,
         description: Annotated[Optional[str], Field(description="New description")] = None,
         visibility: Annotated[
-            Optional[str], Field(description='"public" | "private" | "organization"')
+            Optional[str],
+            Field(description='"public" | "private" | "organization" | "inherit" | "monetized"'),
+        ] = None,
+        unit_cost: Annotated[Optional[float], Field(description=UNIT_COST_DESC)] = None,
+        price_currency: Annotated[
+            Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
+        ] = None,
+        cost_unit: Annotated[
+            Optional[str], Field(description='What one charge covers; defaults to "call"')
         ] = None,
         parameters: Annotated[
             Optional[Any], Field(description="Parameters as a JSON array (object or string)")
@@ -960,6 +980,7 @@ def register(mcp: FastMCP) -> None:
                 license_id=license_id,
                 attribution=attribution,
             ),
+            **per_use_pricing_kwargs(visibility, unit_cost, price_currency, cost_unit),
         )
 
         return dump_json(format_asset_summary(route))

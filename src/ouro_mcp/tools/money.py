@@ -180,8 +180,8 @@ def register(mcp: FastMCP) -> None:
 
         - BTC sends route through the Lightning "send-sats" endpoint; once
           the payment confirms it cannot be reversed by the SDK.
-        - USD sends route through the Stripe "tip" endpoint and accept an
-          optional ``message``; BTC ignores ``message``.
+        - USD sends move cents between Ouro balances (after the platform
+          fee) and accept an optional ``message``; BTC ignores ``message``.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         transfer = ouro.money.send(

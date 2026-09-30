@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    PRICE_CURRENCY_DESC,
+    UNLOCK_PRICE_DESC,
     content_from_markdown,
     dump_json,
     format_asset_summary,
     optional_kwargs,
     resolve_local_path,
+    unlock_pricing_kwargs,
 )
 from pydantic import Field
 
@@ -63,7 +66,13 @@ def register(mcp: FastMCP) -> None:
             Field(description="Extended markdown body (syntax in the tool description)"),
         ] = None,
         content_path: Annotated[Optional[str], Field(description="Local .md/.markdown file path")] = None,
-        visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "public",
+        visibility: Annotated[
+            str, Field(description='"public" | "private" | "organization" | "monetized"')
+        ] = "public",
+        price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
+        price_currency: Annotated[
+            Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
+        ] = None,
         description: Annotated[Optional[str], Field(description="Short description/subtitle")] = None,
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
         attribution: Annotated[
@@ -108,6 +117,7 @@ def register(mcp: FastMCP) -> None:
             team_id=team_id,
             license_id=license_id,
             attribution=attribution,
+            **unlock_pricing_kwargs(visibility, price, price_currency),
         )
 
         return dump_json(format_asset_summary(post))
@@ -126,7 +136,13 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="Local .md/.markdown file with replacement body"),
         ] = None,
-        visibility: Annotated[Optional[str], Field(description='"public" | "private" | "organization"')] = None,
+        visibility: Annotated[
+            Optional[str], Field(description='"public" | "private" | "organization" | "monetized"')
+        ] = None,
+        price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
+        price_currency: Annotated[
+            Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
+        ] = None,
         description: Annotated[Optional[str], Field(description="New description/subtitle")] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
@@ -160,6 +176,7 @@ def register(mcp: FastMCP) -> None:
                 license_id=license_id,
                 attribution=attribution,
             ),
+            **unlock_pricing_kwargs(visibility, price, price_currency),
         )
 
         return dump_json(format_asset_summary(post))

@@ -7,7 +7,7 @@ import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from ouro.models import AssetRef, AssetTag, Connection, DatasetColumn
@@ -1286,6 +1286,67 @@ def is_absent_optional(value: Any) -> bool:
 def optional_kwargs(**kw: Any) -> dict:
     """Build a kwargs dict, dropping any keys whose value is None."""
     return {k: v for k, v in kw.items() if v is not None}
+
+
+PRICE_CURRENCY_DESC = (
+    'Currency for the price: "usd" (price in dollars) or "btc" (price in sats). '
+    "Defaults to usd."
+)
+UNLOCK_PRICE_DESC = (
+    'One-time unlock price in price_currency units. Required when visibility is "monetized".'
+)
+UNIT_COST_DESC = (
+    'Price per call in price_currency units. Required when visibility is "monetized".'
+)
+
+
+def _pricing_kwargs(visibility: Optional[str], monetization: str, **prices: Any) -> dict:
+    """Monetization fields implied by ``visibility``, plus any explicit prices.
+
+    "monetized" applies ``monetization``; any other visibility makes the asset
+    free again. Omitting visibility leaves the monetization model unchanged.
+    """
+    fields = optional_kwargs(**prices)
+    if visibility == "monetized":
+        fields["monetization"] = monetization
+    elif visibility is not None:
+        fields["monetization"] = "none"
+    return fields
+
+
+def unlock_pricing_kwargs(
+    visibility: Optional[str],
+    price: Optional[float],
+    price_currency: Optional[str],
+) -> dict:
+    """SDK kwargs for a pay-to-unlock asset (post, file, dataset)."""
+    if visibility == "monetized" and price is None:
+        raise ValueError('visibility "monetized" requires price.')
+    return _pricing_kwargs(
+        visibility, "pay-to-unlock", price=price, price_currency=price_currency
+    )
+
+
+def per_use_pricing_kwargs(
+    visibility: Optional[str],
+    unit_cost: Optional[float],
+    price_currency: Optional[str],
+    cost_unit: Optional[str],
+) -> dict:
+    """SDK kwargs for a fixed-price pay-per-use route."""
+    if visibility == "monetized" and unit_cost is None:
+        raise ValueError('visibility "monetized" requires unit_cost.')
+    fields = _pricing_kwargs(
+        visibility,
+        "pay-per-use",
+        unit_cost=unit_cost,
+        price_currency=price_currency,
+        cost_unit=cost_unit,
+    )
+    if visibility == "monetized":
+        fields["cost_accounting"] = "fixed"
+        fields.setdefault("cost_unit", "call")
+    return fields
 
 
 def present_kwargs(**kw: Any) -> dict:

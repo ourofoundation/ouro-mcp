@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional
 
 import pandas as pd
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Dataset, ResolvedRef
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    PRICE_CURRENCY_DESC,
+    UNLOCK_PRICE_DESC,
     dump_json,
     enum_columns_from_schema,
     format_asset_summary,
@@ -22,6 +24,7 @@ from ouro_mcp.utils import (
     refs_from_schema,
     render_markdown_list,
     resolve_local_path,
+    unlock_pricing_kwargs,
     slim_connection_graph,
     slim_dataset_schema,
     truncate_response,
@@ -614,8 +617,12 @@ def register(mcp: FastMCP) -> None:
             Field(description="Local file path (.csv, .json, .jsonl, .parquet)"),
         ] = None,
         visibility: Annotated[
-            str, Field(description='"public" | "private" | "organization"')
+            str, Field(description='"public" | "private" | "organization" | "monetized"')
         ] = "private",
+        price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
+        price_currency: Annotated[
+            Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
+        ] = None,
         description: Annotated[Optional[str], Field(description="Dataset description")] = None,
         refs: Annotated[
             Optional[str | dict[str, Any]],
@@ -702,6 +709,7 @@ def register(mcp: FastMCP) -> None:
                 refs=declared_refs,
                 enum_columns=declared_enum_columns,
             ),
+            **unlock_pricing_kwargs(visibility, price, price_currency),
         )
 
         result = format_asset_summary(dataset)
@@ -749,7 +757,11 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         name: Annotated[Optional[str], Field(description="New name")] = None,
         visibility: Annotated[
-            Optional[str], Field(description='"public" | "private" | "organization"')
+            Optional[str], Field(description='"public" | "private" | "organization" | "monetized"')
+        ] = None,
+        price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
+        price_currency: Annotated[
+            Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
         ] = None,
         data: Annotated[
             Optional[str | list[dict[str, Any]]],
@@ -835,6 +847,7 @@ def register(mcp: FastMCP) -> None:
                 refs=declared_refs,
                 enum_columns=declared_enum_columns,
             ),
+            **unlock_pricing_kwargs(visibility, price, price_currency),
         )
 
         result = format_asset_summary(dataset)
