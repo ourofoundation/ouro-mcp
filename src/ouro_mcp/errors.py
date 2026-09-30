@@ -254,6 +254,19 @@ def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
         if "column" in detail.lower() and "does not exist" in detail.lower():
             payload = _attach_sql_diagnostics(payload, e, message=detail)
         return json.dumps(payload)
+    if isinstance(e, APIStatusError):
+        # e.g. 402 payment refusals (recipient_verification_required, monthly_cap)
+        body = getattr(e, "body", None)
+        body_obj = body if isinstance(body, dict) else {}
+        error_obj = _server_error_object(e) or {}
+        payload = _base_error_payload(
+            error_obj.get("code") or body_obj.get("code") or "api_error",
+            _server_detail(e) or raw,
+            status=_status_code(e),
+        )
+        if "shortfall_cents" in body_obj:
+            payload["shortfall_cents"] = body_obj["shortfall_cents"]
+        return json.dumps(payload)
     if isinstance(e, ExternalServiceError):
         payload = _base_error_payload(
             "external_service_error",

@@ -4,6 +4,7 @@ import json
 
 import httpx
 from ouro import (
+    APIStatusError,
     BadRequestError,
     ExternalServiceError,
     InternalServerError,
@@ -83,6 +84,40 @@ def test_external_service_error_is_actionable() -> None:
     assert payload["status"] == 503
     assert payload["retryable"] is True
     assert payload["action_id"] == "00000000-0000-0000-0000-000000000001"
+
+
+def test_payment_refusal_preserves_code() -> None:
+    message = "The seller has reached the earnings limit for unverified accounts."
+    body = {"error": message, "code": "recipient_verification_required"}
+    error = APIStatusError(message, response=_response(402, body), body=body)
+
+    payload = json.loads(_format_ouro_error(error))
+
+    assert payload == {
+        "error": "recipient_verification_required",
+        "message": message,
+        "status": 402,
+        "retryable": False,
+    }
+
+
+def test_route_payment_refusal_preserves_nested_code() -> None:
+    body = {
+        "data": None,
+        "error": {
+            "message": "This route is priced in USD. Insufficient balance.",
+            "code": "insufficient_balance",
+            "status": 402,
+        },
+    }
+    error = APIStatusError("Payment required", response=_response(402, body), body=body)
+
+    payload = json.loads(_format_ouro_error(error))
+
+    assert payload["error"] == "insufficient_balance"
+    assert payload["message"] == "This route is priced in USD. Insufficient balance."
+    assert payload["status"] == 402
+    assert payload["retryable"] is False
 
 
 def test_bad_request_column_missing_is_actionable_and_non_retryable() -> None:
