@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 from copy import deepcopy
@@ -1200,16 +1201,54 @@ def _format_compact_number(value: Any) -> str:
     return str(value)
 
 
+def _format_usd_rate(value: Any) -> str:
+    """Dollars, keeping sub-cent precision for per-second rates ($0.0005)."""
+    amount = float(value)
+    if 0 < amount < 0.01:
+        return f"${amount:.8f}".rstrip("0")
+    return f"${amount:.2f}"
+
+
+def runtime_max_charge(unit_cost: Any, max_seconds: Any, currency: str) -> float:
+    """Most one runtime-priced run can cost (dollars or sats), rounded up like the hold."""
+    rate = float(unit_cost)
+    seconds = float(max_seconds)
+    if str(currency).lower() == "usd":
+        return math.ceil(round(rate * 100 * seconds, 6)) / 100
+    return float(math.ceil(round(rate * seconds, 6)))
+
+
 def format_pay_per_use_cost_summary(
     unit_cost: Any,
     cost_unit: str,
     currency: str,
+    cost_accounting: Optional[str] = None,
+    max_billable_seconds: Any = None,
 ) -> str:
     """Human-readable pay-per-use cost summary for agent-facing tools."""
     currency_upper = str(currency).upper()
     currency_lower = str(currency).lower()
+    if cost_accounting == "runtime":
+        # Per second of runtime, capped per run; the cap is held up front
+        if currency_lower == "usd":
+            rate = _format_usd_rate(unit_cost)
+        else:
+            rate = f"{_format_compact_number(unit_cost)} sats"
+        summary = f"{rate} per second of runtime"
+        if max_billable_seconds:
+            max_charge = runtime_max_charge(unit_cost, max_billable_seconds, currency_lower)
+            max_label = (
+                f"${max_charge:.2f}"
+                if currency_lower == "usd"
+                else f"{_format_compact_number(int(max_charge))} sats"
+            )
+            summary += (
+                f", up to {max_label} per run (max {int(max_billable_seconds)}s; "
+                "that much, or what you can afford, is held until the run finishes)"
+            )
+        return f"{summary} ({currency_upper})"
     if currency_lower == "usd":
-        return f"${unit_cost:.2f} per {cost_unit} (USD)"
+        return f"{_format_usd_rate(unit_cost)} per {cost_unit} (USD)"
     if currency_lower == "btc":
         return f"{_format_compact_number(unit_cost)} sats per {cost_unit} (BTC)"
     return f"{_format_compact_number(unit_cost)} per {cost_unit} ({currency_upper})"
@@ -1250,12 +1289,18 @@ def format_monetization_block(asset: Any) -> dict[str, Any]:
         cost_unit = _getv(asset, "cost_unit") or "call"
         block["unit_cost"] = unit_cost
         block["cost_unit"] = cost_unit
-        block["cost_accounting"] = _getv(asset, "cost_accounting")
+        cost_accounting = _getv(asset, "cost_accounting")
+        max_billable_seconds = _getv(asset, "max_billable_seconds")
+        block["cost_accounting"] = cost_accounting
+        if cost_accounting == "runtime":
+            block["max_billable_seconds"] = max_billable_seconds
         if unit_cost is not None:
             block["cost_summary"] = format_pay_per_use_cost_summary(
                 unit_cost,
                 cost_unit,
                 currency,
+                cost_accounting,
+                max_billable_seconds,
             )
     else:
         # pay-to-unlock and any other one-time-price monetization.
@@ -1296,7 +1341,19 @@ UNLOCK_PRICE_DESC = (
     'One-time unlock price in price_currency units. Required when visibility is "monetized".'
 )
 UNIT_COST_DESC = (
-    'Price per call in price_currency units. Required when visibility is "monetized".'
+    "Price per call (or per second with pricing=\"per_second\") in price_currency "
+    'units. Required when visibility is "monetized".'
+)
+ROUTE_PRICING_DESC = (
+    '"per_call" charges unit_cost each run. "per_second" charges unit_cost per second '
+    "the service runs (from dispatch to completion), capped at max_billable_seconds; "
+    "each call holds the max (or what the caller can afford) and charges the seconds "
+    "used; failed runs are free. The service gets the call's budget in the "
+    "ouro-max-billable-seconds header. Suits long jobs of unknown length (e.g. GPU "
+    "work on Modal)."
+)
+MAX_BILLABLE_SECONDS_DESC = (
+    'Most seconds one run can be billed (1-86400). Required with pricing="per_second".'
 )
 
 
@@ -1332,10 +1389,22 @@ def per_use_pricing_kwargs(
     unit_cost: Optional[float],
     price_currency: Optional[str],
     cost_unit: Optional[str],
+    pricing: Optional[str] = None,
+    max_billable_seconds: Optional[int] = None,
+    default_pricing: Optional[str] = "per_call",
 ) -> dict:
-    """SDK kwargs for a fixed-price pay-per-use route."""
+    """SDK kwargs for a pay-per-use route, per call or per second of runtime.
+
+    ``pricing`` picks the model; when omitted, a newly monetized route uses
+    ``default_pricing``. Updates pass ``default_pricing=None`` so re-sending
+    visibility doesn't reset a per-second route to per-call.
+    """
     if visibility == "monetized" and unit_cost is None:
         raise ValueError('visibility "monetized" requires unit_cost.')
+    if pricing not in (None, "per_call", "per_second"):
+        raise ValueError('pricing must be "per_call" or "per_second".')
+    if pricing == "per_second" and max_billable_seconds is None:
+        raise ValueError('pricing "per_second" requires max_billable_seconds.')
     fields = _pricing_kwargs(
         visibility,
         "pay-per-use",
@@ -1343,9 +1412,17 @@ def per_use_pricing_kwargs(
         price_currency=price_currency,
         cost_unit=cost_unit,
     )
-    if visibility == "monetized":
+    model = pricing or (default_pricing if visibility == "monetized" else None)
+    if model == "per_second":
+        fields["cost_accounting"] = "runtime"
+        fields["cost_unit"] = "seconds"
+        fields["max_billable_seconds"] = max_billable_seconds
+    elif model == "per_call":
         fields["cost_accounting"] = "fixed"
         fields.setdefault("cost_unit", "call")
+    elif max_billable_seconds is not None:
+        # Adjusting the cap of an existing per-second route
+        fields["max_billable_seconds"] = max_billable_seconds
     return fields
 
 

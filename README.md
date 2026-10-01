@@ -96,7 +96,9 @@ provided, Ouro uses the account's global organization and its catch-all team.
 
 Assets can be public, private, or monetized. To sell a post, file, or dataset, pass
 `visibility="monetized"` with a one-time `price`; to charge per route call, pass it with a
-`unit_cost`. Set `price_currency` to `"usd"` (dollars) or `"btc"` (sats). Any other visibility
+`unit_cost`. To charge per second of runtime instead, also pass `pricing="per_second"` and
+`max_billable_seconds` (the most one run can be billed). Set `price_currency` to `"usd"`
+(dollars) or `"btc"` (sats). Any other visibility
 makes the asset free again. Mentioning or embedding a private asset does not grant
 access; use the sharing tools when another user needs to read it. @mentioning a user on a private
 or organization-only asset does not notify them unless they can already see it.

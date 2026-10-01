@@ -12,7 +12,9 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    MAX_BILLABLE_SECONDS_DESC,
     PRICE_CURRENCY_DESC,
+    ROUTE_PRICING_DESC,
     UNIT_COST_DESC,
     dump_json,
     format_asset_summary,
@@ -195,12 +197,18 @@ def _format_route_cost_preview(route: Any) -> Optional[dict[str, Any]]:
         cost_unit = getattr(route, "cost_unit", None) or "call"
         preview["unit_cost"] = unit_cost
         preview["cost_unit"] = cost_unit
-        preview["cost_accounting"] = getattr(route, "cost_accounting", None)
+        cost_accounting = getattr(route, "cost_accounting", None)
+        max_billable_seconds = getattr(route, "max_billable_seconds", None)
+        preview["cost_accounting"] = cost_accounting
+        if cost_accounting == "runtime":
+            preview["max_billable_seconds"] = max_billable_seconds
         if unit_cost is not None:
             preview["cost_summary"] = format_pay_per_use_cost_summary(
                 unit_cost,
                 cost_unit,
                 currency,
+                cost_accounting,
+                max_billable_seconds,
             )
     else:
         price = getattr(route, "price", None)
@@ -853,6 +861,13 @@ def register(mcp: FastMCP) -> None:
         cost_unit: Annotated[
             Optional[str], Field(description='What one charge covers; defaults to "call"')
         ] = None,
+        pricing: Annotated[
+            Optional[Literal["per_call", "per_second"]],
+            Field(description=ROUTE_PRICING_DESC),
+        ] = None,
+        max_billable_seconds: Annotated[
+            Optional[int], Field(description=MAX_BILLABLE_SECONDS_DESC)
+        ] = None,
         parameters: Annotated[
             Optional[Any],
             Field(description="OpenAPI-style parameters as a JSON array (object or string)"),
@@ -891,7 +906,8 @@ def register(mcp: FastMCP) -> None:
         default to the parent service's values.
 
         To charge per call, set visibility="monetized" with unit_cost and
-        price_currency.
+        price_currency. To charge per second of runtime (long jobs of unknown
+        length), also pass pricing="per_second" and max_billable_seconds.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -911,7 +927,14 @@ def register(mcp: FastMCP) -> None:
                 license_id=license_id,
                 attribution=attribution,
             ),
-            **per_use_pricing_kwargs(visibility, unit_cost, price_currency, cost_unit),
+            **per_use_pricing_kwargs(
+                visibility,
+                unit_cost,
+                price_currency,
+                cost_unit,
+                pricing,
+                max_billable_seconds,
+            ),
         )
 
         return dump_json(format_asset_summary(route))
@@ -935,6 +958,13 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         cost_unit: Annotated[
             Optional[str], Field(description='What one charge covers; defaults to "call"')
+        ] = None,
+        pricing: Annotated[
+            Optional[Literal["per_call", "per_second"]],
+            Field(description=ROUTE_PRICING_DESC),
+        ] = None,
+        max_billable_seconds: Annotated[
+            Optional[int], Field(description=MAX_BILLABLE_SECONDS_DESC)
         ] = None,
         parameters: Annotated[
             Optional[Any], Field(description="Parameters as a JSON array (object or string)")
@@ -980,7 +1010,16 @@ def register(mcp: FastMCP) -> None:
                 license_id=license_id,
                 attribution=attribution,
             ),
-            **per_use_pricing_kwargs(visibility, unit_cost, price_currency, cost_unit),
+            **per_use_pricing_kwargs(
+                visibility,
+                unit_cost,
+                price_currency,
+                cost_unit,
+                pricing,
+                max_billable_seconds,
+                # Re-sending visibility keeps the route's pricing model
+                default_pricing=None,
+            ),
         )
 
         return dump_json(format_asset_summary(route))
