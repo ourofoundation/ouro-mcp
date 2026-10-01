@@ -165,6 +165,24 @@ def test_route_output_assets_summary_prefers_plural_declarations() -> None:
     }
 
 
+def test_route_output_assets_summary_keeps_optional_and_embedding() -> None:
+    declarations = {
+        "report": {"asset_type": "post", "primary": True, "optional": True},
+        "candidate_cifs": {
+            "asset_type": "file",
+            "file_extensions": ["zip"],
+            "contains_file_extensions": ["cif"],
+            "optional": True,
+            "embedded_in": "report",
+        },
+    }
+    route = SimpleNamespace(
+        output_type="post", output_assets=declarations, output_file_extension=None
+    )
+
+    assert route_output_assets_summary(route) == declarations
+
+
 def test_route_output_assets_summary_synthesizes_legacy_output_type() -> None:
     route = SimpleNamespace(
         output_type="post",

@@ -1670,6 +1670,12 @@ def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
                 or config.get("fileExtensions")
                 or config.get("output_file_extensions")
                 or config.get("outputFileExtensions"),
+                contains_file_extensions=config.get("contains_file_extensions")
+                or config.get("containsFileExtensions"),
+                # Not every run produces this output
+                optional=config.get("optional"),
+                # Delivered inside another output (a post) rather than on its own
+                embedded_in=config.get("embedded_in") or config.get("embeddedIn"),
             )
 
     output_type = _getv(route, "output_type")
