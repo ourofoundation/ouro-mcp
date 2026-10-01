@@ -1265,6 +1265,86 @@ def format_one_time_cost_summary(price: Any, currency: str) -> str:
     return f"{_format_compact_number(price)} {currency_upper}"
 
 
+def _amount_label(amount: Any, currency: str, *, rate: bool = False) -> str:
+    """One amount in its currency: "$0.05" / "50 sats" (rates keep sub-cent USD)."""
+    if currency == "usd":
+        return _format_usd_rate(amount) if rate else f"${float(amount):.2f}"
+    return f"{_format_compact_number(amount)} sats"
+
+
+def format_dual_cost_summary(
+    prices: list[tuple[str, Any]],
+    cost_unit: Optional[str] = None,
+    cost_accounting: Optional[str] = None,
+    max_billable_seconds: Any = None,
+) -> str:
+    """Cost of something sold in both currencies, e.g. "$0.05 or 50 sats per call".
+
+    ``prices`` is (currency, amount) pairs, primary currency first. Without
+    ``cost_unit`` the amounts are one-time prices.
+    """
+    if cost_unit is None:
+        return " or ".join(_amount_label(amount, cur) for cur, amount in prices)
+    rates = " or ".join(_amount_label(amount, cur, rate=True) for cur, amount in prices)
+    if cost_accounting != "runtime":
+        return f"{rates} per {cost_unit}"
+    summary = f"{rates} per second of runtime"
+    if max_billable_seconds:
+        caps = " or ".join(
+            _amount_label(
+                runtime_max_charge(amount, max_billable_seconds, cur)
+                if cur == "usd"
+                else int(runtime_max_charge(amount, max_billable_seconds, cur)),
+                cur,
+            )
+            for cur, amount in prices
+        )
+        summary += (
+            f", up to {caps} per run (max {int(max_billable_seconds)}s; "
+            "that much, or what you can afford, is held until the run finishes)"
+        )
+    return summary
+
+
+def dual_price_fields(
+    asset: Any,
+    kind: str,
+    cost_unit: Optional[str] = None,
+    cost_accounting: Optional[str] = None,
+    max_billable_seconds: Any = None,
+) -> dict[str, Any]:
+    """Fields for an asset sold in both currencies; empty when it's sold in one.
+
+    ``kind`` is "price" (one-time unlock) or "unit_cost" (pay-per-use, with
+    its ``cost_unit``). The primary currency (``price_currency``) is listed
+    first: that is what's charged when the buyer doesn't pick.
+    """
+    amounts = {
+        "usd": _getv(asset, f"{kind}_usd"),
+        "btc": _getv(asset, f"{kind}_sats"),
+    }
+    if not all(amount is not None and float(amount) > 0 for amount in amounts.values()):
+        return {}
+    primary = str(_getv(asset, "price_currency") or "usd").lower()
+    primary = primary if primary in amounts else "usd"
+    other = "btc" if primary == "usd" else "usd"
+    summary = format_dual_cost_summary(
+        [(primary, amounts[primary]), (other, amounts[other])],
+        cost_unit,
+        cost_accounting,
+        max_billable_seconds,
+    )
+    return {
+        f"{kind}_usd": amounts["usd"],
+        f"{kind}_sats": amounts["btc"],
+        "currencies": [primary, other],
+        "cost_summary": (
+            f"{summary}. Sold in both currencies: pass currency to pick, "
+            f"otherwise {primary.upper()} is charged."
+        ),
+    }
+
+
 def format_monetization_block(asset: Any) -> dict[str, Any]:
     """Build the monetization fields for an asset (free or paid).
 
@@ -1302,12 +1382,18 @@ def format_monetization_block(asset: Any) -> dict[str, Any]:
                 cost_accounting,
                 max_billable_seconds,
             )
+        block.update(
+            dual_price_fields(
+                asset, "unit_cost", cost_unit, cost_accounting, max_billable_seconds
+            )
+        )
     else:
         # pay-to-unlock and any other one-time-price monetization.
         price = _getv(asset, "price")
         block["price"] = price
         if price is not None:
             block["cost_summary"] = format_one_time_cost_summary(price, currency)
+        block.update(dual_price_fields(asset, "price"))
 
     return {k: v for k, v in block.items() if v is not None}
 
@@ -1335,14 +1421,32 @@ def optional_kwargs(**kw: Any) -> dict:
 
 PRICE_CURRENCY_DESC = (
     'Currency for the price: "usd" (price in dollars) or "btc" (price in sats). '
-    "Defaults to usd."
+    "Defaults to usd. For an asset sold in both currencies, the one charged when "
+    "the buyer doesn't pick."
+)
+PRICE_USD_DESC = (
+    "One-time unlock price in dollars. Give with price_sats to sell in both "
+    "currencies (the buyer picks); 0 stops selling in USD."
+)
+PRICE_SATS_DESC = (
+    "One-time unlock price in whole sats. Give with price_usd to sell in both "
+    "currencies (the buyer picks); 0 stops selling in Bitcoin."
+)
+UNIT_COST_USD_DESC = (
+    "Price per call (or per second) in dollars. Give with unit_cost_sats to sell "
+    "in both currencies (the caller picks); 0 stops selling in USD."
+)
+UNIT_COST_SATS_DESC = (
+    "Price per call (or per second) in sats. Give with unit_cost_usd to sell in "
+    "both currencies (the caller picks); 0 stops selling in Bitcoin."
 )
 UNLOCK_PRICE_DESC = (
-    'One-time unlock price in price_currency units. Required when visibility is "monetized".'
+    "One-time unlock price in price_currency units. A monetized asset needs this, "
+    "or price_usd / price_sats."
 )
 UNIT_COST_DESC = (
     "Price per call (or per second with pricing=\"per_second\") in price_currency "
-    'units. Required when visibility is "monetized".'
+    "units. A monetized route needs this, or unit_cost_usd / unit_cost_sats."
 )
 ROUTE_PRICING_DESC = (
     '"per_call" charges unit_cost each run. "per_second" charges unit_cost per second '
@@ -1371,16 +1475,46 @@ def _pricing_kwargs(visibility: Optional[str], monetization: str, **prices: Any)
     return fields
 
 
+def _check_price_inputs(
+    visibility: Optional[str],
+    name: str,
+    single: Optional[float],
+    usd: Optional[float],
+    sats: Optional[float],
+) -> None:
+    """A price is given one way: ``name`` + price_currency, or per currency."""
+    if single is not None and (usd is not None or sats is not None):
+        raise ValueError(
+            f"Give either {name} with price_currency, or {name}_usd / {name}_sats, not both."
+        )
+    if visibility == "monetized" and not any(
+        amount is not None and amount > 0 for amount in (single, usd, sats)
+    ):
+        raise ValueError(
+            f'visibility "monetized" requires {name} (or {name}_usd / {name}_sats).'
+        )
+
+
 def unlock_pricing_kwargs(
     visibility: Optional[str],
     price: Optional[float],
     price_currency: Optional[str],
+    price_usd: Optional[float] = None,
+    price_sats: Optional[int] = None,
 ) -> dict:
-    """SDK kwargs for a pay-to-unlock asset (post, file, dataset)."""
-    if visibility == "monetized" and price is None:
-        raise ValueError('visibility "monetized" requires price.')
+    """SDK kwargs for a pay-to-unlock asset (post, file, dataset).
+
+    ``price`` + ``price_currency`` sets a single price; ``price_usd`` and
+    ``price_sats`` price the asset per currency (both = the buyer picks).
+    """
+    _check_price_inputs(visibility, "price", price, price_usd, price_sats)
     return _pricing_kwargs(
-        visibility, "pay-to-unlock", price=price, price_currency=price_currency
+        visibility,
+        "pay-to-unlock",
+        price=price,
+        price_currency=price_currency,
+        price_usd=price_usd,
+        price_sats=price_sats,
     )
 
 
@@ -1392,6 +1526,8 @@ def per_use_pricing_kwargs(
     pricing: Optional[str] = None,
     max_billable_seconds: Optional[int] = None,
     default_pricing: Optional[str] = "per_call",
+    unit_cost_usd: Optional[float] = None,
+    unit_cost_sats: Optional[float] = None,
 ) -> dict:
     """SDK kwargs for a pay-per-use route, per call or per second of runtime.
 
@@ -1399,8 +1535,7 @@ def per_use_pricing_kwargs(
     ``default_pricing``. Updates pass ``default_pricing=None`` so re-sending
     visibility doesn't reset a per-second route to per-call.
     """
-    if visibility == "monetized" and unit_cost is None:
-        raise ValueError('visibility "monetized" requires unit_cost.')
+    _check_price_inputs(visibility, "unit_cost", unit_cost, unit_cost_usd, unit_cost_sats)
     if pricing not in (None, "per_call", "per_second"):
         raise ValueError('pricing must be "per_call" or "per_second".')
     if pricing == "per_second" and max_billable_seconds is None:
@@ -1409,6 +1544,8 @@ def per_use_pricing_kwargs(
         visibility,
         "pay-per-use",
         unit_cost=unit_cost,
+        unit_cost_usd=unit_cost_usd,
+        unit_cost_sats=unit_cost_sats,
         price_currency=price_currency,
         cost_unit=cost_unit,
     )

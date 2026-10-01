@@ -10,6 +10,8 @@ from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     PRICE_CURRENCY_DESC,
+    PRICE_SATS_DESC,
+    PRICE_USD_DESC,
     UNLOCK_PRICE_DESC,
     content_from_markdown,
     dump_json,
@@ -73,6 +75,8 @@ def register(mcp: FastMCP) -> None:
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
         ] = None,
+        price_usd: Annotated[Optional[float], Field(description=PRICE_USD_DESC)] = None,
+        price_sats: Annotated[Optional[int], Field(description=PRICE_SATS_DESC)] = None,
         description: Annotated[Optional[str], Field(description="Short description/subtitle")] = None,
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
         attribution: Annotated[
@@ -117,7 +121,9 @@ def register(mcp: FastMCP) -> None:
             team_id=team_id,
             license_id=license_id,
             attribution=attribution,
-            **unlock_pricing_kwargs(visibility, price, price_currency),
+            **unlock_pricing_kwargs(
+                visibility, price, price_currency, price_usd, price_sats
+            ),
         )
 
         return dump_json(format_asset_summary(post))
@@ -143,6 +149,8 @@ def register(mcp: FastMCP) -> None:
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
         ] = None,
+        price_usd: Annotated[Optional[float], Field(description=PRICE_USD_DESC)] = None,
+        price_sats: Annotated[Optional[int], Field(description=PRICE_SATS_DESC)] = None,
         description: Annotated[Optional[str], Field(description="New description/subtitle")] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
@@ -176,7 +184,9 @@ def register(mcp: FastMCP) -> None:
                 license_id=license_id,
                 attribution=attribution,
             ),
-            **unlock_pricing_kwargs(visibility, price, price_currency),
+            **unlock_pricing_kwargs(
+                visibility, price, price_currency, price_usd, price_sats
+            ),
         )
 
         return dump_json(format_asset_summary(post))

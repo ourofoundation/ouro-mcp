@@ -14,11 +14,14 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     MAX_BILLABLE_SECONDS_DESC,
     PRICE_CURRENCY_DESC,
+    UNIT_COST_SATS_DESC,
+    UNIT_COST_USD_DESC,
     ROUTE_PRICING_DESC,
     UNIT_COST_DESC,
     dump_json,
     format_asset_summary,
     format_one_time_cost_summary,
+    dual_price_fields,
     format_pay_per_use_cost_summary,
     markdown_bullet,
     markdown_id,
@@ -175,7 +178,9 @@ def _error_details(response: Any) -> Any:
     return None if covered else response
 
 
-def _format_route_cost_preview(route: Any) -> Optional[dict[str, Any]]:
+def _format_route_cost_preview(
+    route: Any, currency: Optional[str] = None
+) -> Optional[dict[str, Any]]:
     """Build a `cost_preview` block for an upcoming route execution.
 
     Returns None for free routes. For monetized routes, surfaces the
@@ -186,6 +191,7 @@ def _format_route_cost_preview(route: Any) -> Optional[dict[str, Any]]:
     monetization = getattr(route, "monetization", None)
     if not monetization or monetization == "none":
         return None
+    requested = currency
     currency = (getattr(route, "price_currency", None) or "usd").lower()
     preview: dict[str, Any] = {
         "monetization": monetization,
@@ -210,6 +216,13 @@ def _format_route_cost_preview(route: Any) -> Optional[dict[str, Any]]:
                 cost_accounting,
                 max_billable_seconds,
             )
+        # Sold in both currencies: show each price and which one this call pays
+        dual = dual_price_fields(
+            route, "unit_cost", cost_unit, cost_accounting, max_billable_seconds
+        )
+        if dual:
+            preview.update(dual)
+            preview["charge_currency"] = requested or currency
     else:
         price = getattr(route, "price", None)
         preview["price"] = price
@@ -858,6 +871,12 @@ def register(mcp: FastMCP) -> None:
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
         ] = None,
+        unit_cost_usd: Annotated[
+            Optional[float], Field(description=UNIT_COST_USD_DESC)
+        ] = None,
+        unit_cost_sats: Annotated[
+            Optional[float], Field(description=UNIT_COST_SATS_DESC)
+        ] = None,
         cost_unit: Annotated[
             Optional[str], Field(description='What one charge covers; defaults to "call"')
         ] = None,
@@ -908,6 +927,9 @@ def register(mcp: FastMCP) -> None:
         To charge per call, set visibility="monetized" with unit_cost and
         price_currency. To charge per second of runtime (long jobs of unknown
         length), also pass pricing="per_second" and max_billable_seconds.
+        To sell in both currencies, give unit_cost_usd and unit_cost_sats
+        instead of unit_cost; callers pick which to pay in, and price_currency
+        is what's charged when they don't.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -934,6 +956,8 @@ def register(mcp: FastMCP) -> None:
                 cost_unit,
                 pricing,
                 max_billable_seconds,
+                unit_cost_usd=unit_cost_usd,
+                unit_cost_sats=unit_cost_sats,
             ),
         )
 
@@ -955,6 +979,12 @@ def register(mcp: FastMCP) -> None:
         unit_cost: Annotated[Optional[float], Field(description=UNIT_COST_DESC)] = None,
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
+        ] = None,
+        unit_cost_usd: Annotated[
+            Optional[float], Field(description=UNIT_COST_USD_DESC)
+        ] = None,
+        unit_cost_sats: Annotated[
+            Optional[float], Field(description=UNIT_COST_SATS_DESC)
         ] = None,
         cost_unit: Annotated[
             Optional[str], Field(description='What one charge covers; defaults to "call"')
@@ -1019,6 +1049,8 @@ def register(mcp: FastMCP) -> None:
                 max_billable_seconds,
                 # Re-sending visibility keeps the route's pricing model
                 default_pricing=None,
+                unit_cost_usd=unit_cost_usd,
+                unit_cost_sats=unit_cost_sats,
             ),
         )
 
@@ -1060,6 +1092,17 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        currency: Annotated[
+            Optional[Literal["usd", "btc"]],
+            Field(
+                description=(
+                    "Currency to pay in on a paid route sold in both (see "
+                    "`currencies` on the route). Omit to pay in the route's "
+                    "price_currency. A currency the route isn't sold in is "
+                    "refused, never swapped for the other."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool,
             Field(description="Validate parameters without executing"),
@@ -1093,6 +1136,8 @@ def register(mcp: FastMCP) -> None:
         executing on a user's behalf, or use `dry_run=true` to get a
         `cost_preview` block in the response. Once the route runs, the
         returned `cost` block reports the actual charge.
+        A route sold in both USD and sats lists `currencies` (primary first);
+        pass `currency` to choose which wallet pays.
 
         Returns the completed action — data on success, error details on
         failure — plus `status`, `action_id`, and a `cost` block for
@@ -1157,7 +1202,7 @@ def register(mcp: FastMCP) -> None:
                     route_output_assets_summary(route.route) if route.route else None
                 ),
             }
-            cost_preview = _format_route_cost_preview(route)
+            cost_preview = _format_route_cost_preview(route, currency)
             if cost_preview:
                 dry_run_payload["cost_preview"] = cost_preview
             return dump_json(dry_run_payload)
@@ -1176,6 +1221,7 @@ def register(mcp: FastMCP) -> None:
                 # the SDK skip polling entirely.
                 poll_interval=5.0 if wait else None,
                 poll_timeout=float(timeout) if wait else None,
+                **optional_kwargs(currency=currency),
             )
         except TimeoutError as exc:
             action_id = getattr(exc, "action_id", None)

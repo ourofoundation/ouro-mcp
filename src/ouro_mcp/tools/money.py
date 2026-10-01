@@ -131,8 +131,9 @@ def register(mcp: FastMCP) -> None:
         caller permanent read access. Not reversible once the payment
         settles. Confirm the user actually intends to buy before calling.
 
-        Make sure the currency matches one the asset is priced in —
-        passing the wrong currency surfaces as a backend error.
+        An asset can be sold in both currencies, each at its own price
+        (`price_usd` / `price_sats`; `currencies` lists them on get_asset).
+        Pass one it is sold in; any other surfaces as a backend error.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         purchase = ouro.money.unlock_asset(

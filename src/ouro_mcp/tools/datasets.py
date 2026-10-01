@@ -13,6 +13,8 @@ from ouro.models import Dataset, ResolvedRef
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     PRICE_CURRENCY_DESC,
+    PRICE_SATS_DESC,
+    PRICE_USD_DESC,
     UNLOCK_PRICE_DESC,
     dump_json,
     enum_columns_from_schema,
@@ -623,6 +625,8 @@ def register(mcp: FastMCP) -> None:
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
         ] = None,
+        price_usd: Annotated[Optional[float], Field(description=PRICE_USD_DESC)] = None,
+        price_sats: Annotated[Optional[int], Field(description=PRICE_SATS_DESC)] = None,
         description: Annotated[Optional[str], Field(description="Dataset description")] = None,
         refs: Annotated[
             Optional[str | dict[str, Any]],
@@ -709,7 +713,9 @@ def register(mcp: FastMCP) -> None:
                 refs=declared_refs,
                 enum_columns=declared_enum_columns,
             ),
-            **unlock_pricing_kwargs(visibility, price, price_currency),
+            **unlock_pricing_kwargs(
+                visibility, price, price_currency, price_usd, price_sats
+            ),
         )
 
         result = format_asset_summary(dataset)
@@ -763,6 +769,8 @@ def register(mcp: FastMCP) -> None:
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
         ] = None,
+        price_usd: Annotated[Optional[float], Field(description=PRICE_USD_DESC)] = None,
+        price_sats: Annotated[Optional[int], Field(description=PRICE_SATS_DESC)] = None,
         data: Annotated[
             Optional[str | list[dict[str, Any]]],
             BeforeValidator(_coerce_data),
@@ -847,7 +855,9 @@ def register(mcp: FastMCP) -> None:
                 refs=declared_refs,
                 enum_columns=declared_enum_columns,
             ),
-            **unlock_pricing_kwargs(visibility, price, price_currency),
+            **unlock_pricing_kwargs(
+                visibility, price, price_currency, price_usd, price_sats
+            ),
         )
 
         result = format_asset_summary(dataset)

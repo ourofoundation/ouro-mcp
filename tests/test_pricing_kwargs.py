@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from ouro_mcp.utils import (
+    format_monetization_block,
     format_pay_per_use_cost_summary,
     per_use_pricing_kwargs,
     unlock_pricing_kwargs,
@@ -111,3 +112,126 @@ class TestRuntimeCostSummary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDualPricingKwargs(unittest.TestCase):
+    def test_unlock_price_per_currency(self) -> None:
+        self.assertEqual(
+            unlock_pricing_kwargs("monetized", None, None, 0.5, 500),
+            {"monetization": "pay-to-unlock", "price_usd": 0.5, "price_sats": 500},
+        )
+
+    def test_one_currency_is_enough_to_monetize(self) -> None:
+        self.assertEqual(
+            unlock_pricing_kwargs("monetized", None, None, price_sats=500),
+            {"monetization": "pay-to-unlock", "price_sats": 500},
+        )
+
+    def test_zero_stops_selling_in_a_currency(self) -> None:
+        self.assertEqual(unlock_pricing_kwargs(None, None, None, price_usd=0), {"price_usd": 0})
+
+    def test_single_and_per_currency_prices_dont_mix(self) -> None:
+        with self.assertRaises(ValueError):
+            unlock_pricing_kwargs("monetized", 0.5, "usd", price_sats=500)
+        with self.assertRaises(ValueError):
+            per_use_pricing_kwargs("monetized", 0.1, "usd", None, unit_cost_sats=100)
+
+    def test_monetized_needs_a_positive_price(self) -> None:
+        with self.assertRaises(ValueError):
+            unlock_pricing_kwargs("monetized", None, None, price_usd=0)
+
+    def test_route_price_per_currency(self) -> None:
+        self.assertEqual(
+            per_use_pricing_kwargs(
+                "monetized", None, "btc", None, unit_cost_usd=0.05, unit_cost_sats=50
+            ),
+            {
+                "monetization": "pay-per-use",
+                "unit_cost_usd": 0.05,
+                "unit_cost_sats": 50,
+                "price_currency": "btc",
+                "cost_accounting": "fixed",
+                "cost_unit": "call",
+            },
+        )
+
+
+class TestDualMonetizationBlock(unittest.TestCase):
+    def test_route_sold_in_both_lists_each_price_primary_first(self) -> None:
+        block = format_monetization_block(
+            {
+                "monetization": "pay-per-use",
+                "price_currency": "btc",
+                "unit_cost": 50,
+                "unit_cost_usd": 0.05,
+                "unit_cost_sats": 50,
+                "cost_unit": "call",
+                "cost_accounting": "fixed",
+            }
+        )
+        self.assertEqual(block["currencies"], ["btc", "usd"])
+        self.assertEqual(block["unit_cost_usd"], 0.05)
+        self.assertEqual(block["unit_cost_sats"], 50)
+        self.assertEqual(
+            block["cost_summary"],
+            "50 sats or $0.05 per call. Sold in both currencies: pass currency "
+            "to pick, otherwise BTC is charged.",
+        )
+
+    def test_post_sold_in_both(self) -> None:
+        block = format_monetization_block(
+            {
+                "monetization": "pay-to-unlock",
+                "price_currency": "usd",
+                "price": 0.5,
+                "price_usd": 0.5,
+                "price_sats": 400,
+            }
+        )
+        self.assertEqual(block["currencies"], ["usd", "btc"])
+        self.assertEqual(
+            block["cost_summary"],
+            "$0.50 or 400 sats. Sold in both currencies: pass currency to pick, "
+            "otherwise USD is charged.",
+        )
+
+    def test_per_second_route_sold_in_both_states_the_hold_once(self) -> None:
+        block = format_monetization_block(
+            {
+                "monetization": "pay-per-use",
+                "price_currency": "btc",
+                "unit_cost": 2,
+                "unit_cost_usd": 0.0005,
+                "unit_cost_sats": 2,
+                "cost_unit": "seconds",
+                "cost_accounting": "runtime",
+                "max_billable_seconds": 60,
+            }
+        )
+        self.assertEqual(
+            block["cost_summary"],
+            "2 sats or $0.0005 per second of runtime, up to 120 sats or $0.03 "
+            "per run (max 60s; that much, or what you can afford, is held until "
+            "the run finishes). Sold in both currencies: pass currency to pick, "
+            "otherwise BTC is charged.",
+        )
+
+    def test_single_currency_asset_is_unchanged(self) -> None:
+        block = format_monetization_block(
+            {
+                "monetization": "pay-to-unlock",
+                "price_currency": "usd",
+                "price": 0.5,
+                "price_usd": 0.5,
+                "price_sats": None,
+            }
+        )
+        self.assertEqual(
+            block,
+            {
+                "monetization": "pay-to-unlock",
+                "price_currency": "usd",
+                "price": 0.5,
+                "cost_summary": "$0.50 (USD)",
+            },
+        )
