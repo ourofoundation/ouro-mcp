@@ -38,8 +38,43 @@ from ouro_mcp.utils import (
 log = logging.getLogger(__name__)
 
 # MCP clients abort requests after 60 s by default, discarding the action_id a
-# longer wait would have returned as "pending".
+# longer wait would have returned with the still-running action.
 DEFAULT_WAIT_S = 45
+
+ACTION_STATUSES = {"queued", "in-progress", "success", "error", "timed-out"}
+FINAL_ACTION_STATUSES = {"success", "error", "timed-out"}
+
+
+# Shown on `timed-out` actions: agents read the word as "probably done".
+TIMED_OUT_NOTE = (
+    "Ouro stopped waiting for this run after a long silence from the service. "
+    "It did not succeed: no result or outputs were recorded and any charge "
+    "was released. A late result will not be accepted; execute the route "
+    "again if you still need it."
+)
+
+
+def _parse_statuses(status: Optional[str]) -> list[str]:
+    """Split a comma-separated status filter, rejecting unknown statuses."""
+    statuses = [s.strip() for s in (status or "").split(",") if s.strip()]
+    invalid = sorted(set(statuses) - ACTION_STATUSES)
+    if invalid:
+        raise ValueError(
+            f"Invalid status {invalid}. Must be among: {sorted(ACTION_STATUSES)}."
+        )
+    return statuses
+
+
+def _pending_message(action_id: str, lead: str) -> str:
+    return (
+        f"{lead} The action is STILL RUNNING: it has not finished, succeeded, "
+        "or failed, and there is no result yet. Do not execute the route "
+        "again. Check on it with `get_action(action_id)` (wait=true blocks "
+        "up to `timeout`). If you have a shell with ouro-py installed and "
+        f"OURO_API_KEY set, run `ouro action wait {action_id}` as a background "
+        "command instead: it exits when the action finishes, so you are told "
+        "without polling."
+    )
 
 
 def _parse_json_param(value: Any, name: str) -> Optional[dict]:
@@ -317,10 +352,15 @@ def _format_action_result(
     is inlined under ``data`` / ``error``. Browse/poll paths (``get_action``)
     default to false; ``execute_route`` keeps the payload since it just ran.
     """
+    # `status` is always the action's own status; `finished` says whether
+    # there is a final outcome to act on yet.
     result: dict[str, Any] = {
         "status": action.status,
+        "finished": action.status in FINAL_ACTION_STATUSES,
         "action_id": str(action.id),
     }
+    if action.status == "timed-out":
+        result["note"] = TIMED_OUT_NOTE
     if route_id:
         result["route_id"] = route_id
         _attach_action_markdown(result, route_id, str(action.id))
@@ -1122,9 +1162,10 @@ def register(mcp: FastMCP) -> None:
             int,
             Field(
                 description=(
-                    "Max seconds to wait for async routes to complete before returning "
-                    "'pending' with the action_id. Keep it under your client's request "
-                    "timeout (usually 60 s). Ignored when wait=false."
+                    "Max seconds to wait for the route to complete before returning "
+                    "the still-running action (finished=false) with its action_id. "
+                    "Keep it under your client's request timeout (usually 60 s). "
+                    "Ignored when wait=false."
                 )
             ),
         ] = DEFAULT_WAIT_S,
@@ -1147,9 +1188,16 @@ def register(mcp: FastMCP) -> None:
         entries, one per named slot the route declared. Discriminate by
         `name` (the slot name from the route's input/output schema), not
         by position; `is_primary: true` marks the canonical entry for
-        legacy single-output routes. If the route doesn't complete within
-        `timeout`, returns `{status: "pending", action_id}`; call
-        `get_action(action_id)` later to check on it. Embed the route with
+        legacy single-output routes.
+
+        Always read `finished` before acting on the result. If the route
+        doesn't complete within `timeout`, the response has `finished: false`
+        with `status` "queued" or "in-progress" and the `action_id`: this
+        tool stopped waiting, the run did not stop. It has no result yet, so
+        call `get_action(action_id)` later rather than assuming an outcome or
+        executing again (`list_my_actions` finds it if you lose the id).
+        `status: "timed-out"` is different: a final failure where Ouro gave
+        up on a run that went silent. Embed the route with
         `displayConfig.actionId` to render the action inline in Ouro
         markdown.
 
@@ -1209,60 +1257,54 @@ def register(mcp: FastMCP) -> None:
 
         start = time.time()
 
-        try:
-            action = ouro.routes.execute(
-                route_id,
-                body=body_dict,
-                query=query_dict,
-                params=params_dict,
-                input_assets=input_assets_dict,
-                wait=wait,
-                # Pass timeout only when we're actually waiting; otherwise let
-                # the SDK skip polling entirely.
-                poll_interval=5.0 if wait else None,
-                poll_timeout=float(timeout) if wait else None,
-                **optional_kwargs(currency=currency),
-            )
-        except TimeoutError as exc:
-            action_id = getattr(exc, "action_id", None)
-            result = {
-                "status": "pending",
-                "action_id": action_id,
-                "route_id": str(route.id),
-                "route_name": route.name,
-                "execution_mode": execution_mode,
-                "p95_completion_ms": p95_completion_ms,
-                "message": (
-                    f"Route still executing after {timeout}s. "
-                    "Call `get_action(action_id)` to check status later, "
-                    "or retry with a larger `timeout=`."
-                ),
-            }
-            if action_id:
-                _attach_action_markdown(result, str(route.id), action_id)
-            return dump_json(result)
+        # Always take the action handle first, then wait on it from here. A
+        # request held open until the route finishes outlives the client's
+        # timeout on slow routes, and the action id is lost with it while the
+        # run carries on (and bills).
+        action = ouro.routes.execute(
+            route_id,
+            body=body_dict,
+            query=query_dict,
+            params=params_dict,
+            input_assets=input_assets_dict,
+            wait=False,
+            **optional_kwargs(currency=currency),
+        )
+        timed_out = False
+        if wait and action.is_pending:
+            try:
+                action = ouro.routes.poll_action(
+                    str(action.id),
+                    poll_interval=5.0,
+                    timeout=float(timeout),
+                    raise_on_error=False,
+                )
+            except TimeoutError:
+                timed_out = True
 
         duration = round(time.time() - start, 2)
 
-        # When wait=false we get an in-progress action back; surface it as a
-        # 'pending' result so the agent knows to call get_action later.
-        if not wait and action.is_pending:
+        # Still running: return the action_id so the agent can come back for it.
+        if action.is_pending:
             result = {
-                "status": "pending",
+                "status": action.status,
+                "finished": False,
                 "action_id": str(action.id),
-                "action_status": action.status,
                 "route_id": str(route.id),
                 "route_name": route.name,
                 "execution_mode": execution_mode,
                 "p95_completion_ms": p95_completion_ms,
-                "message": (
-                    "Route accepted; check progress with get_action(action_id)."
+                "message": _pending_message(
+                    str(action.id),
+                    f"Stopped waiting after {timeout}s."
+                    if timed_out
+                    else "Route accepted.",
                 ),
             }
             _attach_action_markdown(result, str(route.id), str(action.id))
             return dump_json(result)
 
-        # The sync execution envelope can contain a freshly synthesized action
+        # The execution envelope can contain a freshly synthesized action
         # before joined fields like `usage_record` are reloaded. Refresh once so
         # monetized route calls can include the same cost block as get_action().
         try:
@@ -1334,9 +1376,15 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Check the status of a route action (execute_route result).
 
-        Use this after `execute_route` returns `{status: "pending", action_id}`,
-        or to inspect a past action you want to reference / embed. Set
-        `wait=true` to block until the action reaches a terminal state.
+        Use this after `execute_route` returns `finished: false`, or to
+        inspect a past action you want to reference / embed. Set `wait=true`
+        to block until the action reaches a terminal state.
+
+        `finished` tells you whether there is an outcome yet. While it is
+        false (`status` "queued" or "in-progress") the run is still going,
+        even if a wait just ran out: call again later. `status` is final at
+        "success", "error", or "timed-out" (Ouro gave up on a silent run;
+        nothing was recorded or charged).
 
         By default returns status, route/action ids, compact input/output
         assets, embed_markdown, link_markdown, and cost — not the full response
@@ -1361,10 +1409,8 @@ def register(mcp: FastMCP) -> None:
                     route_id=str(action.route_id),
                     include_response=include_response,
                 )
-                snapshot["status"] = "pending"
-                snapshot["message"] = (
-                    f"Action still in progress after {timeout}s. "
-                    "Call `get_action` again later."
+                snapshot["message"] = _pending_message(
+                    action_id, f"Stopped waiting after {timeout}s."
                 )
                 if include_logs:
                     logs, _ = _fetch_action_logs(ouro, action_id, limit=log_limit)
@@ -1408,7 +1454,7 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(
                 description=(
-                    'Optional client-side filter: "queued" | "in-progress" | '
+                    'Comma-separated statuses to keep: "queued" | "in-progress" | '
                     '"success" | "error" | "timed-out"'
                 )
             ),
@@ -1440,15 +1486,9 @@ def register(mcp: FastMCP) -> None:
             include_other_users=include_other_users,
             limit=limit,
             offset=offset,
+            **optional_kwargs(status=_parse_statuses(status) or None),
         )
         actions = list(page)
-        if status:
-            allowed = {"queued", "in-progress", "success", "error", "timed-out"}
-            if status not in allowed:
-                raise ValueError(
-                    f"Invalid status={status!r}. Must be one of: {sorted(allowed)}."
-                )
-            actions = [action for action in actions if action.status == status]
 
         results = [
             _format_action_summary(action, include_response=include_response)
@@ -1469,6 +1509,63 @@ def register(mcp: FastMCP) -> None:
                     "Use embed_markdown for a block action receipt, or "
                     "link_markdown for an inline action link.",
                 ],
+            )
+        )
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True},
+    )
+    @handle_ouro_errors
+    def list_my_actions(
+        ctx: Context,
+        status: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    'Comma-separated statuses to keep: "queued" | "in-progress" | '
+                    '"success" | "error" | "timed-out". Pass "queued,in-progress" '
+                    "for everything still running. Omit for all."
+                )
+            ),
+        ] = None,
+        since: Annotated[
+            Optional[str],
+            Field(description="Only actions created at or after this ISO 8601 time"),
+        ] = None,
+        limit: Annotated[int, Field(description="Max actions to return (1-100)")] = 20,
+        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+    ) -> str:
+        """List your own route actions across every route, newest first.
+
+        Use this to find runs you started earlier — including ones still
+        running — when you no longer have the action_id or don't know which
+        route they were on. Follow up with `get_action(action_id)` for
+        outputs and cost.
+        """
+        if limit <= 0 or limit > 100:
+            raise ValueError("limit must be between 1 and 100.")
+        if offset < 0:
+            raise ValueError("offset must be non-negative.")
+        statuses = _parse_statuses(status)
+
+        ouro = ctx.request_context.lifespan_context.ouro
+        page = ouro.routes.list_my_actions(
+            status=statuses or None, since=since, limit=limit, offset=offset
+        )
+
+        return truncate_response(
+            render_markdown_list(
+                # One line per run: the inline link, not the block embed
+                [
+                    {k: v for k, v in _format_action_summary(action).items() if k != "embed_markdown"}
+                    for action in page
+                ],
+                line_fn=action_summary_line,
+                pagination=page_pagination(page),
+                offset=offset,
+                noun="actions",
+                empty_text="No actions.",
+                extras=[f"status: {', '.join(statuses)}"] if statuses else None,
             )
         )
 

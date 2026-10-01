@@ -125,7 +125,10 @@ redistribution before publishing third-party work.
   rows into chat.
 - Services: search_assets(asset_type="service") → get_asset(service_id) →
   get_asset(route_id, detail="full") for the input schema → execute_route (dry_run=true to
-  validate) → get_action for status and outputs.
+  validate) → get_action for status and outputs. A run that outlasts the wait comes back
+  with `finished: false` and keeps going: a wait running out is not an outcome. Don't assume
+  it succeeded or failed and don't execute it again; check get_action, and use
+  list_my_actions to find runs whose action_id you no longer have.
 - Quests: inspect with list_quest_items and use each item's exact contributor_keys in
   submit_quest_entry. Draft quests accept no entries until update_quest(status="open").
 """.strip()

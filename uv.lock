@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -790,7 +790,7 @@ wheels = [
 
 [[package]]
 name = "ouro-mcp"
-version = "0.9.4"
+version = "0.9.6"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
@@ -804,7 +804,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", specifier = ">=2.0.0" },
-    { name = "ouro-py", specifier = ">=2.1.4" },
+    { name = "ouro-py", specifier = ">=2.1.5" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "python-dotenv" },
@@ -812,7 +812,7 @@ requires-dist = [
 
 [[package]]
 name = "ouro-py"
-version = "2.1.4"
+version = "2.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -825,9 +825,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-socketio", extra = ["client"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/1f/c2e283cbd9ec72abae3adf48b37025201aa441a117f722ac902cd6bd266c/ouro_py-2.1.4.tar.gz", hash = "sha256:efbdb4425a433a5974957e7454a9492ff8908166fe0841a2c511b2890fb92944", size = 83666, upload-time = "2026-10-01T19:15:08.226Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/03/05659bf73c3f960366499ac39b944daefa72b26959e8b417e5e57dcfcd01/ouro_py-2.1.5.tar.gz", hash = "sha256:150c6b64dca45c75f0771d22df6adc4880c36fd4f38817eb9631884af56fea94", size = 87679, upload-time = "2026-10-01T22:13:29.347Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/1b/c5b20c6d19f5e2c1aae7ac615bb731309b72e2092ca0e5b68c050106c9a5/ouro_py-2.1.4-py3-none-any.whl", hash = "sha256:0d01f1596597ed4245f2c5b25616f4f244c0b1c40d7b126bc87534fbf6f7ca38", size = 107697, upload-time = "2026-10-01T19:15:06.607Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/cc/e6e7e95213a9d56b327738be62dba38f668068c6ef7e4094a1277ac0c48a/ouro_py-2.1.5-py3-none-any.whl", hash = "sha256:a695092d6245af397adcc0b402d9cde6a82cccb4e8a5f5b7a2e237840c19f851", size = 112216, upload-time = "2026-10-01T22:13:27.78Z" },
 ]
 
 [[package]]

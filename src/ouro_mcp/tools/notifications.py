@@ -66,6 +66,10 @@ def register(mcp: FastMCP) -> None:
             if text:
                 entry["text"] = text
 
+            # Lets an action-complete notification lead straight to get_action
+            if getattr(n, "action_id", None):
+                entry["action_id"] = str(n.action_id)
+
             if n.asset:
                 entry["asset"] = {
                     "id": str(n.asset.id),
@@ -91,6 +95,8 @@ def register(mcp: FastMCP) -> None:
                     f"asset: {asset.get('name')} ({asset.get('asset_type')}) "
                     f"id: `{asset.get('id')}`"
                 )
+            if row.get("action_id"):
+                body_bits.append(f"action_id: `{row['action_id']}`")
             return markdown_bullet(
                 str(row.get("type") or "notification"),
                 *parts,
