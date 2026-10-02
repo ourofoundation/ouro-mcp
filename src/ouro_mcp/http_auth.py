@@ -48,6 +48,9 @@ class _CachedClient:
 
 
 _api_key: ContextVar[str | None] = ContextVar("ouro_mcp_api_key", default=None)
+# Organization (and optional team) this request is pinned to, from the
+# X-Ouro-Org / X-Ouro-Team headers. Empty means unpinned.
+_pin: ContextVar[tuple[str, str]] = ContextVar("ouro_mcp_pin", default=("", ""))
 _clients: OrderedDict[str, _CachedClient] = OrderedDict()
 _clients_lock = threading.Lock()
 _http_mode = False
@@ -171,6 +174,16 @@ class OuroTokenVerifier:
         )
 
 
+def extract_pin(headers: Mapping[str, str] | None) -> tuple[str, str]:
+    """Organization and team a connection asked to be pinned to, if any."""
+    if not headers:
+        return ("", "")
+    lowered = {str(key).lower(): value for key, value in headers.items()}
+    organization = str(lowered.get("x-ouro-org") or "").strip()
+    team = str(lowered.get("x-ouro-team") or "").strip() if organization else ""
+    return (organization, team)
+
+
 class ApiKeyMiddleware:
     """Require a per-request credential and make it visible to tool threads."""
 
@@ -191,9 +204,11 @@ class ApiKeyMiddleware:
             )
 
         token = _api_key.set(key)
+        pin_token = _pin.set(extract_pin(headers))
         try:
             return await call_next(ctx)
         finally:
+            _pin.reset(pin_token)
             _api_key.reset(token)
 
 
@@ -210,20 +225,30 @@ def _client_for_request() -> Ouro:
         raise RuntimeError(
             "No credentials for this request. Send Authorization: Bearer <token>."
         )
-    return client_for_credential(key)
+    organization, team = _pin.get()
+    return client_for_credential(key, organization=organization, team=team)
 
 
-def client_for_credential(credential: str) -> Ouro:
-    """Cached client for a PAT or access token. Building one verifies it."""
+def client_for_credential(credential: str, organization: str = "", team: str = "") -> Ouro:
+    """Cached client for a PAT or access token. Building one verifies it.
+
+    ``organization`` pins the client (see ``Ouro(organization=...)``). The
+    server's own OURO_ORG_ID never applies here: it would pin every caller.
+    """
     now = time.time()
+    cache_key = f"{credential}\n{organization}\n{team}" if organization else credential
     with _clients_lock:
-        cached = _clients.get(credential)
+        cached = _clients.get(cache_key)
         if cached is not None and cached.valid_until > now:
-            _clients.move_to_end(credential)
+            _clients.move_to_end(cache_key)
             return cached.client
 
     claims = jwt_claims(credential)
-    kwargs: dict[str, str] = {"client": f"ouro-mcp/{__version__}"}
+    kwargs: dict[str, str] = {
+        "client": f"ouro-mcp/{__version__}",
+        "organization": organization,
+        "team": team,
+    }
     if claims is not None:
         kwargs["access_token"] = credential
     else:
@@ -239,8 +264,8 @@ def client_for_credential(credential: str) -> Ouro:
         valid_until = min(valid_until, exp)
 
     with _clients_lock:
-        _clients[credential] = _CachedClient(client=client, valid_until=valid_until)
-        _clients.move_to_end(credential)
+        _clients[cache_key] = _CachedClient(client=client, valid_until=valid_until)
+        _clients.move_to_end(cache_key)
         while len(_clients) > _MAX_CLIENTS:
             _clients.popitem(last=False)
     return client

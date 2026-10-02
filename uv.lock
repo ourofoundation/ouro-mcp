@@ -790,7 +790,7 @@ wheels = [
 
 [[package]]
 name = "ouro-mcp"
-version = "0.9.6"
+version = "0.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
@@ -804,7 +804,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", specifier = ">=2.0.0" },
-    { name = "ouro-py", specifier = ">=2.1.5" },
+    { name = "ouro-py", specifier = ">=2.2.0" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "python-dotenv" },

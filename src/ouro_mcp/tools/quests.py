@@ -10,6 +10,7 @@ from ouro.models import Entry, QuestItem, QuestLeaderboardRow
 from ouro.utils.content import description_to_markdown
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    resolve_location,
     content_from_markdown,
     dump_json,
     format_asset_summary,
@@ -235,9 +236,15 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_quest(
         name: Annotated[str, Field(description="Quest title")],
-        org_id: Annotated[str, Field(description="Organization UUID")],
-        team_id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
+        org_id: Annotated[
+            Optional[str],
+            Field(description="Organization UUID. Omit when the server is pinned to an organization"),
+        ] = None,
+        team_id: Annotated[
+            Optional[str],
+            Field(description="Team UUID. Omit to use the pinned organization's default team"),
+        ] = None,
         description_markdown: Annotated[
             Optional[str],
             Field(description="Quest description in extended markdown (same syntax as create_post)"),
@@ -258,7 +265,13 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
-        visibility: Annotated[str, Field(description='"public" | "private" | "organization"')] = "public",
+        visibility: Annotated[
+            Optional[str],
+            Field(
+                description='"public" | "private" | "organization". '
+                "Omit to follow the team: public in a public team, organization in an internal one"
+            ),
+        ] = None,
         type: Annotated[
             str,
             Field(
@@ -287,6 +300,7 @@ def register(mcp: FastMCP) -> None:
         contributor per item; continuous allows unlimited submissions per item.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+        org_id, team_id = resolve_location(ouro, org_id, team_id)
 
         description = None
         if description_markdown is not None:

@@ -128,6 +128,34 @@ class TestClientForCredential(unittest.TestCase):
         self.assertEqual(ouro.call_count, 2)
 
 
+    def test_pinned_clients_are_cached_per_organization(self) -> None:
+        with patch.object(http_auth, "Ouro", return_value=MagicMock()) as ouro:
+            client_for_credential("pat_1")
+            client_for_credential("pat_1", organization="org-a")
+            client_for_credential("pat_1", organization="org-a")
+            client_for_credential("pat_1", organization="org-b", team="team-1")
+        self.assertEqual(ouro.call_count, 3)
+        # Unpinned callers pass "" so the server's own OURO_ORG_ID never applies.
+        self.assertEqual(ouro.call_args_list[0].kwargs["organization"], "")
+        self.assertEqual(ouro.call_args_list[1].kwargs["organization"], "org-a")
+        self.assertEqual(ouro.call_args_list[2].kwargs["team"], "team-1")
+
+
+class TestExtractPin(unittest.TestCase):
+    def test_no_headers_is_unpinned(self) -> None:
+        self.assertEqual(http_auth.extract_pin(None), ("", ""))
+        self.assertEqual(http_auth.extract_pin({"Authorization": "Bearer x"}), ("", ""))
+
+    def test_org_and_team_headers(self) -> None:
+        self.assertEqual(
+            http_auth.extract_pin({"X-Ouro-Org": " acme ", "x-ouro-team": "t1"}),
+            ("acme", "t1"),
+        )
+
+    def test_team_without_org_is_ignored(self) -> None:
+        self.assertEqual(http_auth.extract_pin({"X-Ouro-Team": "t1"}), ("", ""))
+
+
 class TestExtractApiKey(unittest.TestCase):
     def test_bearer_token(self) -> None:
         self.assertEqual(

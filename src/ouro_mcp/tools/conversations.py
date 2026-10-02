@@ -9,6 +9,7 @@ from ouro.models import Conversation, Message
 from ouro.resources.conversations import Messages
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    resolve_location,
     content_from_markdown,
     dump_json,
     markdown_bullet,
@@ -140,8 +141,11 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_conversation(
         member_user_ids: Annotated[list[str], Field(description="User UUIDs to include")],
-        org_id: Annotated[str, Field(description="Organization UUID")],
         ctx: Context,
+        org_id: Annotated[
+            Optional[str],
+            Field(description="Organization UUID. Omit when the server is pinned to an organization"),
+        ] = None,
         name: Annotated[Optional[str], Field(description="Conversation name")] = None,
         summary: Annotated[Optional[str], Field(description="Conversation summary")] = None,
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
@@ -152,6 +156,7 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Create a conversation with the specified member user IDs."""
         ouro = ctx.request_context.lifespan_context.ouro
+        org_id, _ = resolve_location(ouro, org_id, need_team=False)
 
         conversation = ouro.conversations.create(
             member_user_ids=member_user_ids,

@@ -20,7 +20,8 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """List organizations.
 
-        By default, returns the organizations you belong to with your role and membership info.
+        By default, returns the organizations you belong to with your role and membership info,
+        and says whether this connection is pinned to one of them.
         Set discover=True to browse discoverable organizations you could join.
         """
         ouro = ctx.request_context.lifespan_context.ouro
@@ -29,6 +30,9 @@ def register(mcp: FastMCP) -> None:
             orgs = ouro.organizations.list_discoverable()
         else:
             orgs = ouro.organizations.list()
+
+        pinned = getattr(ouro, "organization", None)
+        pinned = pinned if isinstance(pinned, str) and pinned else None
 
         results = []
         for org in orgs:
@@ -54,6 +58,8 @@ def register(mcp: FastMCP) -> None:
                 parts.append(f"role: {row['role']}")
             if row.get("membership_type"):
                 parts.append(str(row["membership_type"]))
+            if pinned and row.get("id") == pinned:
+                parts.append("pinned: create_* tools publish here")
             return markdown_bullet(
                 str(row.get("name") or "(unnamed)"),
                 *parts,
@@ -65,4 +71,9 @@ def register(mcp: FastMCP) -> None:
             line_fn=_org_line,
             noun="organizations",
             empty_text="No organizations found.",
+            extras=[
+                f"pinned to org `{pinned}`: omit org_id on create_* tools"
+                if pinned
+                else "not pinned: pass org_id and team_id to create_* tools"
+            ],
         )

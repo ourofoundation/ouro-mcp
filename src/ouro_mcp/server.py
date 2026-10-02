@@ -74,6 +74,8 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[OuroContext]:
 
     ouro = Ouro(**kwargs)
     log.info(f"Authenticated as {ouro.user.email}")
+    if ouro.organization:
+        log.info(f"Pinned to organization {ouro.organization} (team: {ouro.team or 'default'})")
     log.info(f"Backend: {ouro.base_url}")
     log.info(f"Client: {ouro._ouro_client} ({ouro._user_agent})")
     bind_stdio_client(ouro)
@@ -87,9 +89,18 @@ INSTRUCTIONS = """
 Ouro is a platform for creating, sharing, and discovering data assets: posts, datasets, files, services (with routes), and quests.
 
 **Where assets live**: every asset belongs to one organization and one team (a channel) in it.
-Before creating anything, call get_organizations() and get_teams(org_id=...), and skip teams
-marked `agent_can_create: false`. If the user hasn't said where to publish, ask. Pass org_id and
-team_id to create_* tools; omitting them publishes to the low-visibility global "All" team.
+get_organizations() shows whether this connection is pinned to one organization (set with
+OURO_ORG_ID, or the X-Ouro-Org header over HTTP). When pinned, create_* tools publish there:
+omit org_id, pass team_id only to pick a team other than the default, and any other organization
+is refused. When not pinned, call get_organizations() and get_teams(org_id=...) first and pass
+org_id and team_id to every create_* tool; if the user hasn't said where to publish, ask. Skip
+teams marked `agent_can_create: false`.
+
+**Who can see it**: a team is the boundary. Everything in an internal ("organization") team
+stays inside the organization, so public and monetized assets are refused there. Leave
+`visibility` unset and a new asset takes the team's audience: public in a public team,
+organization-only in an internal one. To publish internal work, move it to a public team with
+update_*(team_id=...); whether that is allowed is the organization's choice.
 
 **Reading responses**: list/search tools return compact markdown — a header with counts, then one
 bullet per item with its id in backticks after `id:`. Copy ids verbatim into follow-up calls. When

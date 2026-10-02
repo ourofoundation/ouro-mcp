@@ -1495,6 +1495,31 @@ def _check_price_inputs(
         )
 
 
+def resolve_location(
+    ouro: Any,
+    org_id: Optional[str],
+    team_id: Optional[str] = None,
+    *,
+    need_team: bool = True,
+) -> tuple[Optional[str], Optional[str]]:
+    """Where a new asset goes: the caller's choice, else the pinned organization.
+
+    When the client is pinned (OURO_ORG_ID, or X-Ouro-Org over HTTP) the SDK
+    fills in the organization and default team and refuses any other
+    organization. Unpinned, the caller has to say where to publish.
+    """
+    pinned = getattr(ouro, "organization", None)
+    if isinstance(pinned, str) and pinned:
+        return org_id or pinned, team_id
+    if not org_id or (need_team and not team_id):
+        needed = "org_id and team_id are" if need_team else "org_id is"
+        raise ValueError(
+            f"{needed} required: this server is not pinned to an organization. "
+            "Call get_organizations() and get_teams(org_id=...) to choose where to publish."
+        )
+    return org_id, team_id
+
+
 def unlock_pricing_kwargs(
     visibility: Optional[str],
     price: Optional[float],

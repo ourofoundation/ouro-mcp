@@ -12,6 +12,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Dataset, ResolvedRef
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    resolve_location,
     PRICE_CURRENCY_DESC,
     PRICE_SATS_DESC,
     PRICE_USD_DESC,
@@ -604,9 +605,15 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_dataset(
         name: Annotated[str, Field(description="Dataset name")],
-        org_id: Annotated[str, Field(description="Organization UUID")],
-        team_id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
+        org_id: Annotated[
+            Optional[str],
+            Field(description="Organization UUID. Omit when the server is pinned to an organization"),
+        ] = None,
+        team_id: Annotated[
+            Optional[str],
+            Field(description="Team UUID. Omit to use the pinned organization's default team"),
+        ] = None,
         data: Annotated[
             Optional[str | list[dict[str, Any]]],
             BeforeValidator(_coerce_data),
@@ -687,6 +694,7 @@ def register(mcp: FastMCP) -> None:
         up as ``semantic_type: "enum"`` with ``enum_values`` in the schema.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+        org_id, team_id = resolve_location(ouro, org_id, team_id)
 
         df = _resolve_dataset_data(data=data, data_path=data_path)
         if df is None:

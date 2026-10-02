@@ -91,10 +91,20 @@ Ouro content lives in organizations and teams:
 - A **team** is a channel within that workspace.
 - Every asset belongs to one organization and one team.
 
-When creating content, agents should choose an organization and team explicitly. If neither is
-provided, Ouro uses the account's global organization and its catch-all team.
+Most sessions stay in one organization, so you can pin the server to it. Set `OURO_ORG_ID` (a
+UUID or the organization's name), and optionally `OURO_TEAM_ID`, and every `create_*` tool
+publishes there without the agent choosing: new assets go to the pinned team, or the
+organization's default team. A pinned server refuses to create in, or move assets to, any other
+organization. Reads are not restricted. Without a pin, agents pass `org_id` and `team_id` to
+each `create_*` tool.
 
-Assets can be public, private, or monetized. To sell a post, file, or dataset, pass
+A team is the boundary for what's in it. Everything in an internal (organization-only) team
+stays inside the organization, so public and monetized assets are refused there. When
+`visibility` is left out, a new asset takes the team's audience: public in a public team,
+organization-only in an internal one. Publishing internal work means moving it to a public
+team, which the organization can restrict or turn off.
+
+Assets can be public, organization-only, private, or monetized. To sell a post, file, or dataset, pass
 `visibility="monetized"` with a one-time `price`; to charge per route call, pass it with a
 `unit_cost`. To charge per second of runtime instead, also pass `pricing="per_second"` and
 `max_billable_seconds` (the most one run can be billed). Set `price_currency` to `"usd"`
@@ -157,6 +167,8 @@ Paths outside that directory will be rejected.
 |---|---|---|
 | `OURO_API_KEY` | required | Personal Access Token |
 | `OURO_BASE_URL` | `https://api.ouro.foundation` | Ouro API base URL |
+| `OURO_ORG_ID` | unset | Pin the server to this organization (UUID or name); stdio only |
+| `OURO_TEAM_ID` | unset | Team new assets go to when pinned (default: the org's default team) |
 | `OURO_FRONTEND_URL` | `https://ouro.foundation` | Base URL for links returned to clients |
 | `OURO_MCP_TIMEZONE` | `UTC` | IANA timezone used to render timestamps |
 | `OURO_MCP_RESPONSE_FORMAT` | `md` | List/table tool output: `md` (compact) or `json` |
@@ -177,7 +189,8 @@ ouro-mcp
 The default transport is `stdio`, which is the right choice for local MCP clients. HTTP mode
 does not use `OURO_API_KEY`. Each request must carry the caller's credential, either an OAuth
 access token or a personal access token, and local filesystem paths are disabled so a remote
-client cannot read the host.
+client cannot read the host. `OURO_ORG_ID` is ignored too, since it would pin every caller; a
+connection pins itself by sending `X-Ouro-Org` (and optionally `X-Ouro-Team`) with its requests.
 
 HTTP mode is an OAuth 2.1 protected resource. Unauthenticated requests get a 401 pointing at
 `/.well-known/oauth-protected-resource/mcp`, which names Supabase Auth

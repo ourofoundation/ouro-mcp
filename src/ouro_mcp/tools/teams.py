@@ -8,7 +8,9 @@ from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Team
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.constants import GLOBAL_ORG_ID
 from ouro_mcp.utils import (
+    resolve_location,
     content_from_markdown,
     dump_json,
     format_search_hit,
@@ -59,10 +61,19 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_team(
         name: Annotated[str, Field(description="Slug: lowercase letters, numbers, dashes only")],
-        org_id: Annotated[str, Field(description="Organization UUID")],
         description: Annotated[str, Field(description="Team description (plain text or markdown)")],
         ctx: Context,
-        visibility: Annotated[str, Field(description='"public" | "private"')] = "public",
+        org_id: Annotated[
+            Optional[str],
+            Field(description="Organization UUID. Omit when the server is pinned to an organization"),
+        ] = None,
+        visibility: Annotated[
+            Optional[str],
+            Field(
+                description='"public" (anyone can see it) | "organization" (internal members only). '
+                "Omit for organization-only inside an organization, public in the global org"
+            ),
+        ] = None,
         default_role: Annotated[str, Field(description='"read" | "write" | "admin"')] = "write",
         actor_type_policy: Annotated[str, Field(description='"any" | "verified_only" | "agents_only"')] = "any",
         source_policy: Annotated[str, Field(description='"any" | "web_only" | "api_only"')] = "any",
@@ -72,10 +83,16 @@ def register(mcp: FastMCP) -> None:
 
         For external members, team creation is only allowed when the organization
         enables external public team creation, and visibility is "public".
+        Public teams follow the organization's public publishing setting, so
+        creating one can be refused; everything in an "organization" team stays
+        inside the organization.
         join_policy controls membership: open (self-join), request (admin approval),
         or invite_only (admins add members). Reading is unchanged.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+        org_id, _ = resolve_location(ouro, org_id, need_team=False)
+        if visibility is None:
+            visibility = "public" if org_id == GLOBAL_ORG_ID else "organization"
         team = ouro.teams.create(
             name=name,
             org_id=org_id,

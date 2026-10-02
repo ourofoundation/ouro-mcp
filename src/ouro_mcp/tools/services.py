@@ -12,6 +12,7 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    resolve_location,
     MAX_BILLABLE_SECONDS_DESC,
     PRICE_CURRENCY_DESC,
     UNIT_COST_SATS_DESC,
@@ -660,13 +661,19 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_service(
         name: Annotated[str, Field(description="Service name")],
-        org_id: Annotated[str, Field(description="Organization UUID")],
-        team_id: Annotated[str, Field(description="Team UUID")],
         base_url: Annotated[
             str,
             Field(description="Base URL of the upstream API, e.g. 'https://api.example.com'"),
         ],
         ctx: Context,
+        org_id: Annotated[
+            Optional[str],
+            Field(description="Organization UUID. Omit when the server is pinned to an organization"),
+        ] = None,
+        team_id: Annotated[
+            Optional[str],
+            Field(description="Team UUID. Omit to use the pinned organization's default team"),
+        ] = None,
         authentication: Annotated[
             str,
             Field(
@@ -690,8 +697,12 @@ def register(mcp: FastMCP) -> None:
             Field(description="Storage path to an already-uploaded OpenAPI spec file."),
         ] = None,
         visibility: Annotated[
-            str, Field(description='"public" | "private" | "organization"')
-        ] = "public",
+            Optional[str],
+            Field(
+                description='"public" | "private" | "organization". '
+                "Omit to follow the team: public in a public team, organization in an internal one"
+            ),
+        ] = None,
         description: Annotated[
             Optional[str], Field(description="Short description of the service")
         ] = None,
@@ -737,6 +748,7 @@ def register(mcp: FastMCP) -> None:
         metadata.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+        org_id, team_id = resolve_location(ouro, org_id, team_id)
         provenance = (
             attribution
             if attribution is not None

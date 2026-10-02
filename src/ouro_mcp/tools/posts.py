@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    resolve_location,
     PRICE_CURRENCY_DESC,
     PRICE_SATS_DESC,
     PRICE_USD_DESC,
@@ -60,17 +61,27 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_post(
         name: Annotated[str, Field(description="Post title")],
-        org_id: Annotated[str, Field(description="Organization UUID")],
-        team_id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
+        org_id: Annotated[
+            Optional[str],
+            Field(description="Organization UUID. Omit when the server is pinned to an organization"),
+        ] = None,
+        team_id: Annotated[
+            Optional[str],
+            Field(description="Team UUID. Omit to use the pinned organization's default team"),
+        ] = None,
         content_markdown: Annotated[
             Optional[str],
             Field(description="Extended markdown body (syntax in the tool description)"),
         ] = None,
         content_path: Annotated[Optional[str], Field(description="Local .md/.markdown file path")] = None,
         visibility: Annotated[
-            str, Field(description='"public" | "private" | "organization" | "monetized"')
-        ] = "public",
+            Optional[str],
+            Field(
+                description='"public" | "private" | "organization" | "monetized". '
+                "Omit to follow the team: public in a public team, organization in an internal one"
+            ),
+        ] = None,
         price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
@@ -102,6 +113,7 @@ def register(mcp: FastMCP) -> None:
         user unless they can already discover the post — share it first if you want a response.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+        org_id, team_id = resolve_location(ouro, org_id, team_id)
 
         markdown = _resolve_post_markdown(
             content_markdown=content_markdown,
