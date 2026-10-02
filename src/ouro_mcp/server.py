@@ -21,6 +21,7 @@ from ouro_mcp.constants import (
     ENV_OURO_MCP_RESOURCE_URL,
     OURO_MCP_OAUTH_SCOPE,
 )
+from ouro_mcp.hosted import apply_hosted_tool_surface
 from ouro_mcp.http_auth import (
     ApiKeyHeaderShim,
     ApiKeyMiddleware,
@@ -226,6 +227,7 @@ def main():
     set_http_mode(True)
     os.environ[ENV_OURO_MCP_LOCAL_FILES] = "0"
     os.environ.pop(ENV_OURO_API_KEY, None)
+    apply_hosted_tool_surface(mcp)
 
     from mcp.server.transport_security import TransportSecuritySettings
 

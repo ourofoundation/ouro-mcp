@@ -161,6 +161,31 @@ Some tools can read local files, such as uploading a CSV or markdown document. S
 
 Paths outside that directory will be rejected.
 
+The hosted server (`--transport streamable-http` or `sse`) cannot see the caller's files, so
+it does not offer path parameters at all: `file_path`, `data_path`, `content_path` and
+`download_asset`'s `output_path` are removed from the tool schemas. The tools themselves are
+the same on both transports. Send content inline there (`file_content_text`,
+`file_content_base64`, `data`, `content_markdown`), or upload it as described below.
+
+For a file on the caller's machine, call `create_upload_url`: it returns a signed URL
+and the `curl` command that uploads the file to it. Run the command, then pass the
+returned `upload_id` to the tool that should use it. This works on both transports.
+
+| Content | Tools | Parameter |
+|---|---|---|
+| Any file, as a file asset | `create_file`, `update_file` | `upload_id` |
+| A post's markdown (`.md`) | `create_post`, `update_post` | `upload_id` |
+| Dataset rows (`.csv`, `.json`, `.jsonl`, `.parquet`) | `create_dataset`, `update_dataset` | `upload_id` |
+| An OpenAPI spec (`.json`, `.yaml`) | `create_service`, `update_service` | `spec_upload_id` |
+
+`download_asset` goes the other way. With an `output_path` it saves the asset there.
+Without one, which is always the case on the hosted server, it returns a link and the
+`curl` command that saves it. Files keep their bytes, datasets come as CSV and posts as
+markdown.
+
+Together these let an agent keep a long post in a local markdown file: download it, edit
+it with its own tools, and publish each revision without writing the body out again.
+
 ## Configuration
 
 | Variable | Default | Purpose |

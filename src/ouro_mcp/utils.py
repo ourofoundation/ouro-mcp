@@ -859,6 +859,43 @@ def local_files_enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def source_names(path_param: str, *others: str) -> str:
+    """The content sources a tool accepts on this server, for error messages.
+
+    ``path_param`` is the local-path parameter, which the hosted server does
+    not offer.
+    """
+    names = ([path_param] if local_files_enabled() else []) + list(others)
+    if len(names) < 3:
+        return " or ".join(names)
+    return ", ".join(names[:-1]) + f", or {names[-1]}"
+
+
+def read_upload(ouro: Any, upload_id: str, suffixes: tuple[str, ...]) -> bytes:
+    """Bytes uploaded through ``create_upload_url``, checked by file extension.
+
+    The upload is kept: call ``discard_upload`` once the content has been
+    used, so a failed create does not cost the caller a second upload.
+    """
+    suffix = Path(upload_id).suffix.lower()
+    if suffix not in suffixes:
+        raise ValueError(
+            f"upload_id is for a '{suffix or 'no extension'}' file; expected {' or '.join(suffixes)}. "
+            "Name the file accordingly in create_upload_url."
+        )
+    return ouro.files.read_upload(upload_id, discard=False)
+
+
+def discard_upload(ouro: Any, upload_id: Optional[str]) -> None:
+    """Delete an upload whose content has been used. A failure only leaves an orphan."""
+    if not upload_id:
+        return
+    try:
+        ouro.files.discard_upload(upload_id)
+    except Exception:
+        log.warning("Failed to discard upload %s", upload_id, exc_info=True)
+
+
 def resolve_local_path(raw: str) -> Path:
     """Resolve a user-supplied file path, sandboxing to WORKSPACE_ROOT when set.
 
@@ -883,8 +920,9 @@ def resolve_local_path(raw: str) -> Path:
     """
     if not local_files_enabled():
         raise PermissionError(
-            "Local file paths are disabled on this MCP server. "
-            "Send file contents inline instead of a filesystem path."
+            "Local file paths are disabled on this MCP server. To send a file, upload it with "
+            "create_upload_url and pass the upload_id; to fetch one, call download_asset "
+            "without output_path for a link."
         )
 
     p = Path(raw).expanduser()

@@ -17,30 +17,48 @@ from ouro_mcp.utils import (
     content_from_markdown,
     dump_json,
     format_asset_summary,
+    discard_upload,
     optional_kwargs,
+    read_upload,
     resolve_local_path,
+    source_names,
     unlock_pricing_kwargs,
 )
 from pydantic import Field
 
 
+_MARKDOWN_SUFFIXES = (".md", ".markdown")
+
+
+def _post_sources() -> str:
+    return source_names("content_path", "content_markdown", "upload_id")
+
+
 def _resolve_post_markdown(
     content_markdown: Optional[str],
     content_path: Optional[str],
+    upload_id: Optional[str] = None,
+    ouro: Any = None,
 ) -> Optional[str]:
     # Some clients send "" for optional fields they meant to leave unset; treat blanks as absent.
     if content_markdown is not None and not content_markdown.strip():
         content_markdown = None
     if content_path is not None and not content_path.strip():
         content_path = None
+    if upload_id is not None and not upload_id.strip():
+        upload_id = None
 
     provided = [
         ("content_markdown", content_markdown is not None),
         ("content_path", content_path is not None),
+        ("upload_id", upload_id is not None),
     ]
     selected = [name for name, is_set in provided if is_set]
     if len(selected) > 1:
-        raise ValueError(f"Provide only one of content_markdown or content_path (got: {', '.join(selected)}).")
+        raise ValueError(f"Provide only one of {_post_sources()} (got: {', '.join(selected)}).")
+
+    if upload_id is not None:
+        return read_upload(ouro, upload_id, _MARKDOWN_SUFFIXES).decode("utf-8")
 
     if content_path is None:
         return content_markdown
@@ -50,7 +68,7 @@ def _resolve_post_markdown(
         raise ValueError(f"content_path not found: {content_path} (resolved to {path})")
     if not path.is_file():
         raise ValueError(f"content_path must point to a file: {content_path} (resolved to {path})")
-    if path.suffix.lower() not in {".md", ".markdown"}:
+    if path.suffix.lower() not in _MARKDOWN_SUFFIXES:
         raise ValueError("content_path must be a .md or .markdown file.")
 
     return path.read_text(encoding="utf-8")
@@ -75,6 +93,10 @@ def register(mcp: FastMCP) -> None:
             Field(description="Extended markdown body (syntax in the tool description)"),
         ] = None,
         content_path: Annotated[Optional[str], Field(description="Local .md/.markdown file path")] = None,
+        upload_id: Annotated[
+            Optional[str],
+            Field(description="upload_id from create_upload_url for a .md file holding the body"),
+        ] = None,
         visibility: Annotated[
             Optional[str],
             Field(
@@ -95,7 +117,10 @@ def register(mcp: FastMCP) -> None:
             Field(description="Top-level provenance object; separate from asset metadata"),
         ] = None,
     ) -> str:
-        """Create a new post on Ouro from extended markdown. Provide content_markdown or content_path.
+        """Create a new post on Ouro from extended markdown. Provide content_markdown, content_path, or upload_id.
+
+        For a long post, keep the markdown in a local file, upload it with
+        create_upload_url and pass upload_id, so the body is not written out again.
 
         Extended markdown is standard markdown plus:
         - Mentions: @username
@@ -106,6 +131,8 @@ def register(mcp: FastMCP) -> None:
         ```assetComponent
         {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
         ```
+        - Images: an image is a file asset. Create it with create_file, then put
+          ![alt](file:<uuid>) on a line of its own to show it. An external image URL becomes a link.
         displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
         For routes, set actionId to show a compact action receipt (status, timing, output).
         Prefer paste embed_markdown / link_markdown from route-action tools when referencing a run.
@@ -118,9 +145,11 @@ def register(mcp: FastMCP) -> None:
         markdown = _resolve_post_markdown(
             content_markdown=content_markdown,
             content_path=content_path,
+            upload_id=upload_id,
+            ouro=ouro,
         )
         if markdown is None:
-            raise ValueError("No post body provided. Pass one of: content_markdown or content_path.")
+            raise ValueError(f"No post body provided. Pass one of: {_post_sources()}.")
 
         content = content_from_markdown(ouro, markdown)
 
@@ -138,6 +167,7 @@ def register(mcp: FastMCP) -> None:
             ),
         )
 
+        discard_upload(ouro, upload_id)
         return dump_json(format_asset_summary(post))
 
     @mcp.tool(annotations={"idempotentHint": True})
@@ -153,6 +183,10 @@ def register(mcp: FastMCP) -> None:
         content_path: Annotated[
             Optional[str],
             Field(description="Local .md/.markdown file with replacement body"),
+        ] = None,
+        upload_id: Annotated[
+            Optional[str],
+            Field(description="upload_id from create_upload_url for a .md file with the replacement body"),
         ] = None,
         visibility: Annotated[
             Optional[str], Field(description='"public" | "private" | "organization" | "monetized"')
@@ -172,15 +206,19 @@ def register(mcp: FastMCP) -> None:
             Field(description="Updated top-level provenance object"),
         ] = None,
     ) -> str:
-        """Update a post's content or metadata. Pass content_markdown/content_path to replace the body.
+        """Update a post's content or metadata. Pass content_markdown, content_path, or upload_id to replace the body.
 
-        The body uses the same extended markdown as create_post.
+        The body uses the same extended markdown as create_post. To edit a
+        long post, change the local markdown file, upload it with
+        create_upload_url and pass upload_id.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
         markdown = _resolve_post_markdown(
             content_markdown=content_markdown,
             content_path=content_path,
+            upload_id=upload_id,
+            ouro=ouro,
         )
         content = content_from_markdown(ouro, markdown) if markdown is not None else None
 
@@ -201,4 +239,5 @@ def register(mcp: FastMCP) -> None:
             ),
         )
 
+        discard_upload(ouro, upload_id)
         return dump_json(format_asset_summary(post))

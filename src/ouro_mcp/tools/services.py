@@ -696,6 +696,12 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="Storage path to an already-uploaded OpenAPI spec file."),
         ] = None,
+        spec_upload_id: Annotated[
+            Optional[str],
+            Field(
+                description="upload_id from create_upload_url for a local OpenAPI spec file (.json or .yaml)"
+            ),
+        ] = None,
         visibility: Annotated[
             Optional[str],
             Field(
@@ -737,10 +743,12 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Publish an external API as a service on Ouro.
 
-        `base_url` must be unique across Ouro. Pass `spec_url` (or `spec_path`
-        for an already-uploaded file) to register from an OpenAPI spec — routes
-        are parsed and created automatically. Omit both to create a service
-        with no routes yet, then add routes from the web UI.
+        `base_url` must be unique across Ouro. Pass `spec_url`, or
+        `spec_upload_id` for a spec file on your machine (upload it with
+        create_upload_url first), to register from an OpenAPI spec — routes
+        are parsed and created automatically. `spec_path` names a spec already
+        in Ouro's spec storage. Omit all three to create a service with no
+        routes yet, then add routes from the web UI.
 
         Set `license_id` and provenance (`originality`, `github_url`,
         `paper_url`, `doi_url`, `external_url`, `relation_type`) when wrapping
@@ -775,6 +783,7 @@ def register(mcp: FastMCP) -> None:
             **optional_kwargs(
                 spec_url=spec_url,
                 spec_path=spec_path,
+                spec_upload_id=spec_upload_id,
                 version=version,
                 auth_url=auth_url,
             ),
@@ -807,6 +816,12 @@ def register(mcp: FastMCP) -> None:
         spec_path: Annotated[
             Optional[str],
             Field(description="Storage path to an uploaded OpenAPI spec; re-parses routes."),
+        ] = None,
+        spec_upload_id: Annotated[
+            Optional[str],
+            Field(
+                description="upload_id from create_upload_url for a local OpenAPI spec file; re-parses routes."
+            ),
         ] = None,
         refresh_spec: Annotated[
             bool,
@@ -854,8 +869,8 @@ def register(mcp: FastMCP) -> None:
         """Update a service's metadata (name, base_url, auth, visibility, ...).
 
         Service config merges into `metadata`; provenance merges into
-        `attribution`. Pass only what changes. Providing `spec_url` or
-        `spec_path` re-parses the OpenAPI spec and syncs routes. Set
+        `attribution`. Pass only what changes. Providing `spec_url`,
+        `spec_upload_id` or `spec_path` re-parses the OpenAPI spec and syncs routes. Set
         `refresh_spec=true` to re-fetch the stored remote spec URL.
         """
         ouro = ctx.request_context.lifespan_context.ouro
@@ -867,7 +882,7 @@ def register(mcp: FastMCP) -> None:
             external_url=external_url,
             relation_type=relation_type,
         )
-        if refresh_spec and spec_url is None and spec_path is None:
+        if refresh_spec and spec_url is None and spec_path is None and spec_upload_id is None:
             current = ouro.services.retrieve(id)
             spec_url = current.metadata.spec_url if current.metadata else None
             if not spec_url:
@@ -883,6 +898,7 @@ def register(mcp: FastMCP) -> None:
                 authentication=authentication,
                 spec_url=spec_url,
                 spec_path=spec_path,
+                spec_upload_id=spec_upload_id,
                 visibility=visibility,
                 description=description,
                 version=version,

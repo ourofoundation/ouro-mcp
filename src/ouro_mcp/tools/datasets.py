@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from pathlib import Path
 from typing import Annotated, Any, Literal, Optional
 
@@ -23,10 +24,13 @@ from ouro_mcp.utils import (
     format_table_response,
     markdown_bullet,
     markdown_id,
+    discard_upload,
     optional_kwargs,
+    read_upload,
     refs_from_schema,
     render_markdown_list,
     resolve_local_path,
+    source_names,
     unlock_pricing_kwargs,
     slim_connection_graph,
     slim_dataset_schema,
@@ -92,13 +96,32 @@ def _dataframe_from_json(data_json: str) -> pd.DataFrame:
     raise ValueError("data_json must be a JSON object, or a JSON array of objects.")
 
 
+_DATA_SUFFIXES = (".csv", ".json", ".jsonl", ".ndjson", ".parquet")
+
+
+def _dataset_sources() -> str:
+    return source_names("data_path", "data", "upload_id")
+
+
 def _dataframe_from_path(data_path: str) -> pd.DataFrame:
     path = resolve_local_path(data_path)
     if not path.exists():
         raise ValueError(f"data_path not found: {data_path} (resolved to {path})")
     if not path.is_file():
         raise ValueError(f"data_path must point to a file: {data_path} (resolved to {path})")
+    return _dataframe_from_file(path)
 
+
+def _dataframe_from_upload(ouro: Any, upload_id: str) -> pd.DataFrame:
+    """Rows from a file uploaded through create_upload_url."""
+    content = read_upload(ouro, upload_id, _DATA_SUFFIXES)
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / f"upload{Path(upload_id).suffix.lower()}"
+        path.write_bytes(content)
+        return _dataframe_from_file(path)
+
+
+def _dataframe_from_file(path: Path) -> pd.DataFrame:
     suffix = path.suffix.lower()
     if suffix == ".csv":
         return pd.read_csv(path)
@@ -228,14 +251,17 @@ def _apply_column_op(ouro: Any, dataset_id: str, op: dict[str, Any]) -> None:
 def _resolve_dataset_data(
     data: Any = None,
     data_path: Optional[str] = None,
+    upload_id: Optional[str] = None,
+    ouro: Any = None,
 ) -> Optional[pd.DataFrame]:
     provided = [
         ("data", data is not None),
         ("data_path", data_path is not None),
+        ("upload_id", upload_id is not None),
     ]
     selected = [name for name, is_set in provided if is_set]
     if len(selected) > 1:
-        raise ValueError(f"Provide only one of data or data_path (got: {', '.join(selected)}).")
+        raise ValueError(f"Provide only one of {_dataset_sources()} (got: {', '.join(selected)}).")
     if not selected:
         return None
 
@@ -243,6 +269,8 @@ def _resolve_dataset_data(
         return _dataframe_from_json(_coerce_data(data))
     if data_path is not None:
         return _dataframe_from_path(data_path)
+    if upload_id is not None:
+        return _dataframe_from_upload(ouro, upload_id)
 
     return None
 
@@ -625,6 +653,12 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="Local file path (.csv, .json, .jsonl, .parquet)"),
         ] = None,
+        upload_id: Annotated[
+            Optional[str],
+            Field(
+                description="upload_id from create_upload_url for a .csv, .json, .jsonl or .parquet file of rows"
+            ),
+        ] = None,
         visibility: Annotated[
             Optional[str],
             Field(
@@ -682,7 +716,10 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
     ) -> str:
-        """Create a new dataset on Ouro. Provide data or data_path (one required).
+        """Create a new dataset on Ouro. Provide data, data_path, or upload_id (one required).
+
+        For more than a few dozen rows, upload the file with create_upload_url
+        and pass upload_id, so the rows are not written out as JSON.
 
         The result includes ``embed_markdown``, a ready-to-paste post embed. Pass
         ``view`` to also save a chart; the embed then shows it. If the view is
@@ -700,9 +737,9 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
         org_id, team_id = resolve_location(ouro, org_id, team_id)
 
-        df = _resolve_dataset_data(data=data, data_path=data_path)
+        df = _resolve_dataset_data(data=data, data_path=data_path, upload_id=upload_id, ouro=ouro)
         if df is None:
-            raise ValueError("No dataset rows provided. Pass one of: data or data_path.")
+            raise ValueError(f"No dataset rows provided. Pass one of: {_dataset_sources()}.")
         if df.empty or len(df.columns) == 0:
             raise ValueError("Dataset data must include at least one column and one row.")
 
@@ -766,6 +803,7 @@ def register(mcp: FastMCP) -> None:
                     for key in ("id", "name", "description", "warnings", "sample_rows")
                     if view_result.get(key) is not None
                 }
+        discard_upload(ouro, upload_id)
         return dump_json(result)
 
     @mcp.tool(annotations={"idempotentHint": False})
@@ -791,6 +829,12 @@ def register(mcp: FastMCP) -> None:
         data_path: Annotated[
             Optional[str],
             Field(description="Local file path for dataset ingest (.csv, .json, .jsonl, .parquet)"),
+        ] = None,
+        upload_id: Annotated[
+            Optional[str],
+            Field(
+                description="upload_id from create_upload_url for a .csv, .json, .jsonl or .parquet file of rows"
+            ),
         ] = None,
         data_mode: Annotated[
             str, Field(description='"append" | "overwrite" | "upsert"')
@@ -829,7 +873,7 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Update a dataset's data or metadata.
 
-        Pass data/data_path for row ingest and choose data_mode:
+        Pass data, data_path, or upload_id for row ingest and choose data_mode:
         - append (default): add rows
         - overwrite: replace existing rows
         - upsert: merge rows by id
@@ -843,7 +887,7 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        df = _resolve_dataset_data(data=data, data_path=data_path)
+        df = _resolve_dataset_data(data=data, data_path=data_path, upload_id=upload_id, ouro=ouro)
         if df is not None and (df.empty or len(df.columns) == 0):
             raise ValueError("Dataset row updates must include at least one column and one row.")
 
@@ -887,6 +931,7 @@ def register(mcp: FastMCP) -> None:
             )
         )
         result.update(_ingest_summary(dataset))
+        discard_upload(ouro, upload_id)
         return dump_json(result)
 
     @mcp.tool(annotations={"idempotentHint": False})

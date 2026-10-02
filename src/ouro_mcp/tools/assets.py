@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Annotated, Any, Optional
+import shlex
+from typing import Annotated, Any, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Action, Comment
@@ -37,6 +38,14 @@ from ouro_mcp.utils import (
 from pydantic import Field
 
 log = logging.getLogger(__name__)
+
+
+def download_command(download: dict[str, Any]) -> str:
+    """The shell command that saves a download link's content to a file."""
+    return (
+        f"curl -sS -f -L -o {shlex.quote(download['file_name'])} "
+        f"{shlex.quote(download['download_url'])}"
+    )
 
 
 def register(mcp: FastMCP) -> None:
@@ -299,8 +308,9 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def download_asset(
         id: Annotated[str, Field(description="UUID of the asset to download")],
+        ctx: Context,
         output_path: Annotated[
-            str,
+            Optional[str],
             Field(
                 description=(
                     "Local file path or existing directory where the asset should be saved. "
@@ -308,33 +318,62 @@ def register(mcp: FastMCP) -> None:
                     "the path must stay inside it (no '..' traversal or outside-root absolutes)."
                 )
             ),
-        ],
-        ctx: Context,
+        ] = None,
         asset_type: Annotated[
             Optional[str],
             Field(description='Optional override: "file" | "dataset" | "post"'),
         ] = None,
+        format: Annotated[
+            Optional[Literal["markdown", "html"]],
+            Field(description='Post format: "markdown" (default) or "html"'),
+        ] = None,
     ) -> str:
-        """Download an asset to the local filesystem.
+        """Download an asset to your own machine.
 
-        Files keep their original bytes, datasets download as CSV, and posts as HTML.
-        If output_path is a directory, the server-provided filename is used.
+        Files keep their original bytes, datasets download as CSV, and posts as
+        markdown: the same extended markdown create_post and update_post take.
 
-        Prefer this for bulk dataset analysis (scoring, filtering hundreds+ rows,
-        local scripts): download CSV, then compute locally. Use ``query_dataset``
-        for peeks, small samples, and SQL top-N — not for paging large tables
-        into chat.
+        With output_path the asset is saved there; a directory keeps the server-provided filename.
+        Without it, the result is a link and the ``command`` that fetches it.
+        Run the command in a shell: it saves the asset as ``file_name`` in the
+        current directory and prints nothing on success. The link works for
+        ``expires_in`` seconds and needs no other credentials, so treat it as
+        a secret.
 
-        When WORKSPACE_ROOT is set (agent context), output_path is sandboxed
-        to that workspace; paths that escape via '..' or absolute paths
-        outside the workspace are rejected.
+        Work on the downloaded file instead of paging the asset through chat:
+        - bulk dataset analysis (scoring, filtering hundreds+ rows, local
+          scripts): download the CSV and compute locally. Use ``query_dataset``
+          for peeks, small samples, and SQL top-N.
+        - editing a long post: download the markdown, edit the file, upload it
+          with create_upload_url and pass upload_id to update_post.
         """
-        from ouro_mcp.utils import resolve_local_path
-
         ouro = ctx.request_context.lifespan_context.ouro
-        resolved_path = str(resolve_local_path(output_path))
-        download = ouro.assets.download(id, output_path=resolved_path, asset_type=asset_type)
-        return dump_json({"downloaded": True, **download.model_dump(mode="json")})
+        format = format or "markdown"
+
+        if output_path is not None:
+            from ouro_mcp.utils import resolve_local_path
+
+            download = ouro.assets.download(
+                id,
+                output_path=str(resolve_local_path(output_path)),
+                format=format,
+                **optional_kwargs(asset_type=asset_type),
+            )
+            return dump_json({"downloaded": True, **download.model_dump(mode="json")})
+
+        download = ouro.assets.create_download_url(
+            id, format=format, **optional_kwargs(asset_type=asset_type)
+        )
+        return dump_json(
+            {
+                "command": download_command(download),
+                "file_name": download["file_name"],
+                "asset_type": download["asset_type"],
+                "content_type": download["content_type"],
+                "download_url": download["download_url"],
+                "expires_in": download["expires_in"],
+            }
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors

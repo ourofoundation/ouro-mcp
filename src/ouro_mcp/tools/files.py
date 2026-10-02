@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from base64 import b64decode
 from typing import Annotated, Any, Literal, Optional
 
@@ -17,10 +18,16 @@ from ouro_mcp.utils import (
     dump_json,
     file_result,
     optional_kwargs,
+    local_files_enabled,
     resolve_local_path,
+    source_names,
     unlock_pricing_kwargs,
 )
 from pydantic import Field
+
+
+def _source_names() -> str:
+    return source_names("file_path", "file_content_base64", "file_content_text", "upload_id")
 
 
 def _resolve_file_input(
@@ -29,32 +36,37 @@ def _resolve_file_input(
     file_content_base64: Optional[str] = None,
     file_content_text: Optional[str] = None,
     file_name: Optional[str] = None,
+    upload_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Return SDK kwargs for the file upload source.
 
-    Exactly one of ``file_path``, ``file_content_base64``, or
-    ``file_content_text`` must be provided.  When using inline content,
-    ``file_name`` (with extension) is required for MIME-type detection.
+    Exactly one of ``file_path``, ``file_content_base64``,
+    ``file_content_text``, or ``upload_id`` must be provided.  When using
+    inline content, ``file_name`` (with extension) is required for MIME-type
+    detection.
 
     Returns a dict that can be spread into ``ouro.files.create()`` /
-    ``ouro.files.update()`` (keys: ``file_path`` *or*
+    ``ouro.files.update()`` (keys: ``file_path``, ``upload_id``, *or*
     ``file_content`` + ``file_name``).
     """
     sources = [
         ("file_path", file_path is not None),
         ("file_content_base64", file_content_base64 is not None),
         ("file_content_text", file_content_text is not None),
+        ("upload_id", upload_id is not None),
     ]
     selected = [name for name, is_set in sources if is_set]
 
     if len(selected) > 1:
         raise ValueError(
-            f"Provide only one of file_path, file_content_base64, or "
-            f"file_content_text (got: {', '.join(selected)})."
+            f"Provide only one of {_source_names()} (got: {', '.join(selected)})."
         )
 
     if not selected:
         return {}
+
+    if upload_id is not None:
+        return optional_kwargs(upload_id=upload_id, file_name=file_name)
 
     if file_path is not None:
         return {"file_path": str(resolve_local_path(file_path))}
@@ -73,7 +85,57 @@ def _resolve_file_input(
     return {"file_content": content, "file_name": file_name}
 
 
+def upload_command(upload: dict[str, Any], file_name: str) -> str:
+    """The shell command that sends a local file to a signed upload URL."""
+    headers = " ".join(
+        f"-H {shlex.quote(f'{key}: {value}')}" for key, value in upload["headers"].items()
+    )
+    return (
+        f"curl -sS -f -o /dev/null -X {upload['method']} {headers} "
+        f"--data-binary @{shlex.quote(file_name)} {shlex.quote(upload['upload_url'])}"
+    )
+
+
 def register(mcp: FastMCP) -> None:
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def create_upload_url(
+        file_name: Annotated[
+            str,
+            Field(description="Filename with extension, e.g. 'plot.png'; sets the content type"),
+        ],
+        ctx: Context,
+    ) -> str:
+        """Get a signed URL to upload a local file to, then use it by its upload_id.
+
+        Use this for anything on your own machine that is binary or long, so
+        you do not have to write its contents out again:
+        - any file, as a file asset: create_file / update_file
+        - a post's markdown: create_post / update_post
+        - dataset rows (.csv, .json, .jsonl, .parquet): create_dataset / update_dataset
+        - an OpenAPI spec: create_service / update_service (``spec_upload_id``)
+
+        1. Call this tool with the file's name.
+        2. Run the returned ``command`` in a shell, from the file's directory
+           (or change the path after ``@``). It prints nothing on success.
+        3. Pass ``upload_id`` to one of the tools above. Each upload is used once.
+
+        The URL works for ``expires_in`` seconds and needs no other credentials,
+        so treat it as a secret.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        upload = ouro.files.create_upload_url(file_name)
+        return dump_json(
+            {
+                "upload_id": upload["upload_id"],
+                "command": upload_command(upload, file_name),
+                "upload_url": upload["upload_url"],
+                "method": upload["method"],
+                "headers": upload["headers"],
+                "expires_in": upload["expires_in"],
+            }
+        )
+
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
     def create_file(
@@ -114,6 +176,10 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        upload_id: Annotated[
+            Optional[str],
+            Field(description="upload_id from create_upload_url, once the file has been uploaded to its upload_url"),
+        ] = None,
         visibility: Annotated[
             Optional[str],
             Field(
@@ -140,6 +206,8 @@ def register(mcp: FastMCP) -> None:
         - file_path — relative paths are resolved from WORKSPACE_ROOT.
         - file_content_base64 — inline bytes (e.g. remote clients).
         - file_content_text — inline text (CIF, JSON, CSV, etc.).
+        - upload_id — bytes already uploaded with create_upload_url. Use it
+          for images, PDFs, archives and anything large.
 
         When using file_content_base64 or file_content_text, also pass
         file_name with the original filename and extension so MIME type
@@ -153,13 +221,18 @@ def register(mcp: FastMCP) -> None:
             file_content_base64=file_content_base64,
             file_content_text=file_content_text,
             file_name=file_name,
+            upload_id=upload_id,
         )
 
         if not file_kwargs:
+            message = f"create_file requires exactly one of: {_source_names()}."
+            if local_files_enabled():
+                message += (
+                    " For file_path: use the same path you used with run_python write_file"
+                    " (relative paths resolve against WORKSPACE_ROOT)."
+                )
             raise ValueError(
-                "create_file requires exactly one of: file_path, file_content_base64, or file_content_text. "
-                "For file_path: use the same path you used with run_python write_file (relative paths resolve "
-                "against WORKSPACE_ROOT). For inline content, file_name (e.g. 'structure.cif') is required."
+                message + " For inline content, file_name (e.g. 'structure.cif') is required."
             )
 
         file = ouro.files.create(
@@ -207,6 +280,10 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        upload_id: Annotated[
+            Optional[str],
+            Field(description="upload_id from create_upload_url holding the replacement bytes"),
+        ] = None,
         name: Annotated[Optional[str], Field(description="New name")] = None,
         description: Annotated[Optional[str], Field(description="New description")] = None,
         visibility: Annotated[
@@ -229,9 +306,9 @@ def register(mcp: FastMCP) -> None:
         """Update a file's content or metadata.
 
         To replace the file data, provide one of file_path,
-        file_content_base64, or file_content_text (see create_file for
-        details).  Pass name, description, visibility, or pricing to
-        update metadata only.
+        file_content_base64, file_content_text, or upload_id (see
+        create_file for details).  Pass name, description, visibility, or
+        pricing to update metadata only.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -240,6 +317,7 @@ def register(mcp: FastMCP) -> None:
             file_content_base64=file_content_base64,
             file_content_text=file_content_text,
             file_name=file_name,
+            upload_id=upload_id,
         )
 
         file = ouro.files.update(

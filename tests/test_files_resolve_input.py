@@ -4,7 +4,8 @@ import base64
 import unittest
 from pathlib import Path
 
-from ouro_mcp.tools.files import _resolve_file_input
+from ouro_mcp.tools.assets import download_command
+from ouro_mcp.tools.files import _resolve_file_input, upload_command
 
 
 class TestResolveFileInput(unittest.TestCase):
@@ -30,6 +31,49 @@ class TestResolveFileInput(unittest.TestCase):
         )
         self.assertEqual(result["file_content"], text.encode("utf-8"))
         self.assertEqual(result["file_name"], "Mg2Si.cif")
+
+    def test_upload_id_passthrough(self) -> None:
+        self.assertEqual(
+            _resolve_file_input(upload_id="files/u/a.png"), {"upload_id": "files/u/a.png"}
+        )
+        self.assertEqual(
+            _resolve_file_input(upload_id="files/u/a.png", file_name="plot.png"),
+            {"upload_id": "files/u/a.png", "file_name": "plot.png"},
+        )
+
+    def test_rejects_upload_id_with_inline_content(self) -> None:
+        with self.assertRaises(ValueError) as cm:
+            _resolve_file_input(
+                upload_id="files/u/a.txt", file_content_text="x", file_name="a.txt"
+            )
+        self.assertIn("upload_id", str(cm.exception))
+
+    def test_upload_command_quotes_for_a_shell(self) -> None:
+        command = upload_command(
+            {
+                "method": "PUT",
+                "headers": {"content-type": "image/png"},
+                "upload_url": "https://storage.example/object/upload/sign/files/u/a.png?token=t&x=1",
+            },
+            "my plot.png",
+        )
+        self.assertEqual(
+            command,
+            "curl -sS -f -o /dev/null -X PUT -H 'content-type: image/png' --data-binary @'my plot.png' "
+            "'https://storage.example/object/upload/sign/files/u/a.png?token=t&x=1'",
+        )
+
+    def test_download_command_quotes_for_a_shell(self) -> None:
+        command = download_command(
+            {
+                "file_name": "my post.md",
+                "download_url": "https://api.example/assets/abc/download?token=p.s&x=1",
+            }
+        )
+        self.assertEqual(
+            command,
+            "curl -sS -f -L -o 'my post.md' 'https://api.example/assets/abc/download?token=p.s&x=1'",
+        )
 
     def test_no_source_returns_empty(self) -> None:
         result = _resolve_file_input()
