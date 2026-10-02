@@ -1143,6 +1143,18 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        notify: Annotated[
+            Optional[Literal["all", "failure", "none"]],
+            Field(
+                description=(
+                    "Which Ouro in-app notifications this run sends its owner "
+                    'when it finishes: "all" (default), "failure" (only on '
+                    'error or timeout), or "none". Use "none" or "failure" '
+                    "when running many routes as steps of one workflow that "
+                    "you will report on yourself."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool,
             Field(description="Validate parameters without executing"),
@@ -1268,7 +1280,7 @@ def register(mcp: FastMCP) -> None:
             params=params_dict,
             input_assets=input_assets_dict,
             wait=False,
-            **optional_kwargs(currency=currency),
+            **optional_kwargs(currency=currency, notify=notify),
         )
         timed_out = False
         if wait and action.is_pending:
