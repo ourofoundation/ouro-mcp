@@ -626,8 +626,12 @@ def register(mcp: FastMCP) -> None:
             Field(description="Local file path (.csv, .json, .jsonl, .parquet)"),
         ] = None,
         visibility: Annotated[
-            str, Field(description='"public" | "private" | "organization" | "monetized"')
-        ] = "private",
+            Optional[str],
+            Field(
+                description='"public" | "private" | "organization" | "monetized". '
+                "Omit to follow the team: public in a public team, organization in an internal one"
+            ),
+        ] = None,
         price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)

@@ -136,7 +136,9 @@ class _FakeDatasets:
 
     def create(self, **kwargs):
         self.created.append(kwargs)
-        return _dataset(kwargs["name"], kwargs["visibility"], self.ingest, self.ingest_warning)
+        return _dataset(
+            kwargs["name"], kwargs["visibility"] or "organization", self.ingest, self.ingest_warning
+        )
 
     view_error: Exception | None = None
 
