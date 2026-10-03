@@ -98,6 +98,10 @@ organization's default team. A pinned server refuses to create in, or move asset
 organization. Reads are not restricted. Without a pin, agents pass `org_id` and `team_id` to
 each `create_*` tool.
 
+An API key bound to an organization (chosen when the key is created) pins the server the same
+way, and sees only public work elsewhere. A key bound to the personal context can't create or
+change anything in an organization.
+
 A team is the boundary for what's in it. Everything in an internal (organization-only) team
 stays inside the organization, so public and monetized assets are refused there. When
 `visibility` is left out, a new asset takes the team's audience: public in a public team,

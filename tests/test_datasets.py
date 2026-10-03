@@ -353,7 +353,7 @@ def test_resolve_dataset_data_accepts_parquet(tmp_path: Path) -> None:
 
 
 def test_resolve_dataset_data_rejects_multiple_sources() -> None:
-    with pytest.raises(ValueError, match="Provide only one of data or data_path"):
+    with pytest.raises(ValueError, match="Provide only one of data_path, data, or upload_id"):
         _resolve_dataset_data(data=[{"row": 1}], data_path="rows.csv")
 
 

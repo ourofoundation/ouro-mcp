@@ -13,6 +13,7 @@ from ouro import (
     BadRequestError,
     InternalServerError,
     NotFoundError,
+    OuroError,
     PermissionDeniedError,
     RateLimitError,
     UnprocessableEntityError,
@@ -333,6 +334,13 @@ def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
                 "retryable": False,
             }
         )
+    if isinstance(e, OuroError) and "pinned to organization" in raw:
+        # The SDK's own refusal, with its hint swapped for one an agent can act on
+        message = raw.replace(
+            " Call use_organization() to switch.",
+            " Omit org_id to work in the pinned organization.",
+        )
+        return json.dumps({"error": "organization_pinned", "message": message, "retryable": False})
     log.exception("Unexpected error in MCP tool")
     return json.dumps({"error": "unexpected", "message": raw})
 

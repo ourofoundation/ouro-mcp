@@ -209,3 +209,17 @@ def test_unprocessable_entity_preserves_top_level_context() -> None:
     }
     assert payload["errors"] == {"file": "Unexpected contributor key"}
     assert payload["action_id"].endswith("0002")
+
+
+def test_pinned_organization_refusal_is_actionable_for_an_agent() -> None:
+    from ouro import OuroError
+
+    error = OuroError(
+        "This client is pinned to organization org-a and can't write to org-b. "
+        "Call use_organization() to switch."
+    )
+    payload = json.loads(_format_ouro_error(error))
+    assert payload["error"] == "organization_pinned"
+    assert payload["retryable"] is False
+    assert "use_organization" not in payload["message"]
+    assert "Omit org_id" in payload["message"]
