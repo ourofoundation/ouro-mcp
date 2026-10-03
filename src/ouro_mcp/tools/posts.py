@@ -125,6 +125,8 @@ def register(mcp: FastMCP) -> None:
         Extended markdown is standard markdown plus:
         - Mentions: @username
         - LaTeX: \\(inline\\) and \\[display\\]
+        - Callouts: a blockquote whose first line is `> [!NOTE]` (or TIP, IMPORTANT, WARNING,
+          CAUTION) renders as a labelled box
         - Inline links: [label](post:|file:|dataset:|route:|service:|quest:<uuid>), [label](action:<uuid>)
           for route runs, or [label](asset:<uuid>) when the type is unknown. Do not invent URL paths.
         - Block embeds:

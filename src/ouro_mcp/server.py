@@ -130,6 +130,8 @@ redistribution before publishing third-party work.
   run receipt. Prefer viewMode "preview" for files and datasets. Route-action tools return
   ready-made `link_markdown` / `embed_markdown` to paste.
 - LaTeX: \\(inline\\) and \\[display\\].
+- Callout: a blockquote whose first line is `> [!NOTE]` (or TIP, IMPORTANT, WARNING, CAUTION)
+  renders as a labelled box. Use one to say what a post is, e.g. that it is AI-generated.
 
 **Common workflows**:
 - Datasets: read the schema (get_asset detail="full"), then query_dataset for samples, filters,
