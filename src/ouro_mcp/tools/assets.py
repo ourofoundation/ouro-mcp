@@ -545,6 +545,16 @@ def register(mcp: FastMCP) -> None:
     def get_compatible_routes(
         id: Annotated[str, Field(description="UUID of the asset")],
         ctx: Context,
+        query: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "What you want to do with the asset, in plain words "
+                    '(e.g. "relax the structure", "band gap"). Returns the best-matching '
+                    "compatible routes first and ignores sort."
+                )
+            ),
+        ] = None,
         sort: Annotated[
             str,
             Field(description='"popular" (default, most used first) | "recent" | "updated"'),
@@ -556,7 +566,8 @@ def register(mcp: FastMCP) -> None:
 
         Returns routes whose input type is compatible with the given asset,
         answering the question "what can I do with this asset?". Defaults to
-        popularity order so the most-used routes appear first.
+        popularity order so the most-used routes appear first. Pass `query` to
+        search those routes by intent instead of paging through the list.
         """
         allowed_sort = {"popular", "recent", "updated"}
         if sort not in allowed_sort:
@@ -567,8 +578,10 @@ def register(mcp: FastMCP) -> None:
             raise ValueError("offset must be non-negative.")
 
         ouro = ctx.request_context.lifespan_context.ouro
+        query = (query or "").strip() or None
         page = ouro.assets.compatible_routes(
             id,
+            query=query,
             limit=limit,
             offset=offset,
             sort=sort,
@@ -598,7 +611,10 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             noun="compatible routes",
             empty_text="No compatible routes.",
-            extras=[f"asset_id: `{id}`", f"sort: {sort}"],
+            extras=[
+                f"asset_id: `{id}`",
+                f"query: {query}" if query else f"sort: {sort}",
+            ],
         )
 
 
