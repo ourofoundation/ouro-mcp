@@ -156,3 +156,60 @@ def test_list_my_actions_rejects_unknown_status() -> None:
     result = json.loads(_call("list_my_actions", _FakeRoutes(), status="running"))
 
     assert "error" in result
+
+
+ORG_ID = "00000000-0000-0000-0000-0000000000aa"
+TEAM_ID = "00000000-0000-0000-0000-0000000000bb"
+
+
+def _call_with_ouro(ouro: SimpleNamespace, **kwargs) -> str:
+    mcp = _CaptureMCP()
+    register(mcp)
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(lifespan_context=SimpleNamespace(ouro=ouro))
+    )
+    return mcp.tools["execute_route"](ctx=ctx, **kwargs)
+
+
+def test_execute_route_runs_in_the_named_organization() -> None:
+    routes = _FakeRoutes(polled=_action("success"))
+
+    _call("execute_route", routes, route_id=ROUTE_ID, org_id=ORG_ID, team_id=TEAM_ID)
+
+    assert routes.execute_calls[0]["org_id"] == ORG_ID
+    assert routes.execute_calls[0]["team_id"] == TEAM_ID
+
+
+def test_execute_route_without_an_organization_stays_personal() -> None:
+    routes = _FakeRoutes(polled=_action("success"))
+
+    _call("execute_route", routes, route_id=ROUTE_ID)
+
+    assert "org_id" not in routes.execute_calls[0]
+    assert "team_id" not in routes.execute_calls[0]
+
+
+def test_execute_route_takes_the_organization_from_the_team() -> None:
+    routes = _FakeRoutes(polled=_action("success"))
+    teams = SimpleNamespace(retrieve=lambda team_id: {"id": team_id, "org_id": ORG_ID})
+
+    _call_with_ouro(
+        SimpleNamespace(routes=routes, teams=teams, organization=None),
+        route_id=ROUTE_ID,
+        team_id=TEAM_ID,
+    )
+
+    assert routes.execute_calls[0]["org_id"] == ORG_ID
+
+
+def test_execute_route_pinned_leaves_the_organization_to_the_client() -> None:
+    routes = _FakeRoutes(polled=_action("success"))
+
+    _call_with_ouro(
+        SimpleNamespace(routes=routes, organization=ORG_ID),
+        route_id=ROUTE_ID,
+        team_id=TEAM_ID,
+    )
+
+    assert "org_id" not in routes.execute_calls[0]
+    assert routes.execute_calls[0]["team_id"] == TEAM_ID

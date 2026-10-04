@@ -97,6 +97,12 @@ is refused. When not pinned, call get_organizations() and get_teams(org_id=...) 
 org_id and team_id to every create_* tool; if the user hasn't said where to publish, ask. Skip
 teams marked `agent_can_create: false`.
 
+**Where routes run**: execute_route runs in one organization or in the user's personal context,
+and that context pays for the run and keeps what it creates. Personal and organization work never
+mix. When pinned it runs in the pinned organization. When not pinned, pass org_id (and optionally
+team_id) if the user is working in an organization; without it the run is personal. Results list
+the organization and team each output landed in.
+
 **Who can see it**: a team is the boundary. Everything in an internal ("organization") team
 stays inside the organization, so public and monetized assets are refused there. Leave
 `visibility` unset and a new asset takes the team's audience: public in a public team,

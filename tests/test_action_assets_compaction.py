@@ -104,6 +104,7 @@ class TestCompactActionAssets(unittest.TestCase):
                         "id": "a1",
                         "name": "Benchmark report",
                         "asset_type": "file",
+                        "visibility": "public",
                         "description": "summary",
                     },
                 },
@@ -113,6 +114,34 @@ class TestCompactActionAssets(unittest.TestCase):
                 },
             ],
         )
+
+    def test_reports_where_each_asset_lives(self) -> None:
+        rows = [
+            {
+                "name": "structure",
+                "asset": {
+                    "id": "a1",
+                    "name": "Fe4N",
+                    "asset_type": "file",
+                    "org_id": "org-1",
+                    "team_id": "team-1",
+                    "visibility": "organization",
+                    "organization": {"id": "org-1", "name": "acme"},
+                    "team": {"id": "team-1", "name": "magnets"},
+                },
+            }
+        ]
+        asset = self.services._compact_action_assets(rows)[0]["asset"]
+        self.assertEqual(
+            {key: asset[key] for key in ("org_id", "org_name", "team_id", "team_name")},
+            {
+                "org_id": "org-1",
+                "org_name": "acme",
+                "team_id": "team-1",
+                "team_name": "magnets",
+            },
+        )
+        self.assertEqual(asset["visibility"], "organization")
 
     def test_falls_back_to_fk_columns_when_join_is_missing(self) -> None:
         rows = [{"name": "structure", "asset_id": "a1", "asset_type": "file"}]

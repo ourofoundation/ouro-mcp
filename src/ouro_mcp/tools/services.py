@@ -417,7 +417,21 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _compact_asset(asset: Any) -> Optional[dict[str, Any]]:
+def _asset_location(asset: dict[str, Any]) -> dict[str, Any]:
+    """Where an asset lives, named the way get_asset's summary names it."""
+    team = asset.get("team") if isinstance(asset.get("team"), dict) else {}
+    organization = asset.get("organization") or team.get("organization")
+    organization = organization if isinstance(organization, dict) else {}
+    return {
+        "org_id": asset.get("org_id") or organization.get("id"),
+        "org_name": organization.get("name"),
+        "team_id": asset.get("team_id") or team.get("id"),
+        "team_name": team.get("name"),
+        "visibility": asset.get("visibility"),
+    }
+
+
+def _compact_asset(asset: Any, *, location: bool = False) -> Optional[dict[str, Any]]:
     asset = _as_dict(asset)
     if not asset:
         return None
@@ -426,6 +440,10 @@ def _compact_asset(asset: Any) -> Optional[dict[str, Any]]:
         "name": asset.get("name"),
         "asset_type": asset.get("asset_type"),
     }
+    if location:
+        result.update(
+            {k: str(v) for k, v in _asset_location(asset).items() if v}
+        )
     if asset.get("description"):
         desc = asset.get("description")
         if isinstance(desc, dict):
@@ -435,6 +453,13 @@ def _compact_asset(asset: Any) -> Optional[dict[str, Any]]:
         else:
             result["description"] = str(desc)[:200]
     return {k: v for k, v in result.items() if v not in (None, "")}
+
+
+def _team_org_id(ouro: Any, team_id: str) -> Optional[str]:
+    """The organization a team belongs to, or None when it can't be read."""
+    team = _as_dict(ouro.teams.retrieve(team_id))
+    org_id = team.get("org_id") or (team.get("organization") or {}).get("id")
+    return str(org_id) if org_id else None
 
 
 def _compact_action_assets(rows: Any) -> Optional[list[dict[str, Any]]]:
@@ -449,7 +474,9 @@ def _compact_action_assets(rows: Any) -> Optional[list[dict[str, Any]]]:
          "asset_type": str, "asset": {full asset record}}
 
     For the agent we only need the logical slot ``name``, the optional
-    ``is_primary`` marker, and a compact view of the resolved asset.
+    ``is_primary`` marker, and a compact view of the resolved asset with
+    where it lives: Ouro places a route's outputs, so the agent learns the
+    organization and team from the result rather than choosing them.
     Returns ``None`` when the list is empty/missing so callers can omit the
     key entirely.
     """
@@ -471,7 +498,7 @@ def _compact_action_assets(rows: Any) -> Optional[list[dict[str, Any]]]:
         # Prefer the resolved nested `asset` join; fall back to the FK
         # columns when the join wasn't selected so the agent still gets
         # `{id, asset_type}` to follow up on.
-        asset = _compact_asset(row.get("asset"))
+        asset = _compact_asset(row.get("asset"), location=True)
         if asset is None:
             asset = _compact_asset(
                 {
@@ -505,7 +532,7 @@ def _unified_action_assets(
     plural = _compact_action_assets(plural_rows)
     if plural:
         return plural
-    legacy = _compact_asset(legacy_singular)
+    legacy = _compact_asset(legacy_singular, location=True)
     if legacy:
         return [{"is_primary": True, "asset": legacy}]
     return None
@@ -1183,6 +1210,29 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        org_id: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Organization UUID to run this call in. The organization a "
+                    "route runs in pays for it (when it sponsors its members' "
+                    "usage) and owns what it creates. Omit to run in the pinned "
+                    "organization, or in the user's personal context when not "
+                    "pinned: they pay, and outputs are their personal work."
+                )
+            ),
+        ] = None,
+        team_id: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Team UUID for the assets this route creates. Must be in the "
+                    "organization the route runs in. Omit to put them beside the "
+                    "input asset when it is in that organization, else in the "
+                    "organization's default team."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool,
             Field(description="Validate parameters without executing"),
@@ -1224,8 +1274,9 @@ def register(mcp: FastMCP) -> None:
         failure — plus `status`, `action_id`, and a `cost` block for
         monetized pay-per-use routes. Resolved inputs and produced assets
         come back as `input_assets` / `output_assets`: lists of
-        `{name, is_primary?, asset: {id, asset_type, name?, description?}}`
-        entries, one per named slot the route declared. Discriminate by
+        `{name, is_primary?, asset: {id, asset_type, name?, description?,
+        org_name?, team_name?, visibility?}}` entries, one per named slot
+        the route declared. Discriminate by
         `name` (the slot name from the route's input/output schema), not
         by position; `is_primary: true` marks the canonical entry for
         legacy single-output routes.
@@ -1249,8 +1300,19 @@ def register(mcp: FastMCP) -> None:
         For asset inputs, pass IDs with `input_assets` keyed by route body parameter
         name. Do not construct file/dataset/post body objects by hand; Ouro resolves
         those IDs into the service-facing request body.
+
+        Where it runs: a route runs in one organization, or in the user's
+        personal context. That context pays and keeps the outputs, so personal
+        and organization work never mix. Pass `org_id` when the user is working
+        in an organization; `team_id` picks the team inside it (a team outside
+        it is refused). Each output asset reports the `org_name` and
+        `team_name` it landed in: tell the user where their work went.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+
+        # A team names its organization, so the team alone is enough
+        if team_id and not org_id and not getattr(ouro, "organization", None):
+            org_id = _team_org_id(ouro, team_id)
 
         route = ouro.routes.retrieve(route_id)
         execution_mode = (
@@ -1308,7 +1370,9 @@ def register(mcp: FastMCP) -> None:
             params=params_dict,
             input_assets=input_assets_dict,
             wait=False,
-            **optional_kwargs(currency=currency, notify=notify),
+            **optional_kwargs(
+                currency=currency, notify=notify, org_id=org_id, team_id=team_id
+            ),
         )
         timed_out = False
         if wait and action.is_pending:
