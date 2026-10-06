@@ -102,7 +102,7 @@ def register(mcp: FastMCP) -> None:
         asset_type: Annotated[
             Optional[str], Field(description='"dataset" | "post" | "file" | "service" | "route" | "quest"')
         ] = None,
-        scope: Annotated[Optional[str], Field(description='"personal" | "org" | "global" | "all"')] = None,
+        scope: Annotated[Optional[str], Field(description='"personal" | "org" | "shared" (assets others shared with you) | "purchased" (assets you bought) | "global" | "all"')] = None,
         org_id: Annotated[Optional[str], Field(description="Organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Team UUID")] = None,
         user_id: Annotated[Optional[str], Field(description="Asset owner UUID")] = None,
