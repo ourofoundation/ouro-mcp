@@ -1025,6 +1025,10 @@ def register(mcp: FastMCP) -> None:
         To sell in both currencies, give unit_cost_usd and unit_cost_sats
         instead of unit_cost; callers pick which to pay in, and price_currency
         is what's charged when they don't.
+
+        Charts drawn on each run (`x-ouro-response-charts`) can't be set here:
+        they come only from the service's OpenAPI spec, so declare them there
+        and re-sync with update_service(spec_url=...).
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
@@ -1115,7 +1119,8 @@ def register(mcp: FastMCP) -> None:
         """Update a route's method, path, schema, or metadata.
 
         Only the fields you pass are changed; the route's name is preserved
-        when `name` is omitted.
+        when `name` is omitted. Response charts come only from the service's
+        OpenAPI spec (see create_route).
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
