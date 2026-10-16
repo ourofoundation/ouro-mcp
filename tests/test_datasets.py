@@ -159,10 +159,6 @@ class _FakeDatasets:
             }
         )
 
-    def query(self, dataset_id: str, sql: str):
-        self.query_calls.append({"dataset_id": dataset_id, "sql": sql})
-        return self.sql_result
-
     def list_rows(
         self,
         dataset_id: str,
@@ -170,10 +166,16 @@ class _FakeDatasets:
         limit: int = 100,
         offset: int = 0,
         resolve_refs: bool = False,
+        sql: str | None = None,
+        prompt: str | None = None,
     ) -> DatasetRows:
         call = {"dataset_id": dataset_id, "limit": limit, "offset": offset}
         if resolve_refs:
             call["resolve_refs"] = resolve_refs
+        if sql is not None:
+            call["sql"] = sql
+        if prompt is not None:
+            call["prompt"] = prompt
         self.query_calls.append(call)
         return DatasetRows.model_validate(self.rows)
 
@@ -420,19 +422,16 @@ def test_query_dataset_validates_pagination_arguments() -> None:
     assert result["retryable"] is False
 
 
+SQL_ROWS = {
+    "data": [{"category": "alpha", "count": 2, "missing": None}],
+    "total": 1,
+    "hasMore": False,
+    "sql": "SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
+}
+
+
 def test_query_dataset_runs_optional_sql_query() -> None:
-    datasets = _FakeDatasets(
-        sql_result=pd.DataFrame(
-            [
-                {
-                    "category": "alpha",
-                    "count": 2,
-                    "missing": float("nan"),
-                    "seen_at": pd.Timestamp("2026-05-02T12:00:00Z"),
-                }
-            ]
-        )
-    )
+    datasets = _FakeDatasets(rows=SQL_ROWS)
     tools = _dataset_tools()
 
     result = tools["query_dataset"](
@@ -445,21 +444,19 @@ def test_query_dataset_runs_optional_sql_query() -> None:
     assert datasets.query_calls == [
         {
             "dataset_id": "dataset-1",
-            "sql": (
-                "SELECT category, count(*) AS count FROM {{table}} "
-                "GROUP BY category LIMIT 100"
-            ),
+            "limit": 100,
+            "offset": 0,
+            "sql": "SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
         }
     ]
     assert result.startswith("Found 1 rows")
-    assert "| category | count | missing | seen_at |" in result
-    assert "| alpha | 2 |  | 2026-05-02T12:00:00+00:00 |" in result
+    assert "SQL: `SELECT category, count(*) AS count FROM {{table}} GROUP BY category`" in result
+    assert "| category | count | missing |" in result
+    assert "| alpha | 2 |  |" in result
 
 
 def test_query_dataset_sql_response_format_json() -> None:
-    datasets = _FakeDatasets(
-        sql_result=pd.DataFrame([{"category": "alpha", "count": 2}])
-    )
+    datasets = _FakeDatasets(rows=SQL_ROWS)
     tools = _dataset_tools()
 
     result = json.loads(
@@ -472,10 +469,53 @@ def test_query_dataset_sql_response_format_json() -> None:
     )
 
     assert result == {
-        "rows": [{"category": "alpha", "count": 2}],
-        "row_count": 1,
+        "rows": SQL_ROWS["data"],
+        "offset": 0,
+        "limit": 100,
+        "hasMore": False,
+        "total": 1,
+        "sql": SQL_ROWS["sql"],
     }
-    assert datasets.query_calls[0]["sql"].endswith("LIMIT 100")
+
+
+def test_query_dataset_prompt_returns_rows_total_and_sql() -> None:
+    datasets = _FakeDatasets(
+        rows={
+            "data": [{"formula": "Fe2B"}, {"formula": "FeCo"}],
+            "total": 7,
+            "hasMore": True,
+            "sql": "SELECT * FROM {{table}} WHERE formula ~ 'Fe(?![a-z])'",
+        }
+    )
+    tools = _dataset_tools()
+
+    result = tools["query_dataset"](
+        "dataset-1", _ctx(datasets), prompt="iron compounds", limit=2
+    )
+
+    assert datasets.query_calls == [
+        {"dataset_id": "dataset-1", "limit": 2, "offset": 0, "prompt": "iron compounds"}
+    ]
+    assert result.startswith(
+        "Found 2 of 7 rows (offset=0; limit=2; more available — call again with offset=2)"
+    )
+    assert "SQL: `SELECT * FROM {{table}} WHERE formula ~ 'Fe(?![a-z])'`" in result
+
+
+def test_query_dataset_rejects_sql_and_prompt_together() -> None:
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["query_dataset"](
+            "dataset-1",
+            _ctx(_FakeDatasets()),
+            sql="SELECT * FROM {{table}}",
+            prompt="iron compounds",
+        )
+    )
+
+    assert result["error"] == "invalid_arguments"
+    assert "not both" in result["message"]
 
 
 def test_create_dataset_forwards_refs() -> None:
@@ -754,24 +794,22 @@ def test_query_dataset_resolve_refs_passes_flag_and_returns_sidecar() -> None:
     assert as_json["resolved_refs"] == sidecar
 
 
-def test_query_dataset_resolve_refs_rejected_with_sql() -> None:
+def test_query_dataset_resolve_refs_works_with_sql() -> None:
+    datasets = _FakeDatasets(rows={"data": [], "sql": "SELECT * FROM {{table}}"})
     tools = _dataset_tools()
 
-    result = json.loads(
-        tools["query_dataset"](
-            "dataset-1",
-            _ctx(_FakeDatasets()),
-            sql="SELECT * FROM {{table}}",
-            resolve_refs=True,
-        )
+    tools["query_dataset"](
+        "dataset-1",
+        _ctx(datasets),
+        sql="SELECT * FROM {{table}}",
+        resolve_refs=True,
     )
 
-    assert result["error"] == "invalid_arguments"
-    assert "not supported with sql" in result["message"]
+    assert datasets.query_calls[0]["resolve_refs"] is True
 
 
-def test_query_dataset_sql_folds_limit_offset() -> None:
-    datasets = _FakeDatasets(sql_result=pd.DataFrame([{"id": 1}]))
+def test_query_dataset_sql_pages_server_side() -> None:
+    datasets = _FakeDatasets(rows={"data": [{"id": 1}]})
     tools = _dataset_tools()
 
     tools["query_dataset"](
@@ -785,14 +823,16 @@ def test_query_dataset_sql_folds_limit_offset() -> None:
     assert datasets.query_calls == [
         {
             "dataset_id": "dataset-1",
-            "sql": "SELECT id, name FROM {{table}} LIMIT 50 OFFSET 10",
+            "limit": 50,
+            "offset": 10,
+            "sql": "SELECT id, name FROM {{table}}",
         }
     ]
 
 
-def test_query_dataset_sql_treats_limit_zero_as_default() -> None:
+def test_query_dataset_treats_limit_zero_as_default() -> None:
     """Agents sometimes pass limit=0 to 'clear' the param after a rejection."""
-    datasets = _FakeDatasets(sql_result=pd.DataFrame([{"id": 1}]))
+    datasets = _FakeDatasets(rows={"data": [{"id": 1}]})
     tools = _dataset_tools()
 
     tools["query_dataset"](
@@ -803,22 +843,8 @@ def test_query_dataset_sql_treats_limit_zero_as_default() -> None:
         offset=0,
     )
 
-    assert datasets.query_calls[0]["sql"] == "SELECT id FROM {{table}} LIMIT 100"
+    assert datasets.query_calls[0]["limit"] == 100
 
-
-def test_query_dataset_sql_keeps_existing_limit() -> None:
-    datasets = _FakeDatasets(sql_result=pd.DataFrame([{"id": 1}]))
-    tools = _dataset_tools()
-
-    tools["query_dataset"](
-        "dataset-1",
-        _ctx(datasets),
-        sql="SELECT id FROM {{table}} LIMIT 5",
-        limit=50,
-        offset=10,
-    )
-
-    assert datasets.query_calls[0]["sql"] == "SELECT id FROM {{table}} LIMIT 5"
 
 def test_edit_dataset_columns_applies_operations_in_order() -> None:
     datasets = _FakeDatasets(

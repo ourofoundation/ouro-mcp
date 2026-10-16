@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import tempfile
 from pathlib import Path
 from typing import Annotated, Any, Literal, Optional
@@ -38,36 +37,8 @@ from ouro_mcp.utils import (
 )
 from pydantic import BeforeValidator, Field
 
-_SQL_LIMIT_OR_OFFSET_RE = re.compile(r"\b(LIMIT|OFFSET)\b", re.IGNORECASE)
 _DEFAULT_QUERY_LIMIT = 100
 _MAX_QUERY_LIMIT = 1000
-
-
-def _fold_sql_pagination(sql: str, *, limit: int, offset: int) -> str:
-    """Fold tool-level limit/offset into SQL when the agent passed both.
-
-    Agents commonly pass ``limit``/``offset`` alongside ``sql`` because both
-    are schema fields. Rejecting that combination caused avoidable retries;
-    fold the pagination into the query instead. If the SQL already contains
-    LIMIT or OFFSET, leave it alone (the SQL wins).
-
-    ``limit <= 0`` is treated as unspecified (confused agents sometimes pass
-    0 to "clear" the param) and falls back to the default page size.
-    """
-    if _SQL_LIMIT_OR_OFFSET_RE.search(sql):
-        return sql
-
-    effective_limit = limit if limit > 0 else _DEFAULT_QUERY_LIMIT
-    if effective_limit > _MAX_QUERY_LIMIT:
-        raise ValueError(f"limit must be between 1 and {_MAX_QUERY_LIMIT}.")
-    if offset < 0:
-        raise ValueError("offset must be non-negative.")
-
-    folded = sql.rstrip().rstrip(";")
-    folded = f"{folded} LIMIT {effective_limit}"
-    if offset:
-        folded = f"{folded} OFFSET {offset}"
-    return folded
 
 
 def _dataframe_from_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
@@ -273,17 +244,6 @@ def _resolve_dataset_data(
         return _dataframe_from_upload(ouro, upload_id)
 
     return None
-
-
-def _json_records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
-    rows = df.to_dict(orient="records")
-    for row in rows:
-        for k, v in row.items():
-            if pd.isna(v):
-                row[k] = None
-            elif hasattr(v, "isoformat"):
-                row[k] = v.isoformat()
-    return rows
 
 
 def _normalize_refs_for_result(value: Optional[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -502,8 +462,19 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "Optional read-only SQL query. Use `{{table}}` as a placeholder "
                     "for the dataset table. Column names are lowercase snake_case — "
-                    "use them unquoted. limit/offset are folded into the SQL "
-                    "automatically when it has no LIMIT/OFFSET of its own."
+                    "use them unquoted. limit/offset page through the query's "
+                    "result."
+                )
+            ),
+        ] = None,
+        prompt: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Optional plain-language description of the rows you want "
+                    '(e.g. "iron compounds with Curie temperature above 600 K, '
+                    'highest first"). Ouro writes the SQL, runs it, and returns '
+                    "the SQL with the rows. Use instead of sql, not with it."
                 )
             ),
         ] = None,
@@ -511,19 +482,13 @@ def register(mcp: FastMCP) -> None:
             int,
             Field(
                 description=(
-                    "Max rows to return (1-1000). Works with sql too: appended as "
-                    "LIMIT when the SQL has none. limit=0 is treated as the default."
+                    "Max rows to return (1-1000). limit=0 is treated as the default."
                 )
             ),
         ] = _DEFAULT_QUERY_LIMIT,
         offset: Annotated[
             int,
-            Field(
-                description=(
-                    "Row offset for pagination. Works with sql too: appended as "
-                    "OFFSET when the SQL has no LIMIT/OFFSET of its own."
-                )
-            ),
+            Field(description="Row offset for pagination, in the table or in a query's result."),
         ] = 0,
         resolve_refs: Annotated[
             bool,
@@ -534,8 +499,7 @@ def register(mcp: FastMCP) -> None:
                     "ref_kind names the kind: asset or action) into "
                     "names/types/URLs. Returns a `resolved_refs` sidecar map "
                     "(column -> id -> {kind, id, name, web_url, ...}). "
-                    "Permission-aware: ids you can't see are omitted. Not "
-                    "supported with sql."
+                    "Permission-aware: ids you can't see are omitted."
                 )
             ),
         ] = False,
@@ -551,19 +515,18 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Query a dataset's contents as a compact markdown table (or JSON).
 
-        Use this for schema peeks, small samples, SQL filters, aggregations, and
+        Use this for schema peeks, small samples, filters, aggregations, and
         top-N rankings. For bulk analysis (scoring/filtering hundreds+ rows or
         local scripts), prefer ``download_asset`` (CSV) and compute locally —
         do not page large tables into chat.
 
-        By default this pages server-side so large datasets don't load fully
-        into memory. Pass ``sql`` to run a read-only PostgreSQL query, mirroring
-        ``ouro.datasets.query(dataset_id, sql=...)`` from ouro-py. Always
-        reference the table as ``{{table}}`` in SQL mode. Column names are
-        lowercase snake_case — use them unquoted. Writes are rejected
-        server-side and queries time out after 10 seconds. Tool-level
-        ``limit``/``offset`` are folded into the SQL when it has no
-        LIMIT/OFFSET of its own (so agents can pass both without failing).
+        With neither ``sql`` nor ``prompt``, pages through the table. Pass
+        ``sql`` to run a read-only PostgreSQL query (reference the table as
+        ``{{table}}``; column names are lowercase snake_case, unquoted), or
+        ``prompt`` to describe the rows in plain language and have Ouro write
+        the SQL. Either way the result is paged server-side with its total
+        count, and the response shows the SQL that ran. Writes are rejected
+        and queries time out after 10 seconds.
 
         Inspect the schema first (``ouro://datasets/{id}/schema``): columns with
         ``semantic_type: "reference"`` hold Ouro object ids (``ref_kind`` is
@@ -572,47 +535,31 @@ def register(mcp: FastMCP) -> None:
 
         Default response is a markdown table (much smaller than JSON for wide
         tables). Set ``response_format="json"`` or ``OURO_MCP_RESPONSE_FORMAT=json``
-        for the legacy ``{rows, offset, limit, hasMore}`` envelope.
+        for the ``{rows, offset, limit, hasMore}`` envelope.
         """
-        if sql is not None:
-            if not sql.strip():
-                raise ValueError("sql query is required when sql is provided.")
-            if resolve_refs:
-                raise ValueError(
-                    "resolve_refs is not supported with sql; use the "
-                    "paginated (non-sql) query mode instead."
-                )
-
-            sql = _fold_sql_pagination(sql, limit=limit, offset=offset)
-
-            ouro = ctx.request_context.lifespan_context.ouro
-            df = ouro.datasets.query(dataset_id, sql=sql)
-            rows = _json_records_from_dataframe(df)
-            result = format_table_response(
-                rows,
-                row_count=len(rows),
-                response_format=response_format,
-            )
-            return truncate_response(
-                result,
-                context=(
-                    "Refine the SQL with LIMIT, WHERE, or aggregations to reduce "
-                    "the response size."
-                ),
-            )
-
-        if limit <= 0 or limit > _MAX_QUERY_LIMIT:
+        if sql is not None and prompt is not None:
+            raise ValueError("Pass sql or prompt, not both.")
+        if sql is not None and not sql.strip():
+            raise ValueError("sql query is required when sql is provided.")
+        if prompt is not None and not prompt.strip():
+            raise ValueError("prompt is required when prompt is provided.")
+        # Agents sometimes pass limit=0 to "clear" the param
+        if limit <= 0:
+            limit = _DEFAULT_QUERY_LIMIT
+        if limit > _MAX_QUERY_LIMIT:
             raise ValueError(f"limit must be between 1 and {_MAX_QUERY_LIMIT}.")
         if offset < 0:
             raise ValueError("offset must be non-negative.")
 
         ouro = ctx.request_context.lifespan_context.ouro
-
+        is_query = sql is not None or prompt is not None
         page = ouro.datasets.list_rows(
             dataset_id,
             limit=limit,
             offset=offset,
             resolve_refs=resolve_refs,
+            **({"sql": sql} if sql is not None else {}),
+            **({"prompt": prompt} if prompt is not None else {}),
         )
 
         result = format_table_response(
@@ -620,13 +567,20 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             limit=limit,
             has_more=page.has_more,
+            total=page.total if is_query else None,
+            sql=page.sql if is_query else None,
             resolved_refs=_dump_resolved_refs(page.resolved_refs) if resolve_refs else None,
             response_format=response_format,
         )
 
         return truncate_response(
             result,
-            context="Use the offset parameter to load more rows.",
+            context=(
+                "Narrow the query (WHERE, fewer columns, aggregation) or use a "
+                "smaller limit."
+                if is_query
+                else "Use the offset parameter to load more rows."
+            ),
         )
 
     @mcp.tool(annotations={"idempotentHint": False})

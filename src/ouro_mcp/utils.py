@@ -766,6 +766,8 @@ def format_table_response(
     limit: int | None = None,
     has_more: bool | None = None,
     row_count: int | None = None,
+    total: int | None = None,
+    sql: str | None = None,
     resolved_refs: dict[str, Any] | None = None,
     empty_text: str = "No rows.",
     response_format: str | None = None,
@@ -787,6 +789,10 @@ def format_table_response(
         payload["limit"] = limit
     if has_more is not None:
         payload["hasMore"] = bool(has_more)
+    if total is not None:
+        payload["total"] = total
+    if sql:
+        payload["sql"] = sql
     if resolved_refs is not None:
         payload["resolved_refs"] = resolved_refs
 
@@ -798,7 +804,11 @@ def format_table_response(
     elif row_count is not None and offset is None:
         header = f"Found {row_count} rows"
     else:
-        header = f"Found {shown} rows"
+        header = (
+            f"Found {shown} of {total} rows"
+            if total is not None and total != shown
+            else f"Found {shown} rows"
+        )
         bits: list[str] = []
         if offset is not None:
             bits.append(f"offset={offset}")
@@ -811,6 +821,8 @@ def format_table_response(
             header += f" ({'; '.join(bits)})"
 
     parts = [header]
+    if sql:
+        parts.append(f"SQL: `{sql}`")
     if rows:
         parts.append("")
         parts.append(render_markdown_table(rows))
