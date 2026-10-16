@@ -695,6 +695,16 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        rescore_entries: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Re-run the item's eval route on its existing entries after "
+                    "this update, e.g. when the eval route changed. Runs as you and "
+                    "only updates scores; it never accepts, rejects or pays."
+                )
+            ),
+        ] = False,
     ) -> str:
         """Update an item's metadata, status, reward, or auto-eval config.
 
@@ -734,7 +744,10 @@ def register(mcp: FastMCP) -> None:
                 reward_amount=reward_amount,
             ),
         )
-        return dump_json(_item_summary(updated))
+        summary = _item_summary(updated)
+        if rescore_entries:
+            summary["rescore"] = ouro.quests.rescore_item(quest_id, item_id)
+        return dump_json(summary)
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors

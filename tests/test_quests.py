@@ -203,6 +203,12 @@ class _FakeQuests:
             leaderboard_order=kwargs.get("leaderboard_order"),
         )
 
+    def rescore_item(self, quest_id: str, item_id: str):
+        self.calls.append(
+            {"method": "rescore_item", "quest_id": quest_id, "item_id": item_id}
+        )
+        return {"started": [{"entry_id": "e1", "action_id": "a1"}], "skipped": []}
+
     def create_entry(self, quest_id: str, **kwargs):
         self.calls.append({"method": "create_entry", "quest_id": quest_id, **kwargs})
         return _FakeModel(id="entry-1", status="submitted")
@@ -567,6 +573,22 @@ def test_update_quest_item_propagates_reward_and_eval_fields() -> None:
     assert call["eval_pass_max"] == 1.0
     assert call["leaderboard_enabled"] is True
     assert call["leaderboard_order"] == "asc"
+
+
+def test_update_quest_item_rescores_after_the_update() -> None:
+    quests = _FakeQuests()
+    result = json.loads(
+        _quest_tools()["update_quest_item"](
+            "quest-1",
+            "item-1",
+            _ctx(quests),
+            eval_route_id="route-2",
+            rescore_entries=True,
+        )
+    )
+
+    assert [call["method"] for call in quests.calls] == ["update_item", "rescore_item"]
+    assert result["rescore"]["started"][0]["entry_id"] == "e1"
 
 
 def test_update_quest_item_serializes_typed_submission_config() -> None:
