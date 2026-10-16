@@ -25,6 +25,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 AssetType = Literal["file", "dataset", "post"]
+# Contributors may also submit a route; the item's eval route runs it.
+SubmissionAssetType = Literal["file", "dataset", "post", "route"]
 
 
 class SubmissionAssetDeclaration(BaseModel):
@@ -32,8 +34,12 @@ class SubmissionAssetDeclaration(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    asset_type: AssetType = Field(
-        description="Asset type accepted for this contributor input"
+    asset_type: SubmissionAssetType = Field(
+        description=(
+            "Asset type accepted for this contributor input. 'route': the "
+            "contributor submits a route (e.g. a model) and the item's eval "
+            "route runs it; pair with eval_trigger='owner'."
+        )
     )
     required: bool = Field(
         default=True, description="Whether contributors must provide this input"
@@ -98,6 +104,15 @@ class QuestItemInput(BaseModel):
     eval_pass_max: Optional[float] = None
     leaderboard_enabled: Optional[bool] = None
     leaderboard_order: Optional[Literal["desc", "asc"]] = None
+    eval_trigger: Optional[Literal["submit", "owner"]] = Field(
+        default=None,
+        description=(
+            "When the eval route runs: 'submit' (default) on every entry, or "
+            "'owner': entries wait until the quest's owner starts each "
+            "evaluation with evaluate_quest_entry (for evals that cost the owner "
+            "compute, such as running submitted routes)."
+        ),
+    )
     submission_assets: Optional[Dict[str, SubmissionAssetDeclaration]] = Field(
         default=None,
         description=(
@@ -196,6 +211,7 @@ def _item_summary(item: Any) -> Dict[str, Any]:
         "eval_pass_max": _item_field(item, "eval_pass_max"),
         "leaderboard_enabled": _item_field(item, "leaderboard_enabled"),
         "leaderboard_order": _item_field(item, "leaderboard_order"),
+        "eval_trigger": _item_field(item, "eval_trigger"),
         "submission_assets": _item_field(item, "submission_assets"),
         "eval_static_inputs": _item_field(item, "eval_static_inputs"),
         "contributor_keys": _contributor_keys(item),
@@ -658,6 +674,16 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        eval_trigger: Annotated[
+            Optional[Literal["submit", "owner"]],
+            Field(
+                description=(
+                    '"submit" evaluates every entry when it arrives; "owner" '
+                    "waits for the quest's owner to start each evaluation "
+                    "(evaluate_quest_entry)."
+                )
+            ),
+        ] = None,
         submission_assets: Annotated[
             Optional[Dict[str, SubmissionAssetDeclaration]],
             Field(
@@ -738,6 +764,7 @@ def register(mcp: FastMCP) -> None:
                 eval_pass_max=eval_pass_max,
                 leaderboard_enabled=leaderboard_enabled,
                 leaderboard_order=leaderboard_order,
+                eval_trigger=eval_trigger,
                 submission_assets=_dump_model_record(submission_assets),
                 eval_static_inputs=_dump_model_record(eval_static_inputs),
                 reward_currency=reward_currency,
@@ -998,4 +1025,22 @@ def register(mcp: FastMCP) -> None:
             status=status,
             review=review,
         )
+        return dump_json(entry.model_dump(mode="json"))
+
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def evaluate_quest_entry(
+        quest_id: Annotated[str, Field(description="Quest UUID")],
+        entry_id: Annotated[str, Field(description="Quest entry UUID")],
+        ctx: Context,
+    ) -> str:
+        """Run the item's eval route on an entry, as the quest's owner (who pays).
+
+        For items with eval_trigger="owner", whose entries wait as
+        eval_status "pending", and to re-score an evaluated entry. An accepted
+        entry's score is updated without paying it again. Async eval routes
+        leave the entry "running"; check it later with list_quest_entries.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        entry = ouro.quests.evaluate_entry(quest_id, entry_id)
         return dump_json(entry.model_dump(mode="json"))

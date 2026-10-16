@@ -133,6 +133,13 @@ main score. The leaderboard is a view over stored entry scores — it does not
 run a second ranking route. Continuous quests are the natural fit when the
 same contributor may submit many scored entries.
 
+Benchmarks of routes (models, services): declare a contributor input with
+`asset_type: "route"` on the eval route, and set `eval_trigger: "owner"` so
+entries wait as `pending` until the quest's owner runs each evaluation with
+`evaluate_quest_entry` (the owner's eval route calls the submitted route and
+pays for it). `evaluate_quest_entry` also re-scores an evaluated entry. A
+route can be entered once per item, so one model can enter every track.
+
 For an item with `eval_route_id`, do not invent competing
 `submission_assets` keys. The server derives contributor keys from the eval
 route's input declarations after removing keys pinned in `eval_static_inputs`.
