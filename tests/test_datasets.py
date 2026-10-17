@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from ouro.models import Connection, Dataset, DatasetColumn, DatasetRows, DatasetView
+from ouro.models import DatasetIndex, Connection, Dataset, DatasetColumn, DatasetRows, DatasetView
 
 from ouro_mcp.tools.datasets import _resolve_dataset_data, register
 from ouro_mcp.utils import slim_dataset_schema
@@ -227,6 +227,22 @@ class _FakeDatasets:
         self.column_calls.append(
             {"method": "drop", "dataset_id": dataset_id, "column": column}
         )
+
+    def create_index(self, dataset_id: str, columns, *, unique: bool = False):
+        columns = [columns] if isinstance(columns, str) else list(columns)
+        self.column_calls.append(
+            {"method": "index", "dataset_id": dataset_id, "columns": columns, "unique": unique}
+        )
+        return DatasetIndex(name=f"t_{'_'.join(columns)}_idx", columns=columns, is_unique=unique)
+
+    def drop_index(self, dataset_id: str, name: str) -> None:
+        self.column_calls.append({"method": "drop_index", "dataset_id": dataset_id, "name": name})
+
+    def list_indexes(self, dataset_id: str):
+        return [
+            DatasetIndex(name="t_pkey", columns=["id"], is_unique=True, is_primary=True),
+            DatasetIndex(name="t_chemsys_idx", columns=["chemsys"]),
+        ]
 
     def schema(self, dataset_id: str) -> list[DatasetColumn]:
         return _columns(self.schema_response)
@@ -1101,3 +1117,50 @@ def test_create_dataset_rejects_bad_view_spec_before_creating(view) -> None:
     )
     assert "view" in out
     assert not datasets.created
+
+
+def test_edit_dataset_columns_builds_and_drops_indexes() -> None:
+    datasets = _FakeDatasets()
+    tools = _dataset_tools()
+
+    result = json.loads(
+        tools["edit_dataset_columns"](
+            "dataset-1",
+            [
+                {"op": "index", "columns": ["chemsys"]},
+                {"op": "index", "columns": ["source", "source_id"], "unique": True},
+                {"op": "drop_index", "name": "t_old_idx"},
+            ],
+            _ctx(datasets),
+        )
+    )
+
+    assert datasets.column_calls == [
+        {"method": "index", "dataset_id": "dataset-1", "columns": ["chemsys"], "unique": False},
+        {"method": "index", "dataset_id": "dataset-1", "columns": ["source", "source_id"], "unique": True},
+        {"method": "drop_index", "dataset_id": "dataset-1", "name": "t_old_idx"},
+    ]
+    assert result["operations"][1] == {
+        "op": "index",
+        "name": "t_source_source_id_idx",
+        "columns": ["source", "source_id"],
+    }
+    # The primary key is left out of the listing.
+    assert result["indexes"] == [{"name": "t_chemsys_idx", "columns": ["chemsys"], "unique": False}]
+
+
+def test_create_dataset_passes_indexes() -> None:
+    datasets = _FakeDatasets()
+    tools = _dataset_tools()
+
+    tools["create_dataset"](
+        name="structures",
+        org_id="org-1",
+        team_id="team-1",
+        ctx=_ctx(datasets),
+        visibility="private",
+        data=[{"chemsys": "Cl-Na"}],
+        indexes='["chemsys"]',
+    )
+
+    assert datasets.created[0]["indexes"] == ["chemsys"]

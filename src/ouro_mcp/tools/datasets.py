@@ -161,7 +161,7 @@ def _coerce_json_object(value: Any, *, parameter_name: str) -> Optional[dict[str
     raise ValueError(f"{parameter_name} must be a JSON object or JSON string.")
 
 
-_COLUMN_OPS = ("add", "update", "rename", "drop")
+_COLUMN_OPS = ("add", "update", "rename", "drop", "index", "drop_index")
 
 
 def _coerce_column_operations(value: Any) -> list[dict[str, Any]]:
@@ -179,21 +179,48 @@ def _coerce_column_operations(value: Any) -> list[dict[str, Any]]:
     return value
 
 
-def _apply_column_op(ouro: Any, dataset_id: str, op: dict[str, Any]) -> None:
+def _coerce_indexes(value: Any) -> Optional[list[Any]]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"indexes must be valid JSON: {e}") from e
+    if not isinstance(value, list):
+        raise ValueError("indexes must be a list of columns, column lists or {columns, unique}.")
+    return value
+
+
+def _apply_column_op(ouro: Any, dataset_id: str, op: dict[str, Any]) -> dict[str, Any]:
+    """Apply one operation; returns what was done, for the tool's result."""
     kind = op.get("op")
     if kind not in _COLUMN_OPS:
         raise ValueError(f"operation.op must be one of: {', '.join(_COLUMN_OPS)}.")
+
+    if kind == "index":
+        columns = op.get("columns", op.get("name"))
+        if not columns:
+            raise ValueError("an index op needs columns (or name for one column).")
+        index = ouro.datasets.create_index(dataset_id, columns, unique=bool(op.get("unique", False)))
+        return {"op": "index", "name": index.name, "columns": index.columns}
 
     name = str(op.get("name") or "").strip()
     if not name:
         raise ValueError("operation.name is required.")
 
     datasets = ouro.datasets
+    applied = {"op": kind, "name": name}
+    if kind == "drop_index":
+        datasets.drop_index(dataset_id, name)
+        return applied
+
     if kind == "drop":
-        return datasets.drop_column(dataset_id, name)
+        datasets.drop_column(dataset_id, name)
+        return applied
 
     if kind == "add":
-        return datasets.add_column(
+        datasets.add_column(
             dataset_id,
             name,
             **optional_kwargs(
@@ -203,11 +230,12 @@ def _apply_column_op(ouro: Any, dataset_id: str, op: dict[str, Any]) -> None:
                 enum_values=op.get("enum_values"),
             ),
         )
+        return applied
 
     new_name = op.get("new_name")
     if kind == "rename" and not (isinstance(new_name, str) and new_name.strip()):
         raise ValueError("rename requires a non-empty new_name.")
-    return datasets.update_column(
+    datasets.update_column(
         dataset_id,
         name,
         **optional_kwargs(
@@ -217,6 +245,7 @@ def _apply_column_op(ouro: Any, dataset_id: str, op: dict[str, Any]) -> None:
             enum_values=op.get("enum_values"),
         ),
     )
+    return applied
 
 
 def _resolve_dataset_data(
@@ -365,6 +394,15 @@ def _dataset_proof(
         proof["enum_columns"] = _merge_enum_column_hints(
             {}, declared_enum_columns
         )
+
+    try:
+        proof["indexes"] = [
+            {"name": index.name, "columns": index.columns, "unique": index.is_unique}
+            for index in ouro.datasets.list_indexes(dataset_id)
+            if not index.is_primary
+        ]
+    except Exception:
+        pass
 
     try:
         rows = ouro.datasets.list_rows(dataset_id, limit=5, resolve_refs=True)
@@ -652,6 +690,17 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
+        indexes: Annotated[
+            Optional[str | list[Any]],
+            Field(
+                description=(
+                    "Columns to index, for large datasets queried by those "
+                    "columns. A list of column names, column lists (up to 4), "
+                    'or {"columns": [...], "unique": true}. Example: '
+                    '\'["chemsys", {"columns": ["source", "source_id"], "unique": true}]\'.'
+                )
+            ),
+        ] = None,
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
         attribution: Annotated[
             Optional[dict[str, Any]],
@@ -715,6 +764,7 @@ def register(mcp: FastMCP) -> None:
             **optional_kwargs(
                 refs=declared_refs,
                 enum_columns=declared_enum_columns,
+                indexes=_coerce_indexes(indexes),
             ),
             **unlock_pricing_kwargs(
                 visibility, price, price_currency, price_usd, price_sats
@@ -904,13 +954,15 @@ def register(mcp: FastMCP) -> None:
                     '- {"op": "update", "name": "...", "new_name": "...", '
                     '"type": "...", "label": "...", "enum_values": ["..."]}\n'
                     '- {"op": "rename", "name": "...", "new_name": "..."}\n'
-                    '- {"op": "drop", "name": "..."}'
+                    '- {"op": "drop", "name": "..."}\n'
+                    '- {"op": "index", "columns": ["..."], "unique": false}\n'
+                    '- {"op": "drop_index", "name": "<index name>"}'
                 )
             ),
         ],
         ctx: Context,
     ) -> str:
-        """Add, update, rename, or drop columns on an existing dataset's table.
+        """Add, update, rename, or drop columns on an existing dataset's table, or index them.
 
         This is the structural counterpart to ``update_dataset`` (which handles
         row ingest and whole-dataset metadata). Operations run in the given
@@ -921,14 +973,17 @@ def register(mcp: FastMCP) -> None:
         column reads back as ``semantic_type: "enum"`` with ``enum_values`` in
         the schema. For an existing column, every current value must be null or
         in the supplied list.
+
+        Index the columns queries filter, join or sort on once a dataset holds
+        more than about a hundred thousand rows; without an index such queries
+        read every row and can time out. An index covers up to 4 columns (in
+        the order queries narrow them); asking again for the same columns
+        returns the existing index. The result lists the dataset's indexes.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         ops = _coerce_column_operations(operations)
 
-        applied: list[dict[str, Any]] = []
-        for op in ops:
-            _apply_column_op(ouro, dataset_id, op)
-            applied.append({"op": op["op"], "name": op["name"]})
+        applied = [_apply_column_op(ouro, dataset_id, op) for op in ops]
 
         payload: dict[str, Any] = {"dataset_id": dataset_id, "operations": applied}
         payload.update(_dataset_proof(ouro, dataset_id))
