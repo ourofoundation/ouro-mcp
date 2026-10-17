@@ -31,6 +31,7 @@ from ouro_mcp.utils import (
     per_use_pricing_kwargs,
     render_markdown_list,
     route_input_assets_summary,
+    route_output_assets_for_body,
     route_output_assets_summary,
     route_request_body_without_input_assets,
     truncate_response,
@@ -675,6 +676,13 @@ _LICENSE_DESC = (
     'SPDX license id for services/routes: "MIT" | "Apache-2.0" | "GPL-3.0-only" | '
     '"AGPL-3.0-only" | "MPL-2.0" | "ARR". Defaults to MIT for new services.'
 )
+_OUTPUT_ASSETS_DESC = (
+    "Keyed Ouro asset outputs as a JSON object, e.g. "
+    '\'{"structure": {"asset_type": "file", "primary": true}, '
+    '"phases_dataset": {"asset_type": "dataset", "when": {"include_dataset": true}}}\'. '
+    "`when` names request body fields that switch an output on (all must match; "
+    "a list matches any value); `optional: true` means a run may not produce it."
+)
 _ORIGINALITY_DESC = '"original" | "derivative" | "third-party"'
 _RELATION_TYPE_DESC = (
     'DataCite relation of this asset to the related paper: '
@@ -1001,7 +1009,7 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         output_assets: Annotated[
             Optional[Any],
-            Field(description="Keyed Ouro asset outputs as a JSON object"),
+            Field(description=_OUTPUT_ASSETS_DESC),
         ] = None,
         execution_mode: Annotated[
             str, Field(description='"sync" (default) or "async" for long-running upstreams')
@@ -1105,7 +1113,7 @@ def register(mcp: FastMCP) -> None:
             Optional[Any], Field(description="Keyed Ouro asset inputs as a JSON object")
         ] = None,
         output_assets: Annotated[
-            Optional[Any], Field(description="Keyed Ouro asset outputs as a JSON object")
+            Optional[Any], Field(description=_OUTPUT_ASSETS_DESC)
         ] = None,
         execution_mode: Annotated[
             Optional[str], Field(description='"sync" or "async"')
@@ -1302,6 +1310,11 @@ def register(mcp: FastMCP) -> None:
         `wait=false` to get the `action_id` back immediately and check on it
         later via `get_action(action_id)` rather than blocking the agent loop.
 
+        Outputs can depend on the request: a declared output with
+        `when: {"include_dataset": true}` is only created when the body
+        matches. `dry_run=true` returns `expected_output_assets` with
+        `will_create` resolved against the body you pass.
+
         For asset inputs, pass IDs with `input_assets` keyed by route body parameter
         name. Do not construct file/dataset/post body objects by hand; Ouro resolves
         those IDs into the service-facing request body.
@@ -1354,7 +1367,9 @@ def register(mcp: FastMCP) -> None:
                     route_input_assets_summary(route.route) if route.route else None
                 ),
                 "expected_output_assets": (
-                    route_output_assets_summary(route.route) if route.route else None
+                    route_output_assets_for_body(route.route, body_dict)
+                    if route.route
+                    else None
                 ),
             }
             cost_preview = _format_route_cost_preview(route, currency)

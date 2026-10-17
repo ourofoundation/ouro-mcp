@@ -9,6 +9,7 @@ from ouro_mcp.tools.services import _format_route_cost_preview, _parse_json_para
 from ouro_mcp.utils import (
     format_monetization_block,
     route_input_assets_summary,
+    route_output_assets_for_body,
     route_output_assets_summary,
     route_request_body_without_input_assets,
 )
@@ -181,6 +182,45 @@ def test_route_output_assets_summary_keeps_optional_and_embedding() -> None:
     )
 
     assert route_output_assets_summary(route) == declarations
+
+
+def test_route_output_assets_for_body_resolves_when() -> None:
+    declarations = {
+        "report": {"asset_type": "post", "primary": True, "when": {"include_report": True}},
+        "summary": {"asset_type": "file", "embedded_in": "report"},
+        "phases_dataset": {"asset_type": "dataset", "when": {"include_dataset": True}},
+    }
+    route = SimpleNamespace(
+        output_type="post",
+        output_assets=declarations,
+        output_file_extension=None,
+        request_body={
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "include_report": {"type": "boolean", "default": False},
+                            "include_dataset": {"type": "boolean", "default": False},
+                        },
+                    }
+                }
+            }
+        },
+    )
+
+    assert route_output_assets_summary(route)["report"]["when"] == {"include_report": True}
+
+    off = route_output_assets_for_body(route, {})
+    assert off["report"]["will_create"] is False
+    assert off["summary"]["will_create"] is True
+    assert "embedded" not in off["summary"]
+    assert off["phases_dataset"]["will_create"] is False
+
+    on = route_output_assets_for_body(route, {"include_report": True})
+    assert on["report"]["will_create"] is True
+    assert on["summary"]["embedded"] is True
+    assert on["phases_dataset"]["will_create"] is False
 
 
 def test_route_output_assets_summary_synthesizes_legacy_output_type() -> None:

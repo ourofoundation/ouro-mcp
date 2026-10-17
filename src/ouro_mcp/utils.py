@@ -12,6 +12,7 @@ from typing import Any, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from ouro.models import AssetRef, AssetTag, Connection, DatasetColumn
+from ouro.utils.route_outputs import resolve_route_outputs
 from ouro_mcp.constants import (
     DEFAULT_OURO_FRONTEND_URL,
     DEFAULT_RESPONSE_FORMAT,
@@ -1725,6 +1726,31 @@ def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
     return result or None
 
 
+def route_output_assets_for_body(
+    route: Any, body: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """The output contract with what a run sending ``body`` will create.
+
+    Each output gains ``will_create`` (its ``when`` matches the body, or the
+    schema defaults for fields left out) and, when it goes into another
+    output that is also created, ``embedded: true``.
+    """
+    summary = route_output_assets_summary(route)
+    if not summary:
+        return summary
+    resolved = resolve_route_outputs(
+        _getv(route, "output_assets"), _getv(route, "request_body"), body or {}
+    )
+    for output in resolved:
+        entry = summary.get(output["name"])
+        if entry is None:
+            continue
+        entry["will_create"] = output["active"]
+        if output["embedded"]:
+            entry["embedded"] = True
+    return summary
+
+
 def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
     """Return the keyed asset-output contract a route will produce.
 
@@ -1752,9 +1778,12 @@ def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
                 or config.get("outputFileExtensions"),
                 contains_file_extensions=config.get("contains_file_extensions")
                 or config.get("containsFileExtensions"),
-                # Not every run produces this output
+                # Only created when the request body matches, e.g.
+                # {"include_dataset": true}
+                when=config.get("when"),
+                # May be absent depending on the run's results
                 optional=config.get("optional"),
-                # Delivered inside another output (a post) rather than on its own
+                # Delivered inside another output (a post) while that one is created
                 embedded_in=config.get("embedded_in") or config.get("embeddedIn"),
             )
 
