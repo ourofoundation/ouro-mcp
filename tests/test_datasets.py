@@ -165,11 +165,14 @@ class _FakeDatasets:
         *,
         limit: int = 100,
         offset: int = 0,
+        cursor: str | None = None,
         resolve_refs: bool = False,
         sql: str | None = None,
         prompt: str | None = None,
     ) -> DatasetRows:
         call = {"dataset_id": dataset_id, "limit": limit, "offset": offset}
+        if cursor is not None:
+            call["cursor"] = cursor
         if resolve_refs:
             call["resolve_refs"] = resolve_refs
         if sql is not None:
@@ -1164,3 +1167,29 @@ def test_create_dataset_passes_indexes() -> None:
     )
 
     assert datasets.created[0]["indexes"] == ["chemsys"]
+
+
+def test_query_dataset_pages_the_table_by_cursor() -> None:
+    datasets = _FakeDatasets(
+        rows={"data": [{"id": 1}], "hasMore": True, "nextCursor": {"cursor": "abc"}}
+    )
+    tools = _dataset_tools()
+
+    first = tools["query_dataset"]("dataset-1", _ctx(datasets), response_format="markdown")
+    assert "call again with cursor=abc" in first
+
+    second = json.loads(
+        tools["query_dataset"]("dataset-1", _ctx(datasets), cursor="abc", response_format="json")
+    )
+    assert datasets.query_calls[-1]["cursor"] == "abc"
+    assert second["next_cursor"] == "abc"
+    assert "offset" not in second
+
+
+def test_query_dataset_cursor_is_for_the_table() -> None:
+    datasets = _FakeDatasets(rows={"data": []})
+    tools = _dataset_tools()
+    result = json.loads(
+        tools["query_dataset"]("dataset-1", _ctx(datasets), sql="SELECT 1", cursor="abc")
+    )
+    assert result["error"] == "invalid_arguments"

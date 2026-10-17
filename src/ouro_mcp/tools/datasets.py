@@ -528,6 +528,16 @@ def register(mcp: FastMCP) -> None:
             int,
             Field(description="Row offset for pagination, in the table or in a query's result."),
         ] = 0,
+        cursor: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Paging through the table (no sql or prompt): the cursor a "
+                    "previous call returned. Pages after it stay fast at any "
+                    "depth, unlike a large offset."
+                )
+            ),
+        ] = None,
         resolve_refs: Annotated[
             bool,
             Field(
@@ -591,10 +601,13 @@ def register(mcp: FastMCP) -> None:
 
         ouro = ctx.request_context.lifespan_context.ouro
         is_query = sql is not None or prompt is not None
+        if is_query and cursor:
+            raise ValueError("cursor pages the table; page a query's result with offset.")
         page = ouro.datasets.list_rows(
             dataset_id,
             limit=limit,
             offset=offset,
+            **({"cursor": cursor} if cursor else {}),
             resolve_refs=resolve_refs,
             **({"sql": sql} if sql is not None else {}),
             **({"prompt": prompt} if prompt is not None else {}),
@@ -602,12 +615,13 @@ def register(mcp: FastMCP) -> None:
 
         result = format_table_response(
             page.data,
-            offset=offset,
+            offset=None if cursor else offset,
             limit=limit,
             has_more=page.has_more,
             total=page.total if is_query else None,
             sql=page.sql if is_query else None,
             resolved_refs=_dump_resolved_refs(page.resolved_refs) if resolve_refs else None,
+            next_cursor=(page.next_cursor or {}).get("cursor") if not is_query else None,
             response_format=response_format,
         )
 
@@ -617,7 +631,7 @@ def register(mcp: FastMCP) -> None:
                 "Narrow the query (WHERE, fewer columns, aggregation) or use a "
                 "smaller limit."
                 if is_query
-                else "Use the offset parameter to load more rows."
+                else "Use the cursor (or offset) parameter to load more rows."
             ),
         )
 

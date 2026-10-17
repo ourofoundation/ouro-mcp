@@ -769,6 +769,7 @@ def format_table_response(
     total: int | None = None,
     sql: str | None = None,
     resolved_refs: dict[str, Any] | None = None,
+    next_cursor: str | None = None,
     empty_text: str = "No rows.",
     response_format: str | None = None,
 ) -> str:
@@ -795,6 +796,8 @@ def format_table_response(
         payload["sql"] = sql
     if resolved_refs is not None:
         payload["resolved_refs"] = resolved_refs
+    if next_cursor:
+        payload["next_cursor"] = next_cursor
 
     if fmt == "json":
         return dump_json(payload)
@@ -814,7 +817,9 @@ def format_table_response(
             bits.append(f"offset={offset}")
         if limit is not None:
             bits.append(f"limit={limit}")
-        if has_more:
+        if has_more and next_cursor:
+            bits.append(f"more available — call again with cursor={next_cursor}")
+        elif has_more:
             next_offset = (offset or 0) + shown
             bits.append(f"more available — call again with offset={next_offset}")
         if bits:
