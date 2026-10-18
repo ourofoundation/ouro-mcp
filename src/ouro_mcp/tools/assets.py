@@ -70,7 +70,7 @@ def register(mcp: FastMCP) -> None:
                     "lineage connections (comment edges omitted — see comments preview / get_comments), "
                     "tags, and a bounded comments/replies preview when present. "
                     "Both levels include `properties`: values Ouro computes (word_count, "
-                    "is_ai_generated, column_statistics) and values route runs calculated "
+                    "column_statistics) and values route runs calculated "
                     "(e.g. curie_temperature), each run's value with its route and action_id. "
                     "Use list_asset_actions(role=\"output\") for the full producer action."
                 )
