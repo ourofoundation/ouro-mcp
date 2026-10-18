@@ -334,7 +334,7 @@ def _ingest_summary(dataset: Dataset) -> dict[str, Any]:
 
     Reference columns are FK-enforced, so rows with bad/missing ref ids are
     skipped rather than failing the whole write. ``row_ingest`` reports
-    {inserted, skipped} and ``ingest_warning`` lists the offending ids per
+    {inserted, updated, skipped} and ``ingest_warning`` lists the offending ids per
     column so an agent can fix and retry them.
     """
     summary: dict[str, Any] = {}
@@ -855,7 +855,7 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         data_mode: Annotated[
-            str, Field(description='"append" | "overwrite" | "upsert"')
+            str, Field(description='"append" | "overwrite" | "upsert" | "update"')
         ] = "append",
         description: Annotated[Optional[str], Field(description="New description")] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
@@ -894,7 +894,12 @@ def register(mcp: FastMCP) -> None:
         Pass data, data_path, or upload_id for row ingest and choose data_mode:
         - append (default): add rows
         - overwrite: replace existing rows
-        - upsert: merge rows by id
+        - upsert: insert rows, replacing any with the same primary key
+        - update: change existing rows only. Each row carries the primary key
+          and just the columns to set; other columns keep their values, and
+          rows whose key matches nothing are skipped (row_ingest.updated
+          counts the rows changed). Give every row the same columns: a
+          column missing from a row is set to null on it.
 
         Pass refs to promote existing columns to native references (adds a DB
         foreign key to public.assets for the asset kind, or public.actions for

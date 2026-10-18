@@ -705,7 +705,7 @@ def test_create_dataset_surfaces_partial_ingest_warning() -> None:
         )
     )
 
-    assert result["row_ingest"] == {"inserted": 1, "skipped": 1}
+    assert result["row_ingest"] == {"inserted": 1, "updated": 0, "skipped": 1}
     assert result["ingest_warning"] == warning
 
 
@@ -970,6 +970,24 @@ def test_edit_dataset_columns_rename_requires_new_name() -> None:
 
     assert result["error"] == "invalid_arguments"
     assert "new_name" in result["message"]
+
+
+def test_update_dataset_passes_update_mode_through() -> None:
+    datasets = _FakeDatasets(
+        rows={"resolved_refs": {}},
+        schema_response=[{"column_name": "id", "data_type": "integer"}],
+    )
+    tools = _dataset_tools()
+
+    tools["update_dataset"](
+        "dataset-1",
+        _ctx(datasets),
+        data='[{"id": 1, "value": 2}]',
+        data_mode="update",
+    )
+
+    assert datasets.updated[0]["data_mode"] == "update"
+    assert datasets.updated[0]["data"].to_dict("records") == [{"id": 1, "value": 2}]
 
 
 def test_update_dataset_row_only_skips_verification() -> None:
