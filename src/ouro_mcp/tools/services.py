@@ -1034,7 +1034,8 @@ def register(mcp: FastMCP) -> None:
         instead of unit_cost; callers pick which to pay in, and price_currency
         is what's charged when they don't.
 
-        Charts drawn on each run (`x-ouro-response-charts`) can't be set here:
+        Charts drawn on each run (`x-ouro-response-charts`) and the asset
+        properties each run records (`x-ouro-properties`) can't be set here:
         they come only from the service's OpenAPI spec, so declare them there
         and re-sync with update_service(spec_url=...).
         """

@@ -14,6 +14,7 @@ from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     dump_json,
+    format_asset_properties,
     format_asset_summary,
     format_search_hit,
     markdown_bullet,
@@ -26,6 +27,7 @@ from ouro_mcp.utils import (
     route_description_markdown,
     route_input_assets_summary,
     route_output_assets_summary,
+    route_properties_summary,
     route_request_body_without_input_assets,
     search_hit_line,
     slim_asset_tags,
@@ -67,6 +69,9 @@ def register(mcp: FastMCP) -> None:
                     "plus a compact creation_action pointer (action_id/status/route_id), "
                     "lineage connections (comment edges omitted — see comments preview / get_comments), "
                     "tags, and a bounded comments/replies preview when present. "
+                    "Both levels include `properties`: values Ouro computes (word_count, "
+                    "is_ai_generated, column_statistics) and values route runs calculated "
+                    "(e.g. curie_temperature), each run's value with its route and action_id. "
                     "Use list_asset_actions(role=\"output\") for the full producer action."
                 )
             ),
@@ -90,6 +95,7 @@ def register(mcp: FastMCP) -> None:
         else:
             result = format_asset_summary(asset)
         _enrich_counts(result, ouro, id)
+        _enrich_properties(result, ouro, id)
         return dump_json(result)
 
     @mcp.tool(
@@ -641,6 +647,19 @@ def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
         result["counts"] = nonzero
 
 
+def _enrich_properties(result: dict, ouro: Any, asset_id: str) -> None:
+    """Best-effort merge of the asset's properties (word count, column
+    statistics, calculated values such as a Curie temperature)."""
+    try:
+        properties = ouro.assets.properties(asset_id)
+    except Exception:
+        log.debug("Failed to fetch properties for asset %s", asset_id, exc_info=True)
+        return
+    formatted = format_asset_properties(properties)
+    if formatted:
+        result["properties"] = formatted
+
+
 def _compact_creation_action(created_by: Action) -> dict[str, Any]:
     """Pointer-only producer action for get_asset(detail=full).
 
@@ -816,6 +835,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             base["request_body"] = route_request_body_without_input_assets(asset.route)
             base["input_assets"] = route_input_assets_summary(asset.route)
             base["output_assets"] = route_output_assets_summary(asset.route)
+            base["fills_properties"] = route_properties_summary(asset.route)
             base["output_type"] = asset.route.output_type
 
     elif asset_type == "quest":

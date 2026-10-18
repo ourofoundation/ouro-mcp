@@ -1726,6 +1726,64 @@ def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
     return result or None
 
 
+def route_properties_summary(route: Any) -> list[dict[str, Any]] | None:
+    """The asset properties a route's runs record (``x-ouro-properties``).
+
+    Each entry names the property, the response field it comes from, and
+    the asset it is recorded on (``subject``; omitted = primary input).
+    """
+    raw = _getv(route, "properties") or []
+    result = []
+    for declaration in raw:
+        if hasattr(declaration, "model_dump"):
+            declaration = declaration.model_dump(exclude_none=True)
+        if not isinstance(declaration, dict) or not declaration.get("property"):
+            continue
+        result.append(
+            optional_kwargs(
+                property=declaration.get("property"),
+                value=declaration.get("value"),
+                unit=declaration.get("unit"),
+                method=declaration.get("method"),
+                subject=declaration.get("subject"),
+            )
+        )
+    return result or None
+
+
+def format_asset_properties(properties: list[Any]) -> dict[str, Any] | None:
+    """Compact asset properties for agents: ``{key: value}`` for single
+    platform values, ``{key: {unit, values: [...]}}`` when a property has
+    route values (one per route and method, newest first)."""
+    result: dict[str, Any] = {}
+    for prop in properties or []:
+        if hasattr(prop, "model_dump"):
+            prop = prop.model_dump(mode="json", exclude_none=True)
+        values = prop.get("values") or []
+        if not values:
+            continue
+        if len(values) == 1 and values[0].get("source") == "platform":
+            result[prop["key"]] = values[0].get("value")
+            continue
+        entries = []
+        for value in values:
+            route = value.get("route") or {}
+            entries.append(
+                optional_kwargs(
+                    value=value.get("value"),
+                    uncertainty=value.get("uncertainty"),
+                    method=value.get("method"),
+                    conditions=value.get("conditions"),
+                    route=route.get("name"),
+                    route_id=route.get("id"),
+                    action_id=value.get("action_id"),
+                    created_at=value.get("created_at"),
+                )
+            )
+        result[prop["key"]] = optional_kwargs(unit=prop.get("unit"), values=entries)
+    return result or None
+
+
 def route_output_assets_for_body(
     route: Any, body: dict[str, Any] | None
 ) -> dict[str, Any] | None:
