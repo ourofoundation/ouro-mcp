@@ -53,9 +53,13 @@ def test_route_properties_summary():
     route = RouteData(
         path="/curie",
         method="POST",
-        properties=[{"property": "curie_temperature", "value": "tc", "unit": "K", "subject": {"output": "relaxed"}}],
+        properties=[
+            {"property": "curie_temperature", "value": "tc", "unit": "K", "subject": {"output": "relaxed"}},
+            {"property": "energy_above_hull", "value": "e", "method": "PBE hull", "when": {"energy_surface": "pbe"}},
+        ],
     )
     assert route_properties_summary(route) == [
-        {"property": "curie_temperature", "value": "tc", "unit": "K", "subject": {"output": "relaxed"}}
+        {"property": "curie_temperature", "value": "tc", "unit": "K", "subject": {"output": "relaxed"}},
+        {"property": "energy_above_hull", "value": "e", "method": "PBE hull", "when": {"energy_surface": "pbe"}},
     ]
     assert route_properties_summary(RouteData(path="/x", method="GET")) is None
