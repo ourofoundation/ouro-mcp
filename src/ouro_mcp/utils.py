@@ -1748,6 +1748,8 @@ def route_properties_summary(route: Any) -> list[dict[str, Any]] | None:
                 subject=declaration.get("subject"),
                 # Only recorded for runs whose request matches
                 when=declaration.get("when"),
+                # ...and whose response meets these
+                requires=declaration.get("requires"),
             )
         )
     return result or None
