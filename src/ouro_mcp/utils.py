@@ -1246,6 +1246,13 @@ def format_asset_summary(asset: Any) -> dict:
     if parent_id:
         summary["parent_id"] = str(parent_id)
 
+    # Lineage: what this asset is to the one it came from (a relaxed CIF is a
+    # "version" of its input, phonons a "result"). Shown only when it has one.
+    source_id = getattr(asset, "source_id", None)
+    if source_id:
+        summary["lineage_role"] = getattr(asset, "lineage_role", None)
+        summary["source_id"] = str(source_id)
+
     monetization_block = format_monetization_block(asset)
     if monetization_block:
         summary.update(monetization_block)
