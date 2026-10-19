@@ -68,7 +68,8 @@ def register(mcp: FastMCP) -> None:
                     '"full" also includes type-specific content '
                     "(post body, dataset schema/stats, file download URL, service routes, route execution schemas), "
                     "plus a compact creation_action pointer (action_id/status/route_id), "
-                    "lineage connections (comment edges omitted — see comments preview / get_comments), "
+                    "connections (comment edges omitted — see comments preview / get_comments), "
+                    "`derived`: the versions, results and supporting assets that came from it, "
                     "tags, and a bounded comments/replies preview when present. "
                     "Both levels include `properties`: values Ouro computes (word_count, "
                     "column_statistics) and values route runs calculated "
@@ -674,6 +675,26 @@ def _compact_creation_action(created_by: Action) -> dict[str, Any]:
     }
 
 
+# Versions, results and supporting assets listed on a full read; a family root
+# can hold hundreds (every relaxed CIF and phonon run on one structure).
+DERIVED_PREVIEW_LIMIT = 20
+
+
+def _derived_entry(item: Any) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "id": str(item.id),
+        "name": getattr(item, "name", None),
+        "asset_type": item.asset_type,
+        "lineage_role": item.lineage_role,
+    }
+    run = getattr(item, "run", None)
+    if run is not None:
+        entry["action_id"] = str(run.action_id)
+        if run.route and run.route.get("name"):
+            entry["route_name"] = run.route["name"]
+    return {key: value for key, value in entry.items() if value is not None}
+
+
 def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
     """Best-effort merge of provenance, connections, and tags into an asset result dict."""
     try:
@@ -699,6 +720,16 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
             result["connections"] = slimmed
     except Exception:
         log.debug("Failed to fetch connections for %s", asset_id, exc_info=True)
+
+    try:
+        lineage = ouro.assets.lineage(asset_id)
+        derived = [_derived_entry(item) for item in lineage.derived[:DERIVED_PREVIEW_LIMIT]]
+        if derived:
+            result["derived"] = derived
+            if lineage.truncated or len(lineage.derived) > DERIVED_PREVIEW_LIMIT:
+                result["derived_has_more"] = True
+    except Exception:
+        log.debug("Failed to fetch lineage for %s", asset_id, exc_info=True)
 
     try:
         tags = slim_asset_tags(ouro.assets.tags(asset_id))

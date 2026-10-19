@@ -1889,6 +1889,8 @@ def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
                 optional=config.get("optional"),
                 # Delivered inside another output (a post) while that one is created
                 embedded_in=config.get("embedded_in"),
+                # What it is to the run's input: version / result / supporting / new
+                role=config.get("role"),
             )
 
     output_type = _getv(route, "output_type")

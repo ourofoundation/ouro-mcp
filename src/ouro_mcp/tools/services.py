@@ -678,12 +678,16 @@ _LICENSE_DESC = (
 )
 _OUTPUT_ASSETS_DESC = (
     "Keyed Ouro asset outputs as a JSON object, e.g. "
-    '\'{"structure": {"asset_type": "file", "primary": true}, '
+    '\'{"structure": {"asset_type": "file", "primary": true, "role": "version"}, '
     '"phases_dataset": {"asset_type": "dataset", "when": {"include_dataset": true}}}\'. '
     "`when` names request body fields that switch an output on (all must match; "
     "a list matches any value; a field the caller omits takes its schema default); "
     "`optional: true` means a run may not produce it; `embedded_in` names the post "
-    "output it goes into while that post is created."
+    "output it goes into while that post is created. `role` says what the output is to "
+    'the run\'s input: "version" (the same thing, improved, e.g. a relaxed CIF), '
+    '"result" (computed about it, e.g. phonons; the default with an input), '
+    '"supporting" (intermediate or raw, e.g. a trajectory) or "new" (standalone). '
+    "Lists fold versions, results and supporting assets under their source."
 )
 _ORIGINALITY_DESC = '"original" | "derivative" | "third-party"'
 _RELATION_TYPE_DESC = (

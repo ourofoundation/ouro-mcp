@@ -435,3 +435,49 @@ def test_response_charts_summary_names_list_and_dataset() -> None:
         {"title": "Exchange", "data": "shells"},
     ]
     assert route_response_charts_summary(SimpleNamespace(response_charts=None)) is None
+
+
+def test_route_output_assets_summary_keeps_role() -> None:
+    route = SimpleNamespace(
+        output_type="file",
+        output_assets={
+            "file": {"asset_type": "file", "primary": True, "role": "version"},
+            "trajectory": {"asset_type": "file", "role": "supporting"},
+        },
+        output_file_extension=None,
+    )
+
+    summary = route_output_assets_summary(route)
+    assert summary["file"]["role"] == "version"
+    assert summary["trajectory"]["role"] == "supporting"
+
+
+def test_full_asset_lists_what_came_from_it() -> None:
+    from ouro_mcp.tools.assets import _enrich_provenance
+
+    run = SimpleNamespace(action_id="act-1", route={"id": "r", "name": "Phonon dispersion"})
+    derived = [
+        SimpleNamespace(
+            id=f"d{i}", name=f"Derived {i}", asset_type="file", lineage_role="result", run=run
+        )
+        for i in range(25)
+    ]
+    assets = SimpleNamespace(
+        actions=lambda *a, **k: SimpleNamespace(created_by=None),
+        connections=lambda *a, **k: [],
+        tags=lambda *a, **k: [],
+        lineage=lambda *a, **k: SimpleNamespace(derived=derived, truncated=False),
+    )
+    result: dict = {"asset_type": "file"}
+    _enrich_provenance(result, SimpleNamespace(assets=assets), "a")
+
+    assert len(result["derived"]) == 20
+    assert result["derived_has_more"] is True
+    assert result["derived"][0] == {
+        "id": "d0",
+        "name": "Derived 0",
+        "asset_type": "file",
+        "lineage_role": "result",
+        "action_id": "act-1",
+        "route_name": "Phonon dispersion",
+    }
