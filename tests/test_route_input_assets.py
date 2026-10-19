@@ -11,7 +11,9 @@ from ouro_mcp.utils import (
     route_input_assets_summary,
     route_output_assets_for_body,
     route_output_assets_summary,
+    route_properties_for_body,
     route_request_body_without_input_assets,
+    route_response_charts_summary,
 )
 
 
@@ -71,7 +73,7 @@ def test_route_input_assets_summary_returns_supported_metadata() -> None:
         input_assets={
             "file": {
                 "asset_type": "file",
-                "input_file_extensions": ["cif"],
+                "file_extensions": ["cif"],
             },
         },
     )
@@ -351,3 +353,85 @@ def test_service_route_list_hides_http_method_and_path() -> None:
     assert detail["routes"] == [
         {"id": "route-1", "name": "Analyze File", "description": "Analyze a file"}
     ]
+
+
+def test_composed_request_body_still_hides_input_assets() -> None:
+    route = SimpleNamespace(
+        input_type=None,
+        input_assets={"structure": {"asset_type": "file", "primary": True}},
+        request_body={
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "required": ["structure", "steps"],
+                                "properties": {
+                                    "structure": {"type": "object"},
+                                    "steps": {"type": "integer"},
+                                },
+                            },
+                            {"type": "null"},
+                        ]
+                    }
+                }
+            }
+        },
+    )
+
+    cleaned = route_request_body_without_input_assets(route)
+    variant = cleaned["content"]["application/json"]["schema"]["anyOf"][0]
+    assert set(variant["properties"]) == {"steps"}
+    assert variant["required"] == ["steps"]
+    # The route's own schema is untouched
+    original = route.request_body["content"]["application/json"]["schema"]["anyOf"][0]
+    assert "structure" in original["properties"]
+
+
+def test_legacy_only_output_is_always_created() -> None:
+    route = SimpleNamespace(output_type="file", output_assets=None, output_file_extension="cif")
+    assert route_output_assets_for_body(route, {})["file"]["will_create"] is True
+
+
+def test_properties_for_body_follow_when() -> None:
+    route = SimpleNamespace(
+        properties=[
+            {"property": "energy_above_hull", "value": "e", "method": "Orb v3",
+             "when": {"energy_surface": "orb"}},
+            {"property": "energy_above_hull", "value": "e", "method": "PBE",
+             "when": {"energy_surface": "pbe"}, "uncertainty": "e_err"},
+        ],
+        request_body={
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {"energy_surface": {"type": "string", "default": "orb"}},
+                    }
+                }
+            }
+        },
+    )
+
+    default = route_properties_for_body(route, {})
+    assert [p["will_record"] for p in default] == [True, False]
+    assert default[1]["uncertainty"] == "e_err"
+    pbe = route_properties_for_body(route, {"energy_surface": "pbe"})
+    assert [p["will_record"] for p in pbe] == [False, True]
+
+
+def test_response_charts_summary_names_list_and_dataset() -> None:
+    route = SimpleNamespace(
+        response_charts=[
+            {"data": "magnetization_curve", "title": "Magnetization curve",
+             "dataset": "magnetization_curve_dataset", "config": {"type": "line"}},
+            {"data": "shells", "title": "Exchange", "config": {"type": "bar"}},
+        ]
+    )
+    assert route_response_charts_summary(route) == [
+        {"title": "Magnetization curve", "data": "magnetization_curve",
+         "dataset": "magnetization_curve_dataset"},
+        {"title": "Exchange", "data": "shells"},
+    ]
+    assert route_response_charts_summary(SimpleNamespace(response_charts=None)) is None

@@ -12,7 +12,11 @@ from typing import Any, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from ouro.models import AssetRef, AssetTag, Connection, DatasetColumn
-from ouro.utils.route_outputs import resolve_route_outputs
+from ouro.utils.route_outputs import (
+    request_body_json_schema,
+    resolve_route_outputs,
+    route_output_when_matches,
+)
 from ouro_mcp.constants import (
     DEFAULT_OURO_FRONTEND_URL,
     DEFAULT_RESPONSE_FORMAT,
@@ -1672,15 +1676,11 @@ def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
             elif not isinstance(config, dict):
                 config = {}
             result[name] = optional_kwargs(
-                asset_type=config.get("asset_type") or config.get("assetType"),
+                asset_type=config.get("asset_type"),
                 primary=config.get("primary"),
-                input_filter=config.get("input_filter") or config.get("inputFilter"),
-                file_extensions=config.get("file_extensions")
-                or config.get("fileExtensions")
-                or config.get("input_file_extensions")
-                or config.get("inputFileExtensions"),
-                contains_file_extensions=config.get("contains_file_extensions")
-                or config.get("containsFileExtensions"),
+                input_filter=config.get("input_filter"),
+                file_extensions=config.get("file_extensions"),
+                contains_file_extensions=config.get("contains_file_extensions"),
             )
 
     input_type = _getv(route, "input_type")
@@ -1729,8 +1729,9 @@ def route_input_assets_summary(route: Any) -> dict[str, Any] | None:
 def route_properties_summary(route: Any) -> list[dict[str, Any]] | None:
     """The asset properties a route's runs record (``x-ouro-properties``).
 
-    Each entry names the property, the response field it comes from, and
-    the asset it is recorded on (``subject``; omitted = primary input).
+    Each entry names the property, the response fields its value (and
+    uncertainty and conditions) come from, and the asset it is recorded on
+    (``subject``; omitted = primary input).
     """
     raw = _getv(route, "properties") or []
     result = []
@@ -1744,7 +1745,9 @@ def route_properties_summary(route: Any) -> list[dict[str, Any]] | None:
                 property=declaration.get("property"),
                 value=declaration.get("value"),
                 unit=declaration.get("unit"),
+                uncertainty=declaration.get("uncertainty"),
                 method=declaration.get("method"),
+                conditions=declaration.get("conditions"),
                 subject=declaration.get("subject"),
                 # Only recorded for runs whose request matches
                 when=declaration.get("when"),
@@ -1800,17 +1803,53 @@ def route_output_assets_for_body(
     summary = route_output_assets_summary(route)
     if not summary:
         return summary
-    resolved = resolve_route_outputs(
-        _getv(route, "output_assets"), _getv(route, "request_body"), body or {}
-    )
-    for output in resolved:
-        entry = summary.get(output["name"])
-        if entry is None:
-            continue
-        entry["will_create"] = output["active"]
-        if output["embedded"]:
+    resolved = {
+        output["name"]: output
+        for output in resolve_route_outputs(
+            _getv(route, "output_assets"), _getv(route, "request_body"), body or {}
+        )
+    }
+    for name, entry in summary.items():
+        # An output only the legacy output_type declares has no `when`
+        output = resolved.get(name)
+        entry["will_create"] = output["active"] if output else True
+        if output and output["embedded"]:
             entry["embedded"] = True
     return summary
+
+
+def route_properties_for_body(
+    route: Any, body: dict[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    """The property declarations with ``will_record``: whether a run sending
+    ``body`` matches the declaration's ``when``. A run records the value only
+    when its response also meets ``requires``."""
+    summary = route_properties_summary(route)
+    if not summary:
+        return summary
+    request_body = _getv(route, "request_body")
+    for entry in summary:
+        entry["will_record"] = route_output_when_matches(
+            entry.get("when"), body or {}, request_body
+        )
+    return summary
+
+
+def route_response_charts_summary(route: Any) -> list[dict[str, Any]] | None:
+    """The charts Ouro draws on every run (``x-ouro-response-charts``): the
+    response list each one plots, and the dataset output that opens on it."""
+    result = []
+    for chart in _getv(route, "response_charts") or []:
+        if hasattr(chart, "model_dump"):
+            chart = chart.model_dump(exclude_none=True)
+        if not isinstance(chart, dict) or not chart.get("data"):
+            continue
+        result.append(
+            optional_kwargs(
+                title=chart.get("title"), data=chart.get("data"), dataset=chart.get("dataset")
+            )
+        )
+    return result or None
 
 
 def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
@@ -1832,21 +1871,17 @@ def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
             elif not isinstance(config, dict):
                 config = {}
             result[name] = optional_kwargs(
-                asset_type=config.get("asset_type") or config.get("assetType"),
+                asset_type=config.get("asset_type"),
                 primary=config.get("primary"),
-                file_extensions=config.get("file_extensions")
-                or config.get("fileExtensions")
-                or config.get("output_file_extensions")
-                or config.get("outputFileExtensions"),
-                contains_file_extensions=config.get("contains_file_extensions")
-                or config.get("containsFileExtensions"),
+                file_extensions=config.get("file_extensions"),
+                contains_file_extensions=config.get("contains_file_extensions"),
                 # Only created when the request body matches, e.g.
                 # {"include_dataset": true}
                 when=config.get("when"),
                 # May be absent depending on the run's results
                 optional=config.get("optional"),
                 # Delivered inside another output (a post) while that one is created
-                embedded_in=config.get("embedded_in") or config.get("embeddedIn"),
+                embedded_in=config.get("embedded_in"),
             )
 
     output_type = _getv(route, "output_type")
@@ -1887,11 +1922,8 @@ def route_request_body_without_input_assets(route: Any) -> Any:
         return request_body
 
     cleaned = deepcopy(request_body)
-    schema = (
-        cleaned.get("content", {})
-        .get("application/json", {})
-        .get("schema")
-    )
+    # The object variant of an anyOf/oneOf/allOf body, edited in place
+    schema = request_body_json_schema(cleaned)
     if not isinstance(schema, dict):
         return cleaned
 

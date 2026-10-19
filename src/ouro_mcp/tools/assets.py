@@ -29,6 +29,7 @@ from ouro_mcp.utils import (
     route_output_assets_summary,
     route_properties_summary,
     route_request_body_without_input_assets,
+    route_response_charts_summary,
     search_hit_line,
     slim_asset_tags,
     slim_connection_graph,
@@ -836,7 +837,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             base["input_assets"] = route_input_assets_summary(asset.route)
             base["output_assets"] = route_output_assets_summary(asset.route)
             base["fills_properties"] = route_properties_summary(asset.route)
-            base["output_type"] = asset.route.output_type
+            base["response_charts"] = route_response_charts_summary(asset.route)
 
     elif asset_type == "quest":
         if asset.quest:

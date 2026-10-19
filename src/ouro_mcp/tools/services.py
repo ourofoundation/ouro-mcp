@@ -32,7 +32,7 @@ from ouro_mcp.utils import (
     render_markdown_list,
     route_input_assets_summary,
     route_output_assets_for_body,
-    route_output_assets_summary,
+    route_properties_for_body,
     route_request_body_without_input_assets,
     truncate_response,
 )
@@ -681,7 +681,9 @@ _OUTPUT_ASSETS_DESC = (
     '\'{"structure": {"asset_type": "file", "primary": true}, '
     '"phases_dataset": {"asset_type": "dataset", "when": {"include_dataset": true}}}\'. '
     "`when` names request body fields that switch an output on (all must match; "
-    "a list matches any value); `optional: true` means a run may not produce it."
+    "a list matches any value; a field the caller omits takes its schema default); "
+    "`optional: true` means a run may not produce it; `embedded_in` names the post "
+    "output it goes into while that post is created."
 )
 _ORIGINALITY_DESC = '"original" | "derivative" | "third-party"'
 _RELATION_TYPE_DESC = (
@@ -1314,7 +1316,10 @@ def register(mcp: FastMCP) -> None:
         Outputs can depend on the request: a declared output with
         `when: {"include_dataset": true}` is only created when the body
         matches. `dry_run=true` returns `expected_output_assets` with
-        `will_create` resolved against the body you pass.
+        `will_create` resolved against the body you pass (`embedded: true`
+        when an output goes into a post the run also creates), and
+        `expected_properties` with `will_record` for the asset properties
+        the run would record.
 
         For asset inputs, pass IDs with `input_assets` keyed by route body parameter
         name. Do not construct file/dataset/post body objects by hand; Ouro resolves
@@ -1369,6 +1374,11 @@ def register(mcp: FastMCP) -> None:
                 ),
                 "expected_output_assets": (
                     route_output_assets_for_body(route.route, body_dict)
+                    if route.route
+                    else None
+                ),
+                "expected_properties": (
+                    route_properties_for_body(route.route, body_dict)
                     if route.route
                     else None
                 ),
