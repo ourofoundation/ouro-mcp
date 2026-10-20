@@ -223,3 +223,61 @@ def test_pinned_organization_refusal_is_actionable_for_an_agent() -> None:
     assert payload["retryable"] is False
     assert "use_organization" not in payload["message"]
     assert "Omit org_id" in payload["message"]
+
+
+def test_malformed_uuid_is_explained() -> None:
+    import httpx
+    from ouro import BadRequestError
+
+    request = httpx.Request("GET", "https://api.ouro.foundation/assets/x")
+    response = httpx.Response(
+        400,
+        request=request,
+        json={"error": {"message": 'invalid input syntax for type uuid: "not-a-uuid"', "code": "22P02"}},
+    )
+    err = BadRequestError(
+        'invalid input syntax for type uuid: "not-a-uuid"', response=response, body=response.json()
+    )
+
+    payload = json.loads(_format_ouro_error(err, tool_name="get_asset"))
+
+    assert payload["error"] == "invalid_id"
+    assert '"not-a-uuid" is not an Ouro id' in payload["message"]
+    assert payload["retryable"] is False
+
+
+def test_write_tool_timeout_is_not_retryable() -> None:
+    from ouro_mcp.errors import NON_RETRYABLE_TRANSPORT_TOOLS
+    from ouro_mcp.server import mcp  # noqa: F401  registers tools
+
+    assert {"execute_route", "create_post", "send_message"} <= NON_RETRYABLE_TRANSPORT_TOOLS
+    assert "get_asset" not in NON_RETRYABLE_TRANSPORT_TOOLS
+    assert "delete_asset" not in NON_RETRYABLE_TRANSPORT_TOOLS
+
+    payload = json.loads(_format_ouro_error(TimeoutError("timed out"), tool_name="execute_route"))
+    assert payload["retryable"] is False
+    assert "check before retrying" in payload["message"]
+
+
+def test_registered_tool_errors_set_is_error() -> None:
+    from types import SimpleNamespace
+
+    from ouro_mcp.server import mcp
+
+    class _BrokenUsers:
+        def __getattr__(self, name):
+            def fail(*args, **kwargs):
+                raise ValueError("boom")
+
+            return fail
+
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(
+            lifespan_context=SimpleNamespace(ouro=SimpleNamespace(user=None, users=_BrokenUsers()))
+        )
+    )
+    tool = mcp._tool_manager.get_tool("get_impact")
+    result = tool.fn(ctx=ctx, user="someone")
+
+    assert result.is_error is True
+    assert json.loads(result.content[0].text)["error"] == "invalid_arguments"

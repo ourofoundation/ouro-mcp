@@ -8,7 +8,7 @@ import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from ouro.models import AssetRef, AssetTag, Connection, DatasetColumn
@@ -111,18 +111,17 @@ def enum_columns_from_schema(columns: list[DatasetColumn]) -> dict[str, dict[str
 
 
 def slim_asset_tags(tags: list[AssetTag]) -> list[dict[str, Any]] | None:
-    """Shrink asset tag rows for MCP — metadata only, no vectors."""
+    """Shrink asset tag rows for MCP to what says what the asset is about.
+
+    Tag ids, descriptions and vectors are catalog detail: the name and type
+    already say what the tag means.
+    """
     slimmed = [
         optional_kwargs(
+            name=row.tag.name,
+            type=row.tag.type,
             source=row.source,
             confidence=row.confidence,
-            tag=optional_kwargs(
-                id=str(row.tag.id),
-                name=row.tag.name,
-                slug=row.tag.slug,
-                type=row.tag.type,
-                description=row.tag.description,
-            ),
         )
         for row in tags
     ]
@@ -155,6 +154,7 @@ def slim_connection_graph(
     *,
     omit_outgoing_references: bool = False,
     omit_comments: bool = False,
+    omit_outgoing_types: Iterable[str] = (),
 ) -> dict[str, list[dict[str, Any]]]:
     """Shrink connection payloads from the Ouro API for MCP tool responses.
 
@@ -171,19 +171,25 @@ def slim_connection_graph(
     already stored in dataset ref columns and routinely number in the
     thousands. Incoming references (who points at this asset) are kept.
 
+    ``omit_outgoing_types`` skips outgoing edges of those types. A post's
+    outgoing links and embeds are already in its body.
+
     When ``omit_comments`` is true, skip ``type == "comment"`` edges.
     Comment bodies already ship via the ``comments`` preview on
     ``get_asset(detail=\"full\")`` and via ``get_comments``; keeping the
     connection stubs just duplicates IDs without text.
     """
     current_id = str(current_asset_id) if current_asset_id is not None else None
+    skip_outgoing = set(omit_outgoing_types)
+    if omit_outgoing_references:
+        skip_outgoing.add("reference")
     grouped: dict[str, list[dict[str, Any]]] = {}
     for edge in connections:
         if omit_comments and edge.type == "comment":
             continue
 
         is_outgoing = str(edge.source_id) == current_id
-        if omit_outgoing_references and edge.type == "reference" and is_outgoing:
+        if is_outgoing and edge.type in skip_outgoing:
             continue
 
         if is_outgoing:
@@ -384,6 +390,38 @@ def enrich_timestamps(data: Any, tz_name: str | None = None) -> Any:
         enriched[key] = enrich_timestamps(value, active_tz)
 
     return enriched
+
+
+_ASSET_RESOURCES = {
+    "post": "posts",
+    "comment": "comments",
+    "file": "files",
+    "dataset": "datasets",
+    "service": "services",
+    "route": "routes",
+    "quest": "quests",
+}
+
+
+def asset_type_of(ouro: Any, id: str) -> Optional[str]:
+    """An asset's type, looked up without recording a view.
+
+    ``ouro.assets.retrieve`` records a view on every call, so a tool that only
+    needs the type (or reads an asset the agent did not ask to open) would
+    inflate the asset's view count.
+    """
+    assets = ouro.assets
+    data = assets._handle_response(assets.client.get(f"/assets/{id}/type")) or {}
+    return data.get("asset_type")
+
+
+def retrieve_without_view(ouro: Any, id: str) -> Any:
+    """Retrieve any asset through its typed resource, without recording a view."""
+    asset_type = asset_type_of(ouro, id)
+    resource = _ASSET_RESOURCES.get(asset_type or "")
+    if resource is None:
+        raise ValueError(f"Asset {id} has unsupported type {asset_type!r}.")
+    return getattr(ouro, resource).retrieve(id)
 
 
 def dump_json(data: Any, **kwargs: Any) -> str:
@@ -603,8 +641,15 @@ def format_markdown_list_header(
     noun: str = "results",
     empty_text: str = "No results.",
     extras: list[str] | None = None,
+    next_page: str | None = None,
 ) -> str:
-    """Build the header line(s) for a markdown list response."""
+    """Build the header line(s) for a markdown list response.
+
+    ``next_page`` is the argument that loads the next page (e.g.
+    ``before=`...```) for tools that page by cursor; it defaults to the next
+    ``offset``.
+    """
+    next_hint = next_page or f"offset={(offset or 0) + shown}"
     if shown == 0 and not has_more and (total is None or total == 0):
         header = empty_text
     elif total is not None:
@@ -612,14 +657,12 @@ def format_markdown_list_header(
         if shown != total or has_more:
             header += f" (showing {shown}"
             if has_more:
-                next_offset = (offset or 0) + shown
-                header += f"; more available — call again with offset={next_offset}"
+                header += f"; more available — call again with {next_hint}"
             header += ")"
     else:
         header = f"Found {shown} {noun}"
         if has_more:
-            next_offset = (offset or 0) + shown
-            header += f" (more available — call again with offset={next_offset})"
+            header += f" (more available — call again with {next_hint})"
     lines = [header]
     if extras:
         for extra in extras:
@@ -645,6 +688,7 @@ def render_markdown_list(
     extra: dict | None = None,
     pagination: dict | None = None,
     response_format: str | None = None,
+    next_page: str | None = None,
 ) -> str:
     """Render a list of rows as compact markdown (or JSON) for agents.
 
@@ -685,6 +729,7 @@ def render_markdown_list(
         noun=noun,
         empty_text=empty_text,
         extras=extras,
+        next_page=next_page,
     )
     if not lines:
         return header
@@ -864,7 +909,7 @@ def render_markdown_sections(
         any_items = True
         parts.append(f"## {collapse_whitespace(title) or title}")
         for item in items:
-            line = line_fn(item)
+            line = line_fn(enrich_timestamps(item))
             if line:
                 parts.append(line)
 
@@ -1152,6 +1197,32 @@ def _attribution_summary(asset: Any) -> dict[str, Any]:
     )
 
 
+# Shorter than this after the repeats come out, a snippet tells the agent
+# nothing the row doesn't (e.g. a route chunk's "POST /path").
+_MIN_SNIPPET_CHARS = 40
+
+
+def _novel_snippet(snippet: str, name: str | None, description: str | None) -> str | None:
+    """The part of a search snippet that the row's name and description don't repeat.
+
+    Route and dataset chunks open with the name (``"X route: X POST /path"``)
+    and then the description, so the raw snippet doubles the row.
+    """
+    original = text = collapse_whitespace(snippet)
+    if name:
+        for lead in (f"{name} route:", name):
+            if text.startswith(lead):
+                text = text[len(lead) :].lstrip(" :—-")
+    if description:
+        probe = collapse_whitespace(description).rstrip(".…")[:60]
+        at = text.find(probe) if probe else -1
+        if at >= 0:
+            text = text[:at].rstrip()
+    if text == original:
+        return snippet
+    return text if len(text.strip(" .…")) >= _MIN_SNIPPET_CHARS else None
+
+
 def format_search_hit(item: Any) -> dict[str, Any]:
     """Slim discovery row for ``search_assets``.
 
@@ -1179,6 +1250,8 @@ def format_search_hit(item: Any) -> dict[str, Any]:
     # A summary chunk is just the name and description already in the row.
     snippet = _getv(item, "snippet")
     match_source = _getv(item, "match_source")
+    if snippet and match_source != "summary":
+        snippet = _novel_snippet(snippet, row.get("name"), row.get("description"))
     if snippet and match_source != "summary":
         row["snippet"] = snippet
         if match_source:
@@ -1905,6 +1978,21 @@ def route_output_assets_summary(route: Any) -> dict[str, Any] | None:
     return result or None
 
 
+def route_caller_parameters(parameters: Any) -> Any:
+    """A route's parameters without the ``ouro-*`` headers Ouro sets on each run.
+
+    Ouro fills in the route id, action id, user id, webhook and billing cap
+    headers itself; listing them invites an agent to set them.
+    """
+    if not isinstance(parameters, list):
+        return parameters
+    return [
+        p
+        for p in parameters
+        if not (isinstance(p, dict) and str(p.get("name", "")).lower().startswith("ouro-"))
+    ] or None
+
+
 def route_description_markdown(description: str | None) -> str | None:
     """Render ``RouteData.description``, which stores RichText as a JSON string."""
     from ouro.utils.content import description_to_markdown
@@ -1959,14 +2047,39 @@ def normalize_markdown_input(markdown: str) -> str:
     Agents frequently pass markdown via shell CLI args (e.g. content_markdown="..."),
     where escaped sequences like ``\\n`` are sent literally. Convert those back to
     markdown-friendly characters so the backend receives the intended content.
+
+    Only text with no real line breaks is treated as escaped, and math spans
+    are skipped even then: ``\\nabla``, ``\\neq`` and ``\\nu`` are LaTeX, not
+    a newline followed by a word.
     """
     normalized = markdown.replace("\\`", "`")
-    if "\\r\\n" in normalized:
-        normalized = normalized.replace("\\r\\n", "\n")
-    if "\\n" in normalized:
-        normalized = normalized.replace("\\n", "\n")
+    if "\n" not in normalized and "\\n" in normalized:
+        normalized = _outside(_MATH_SPANS, normalized, _decode_newlines)
     normalized = _normalize_mentions(normalized)
     return normalized
+
+
+# Spans whose text is literal rather than markdown: fenced and inline code, and
+# math. Escape decoding and mention rewriting leave them alone.
+_FENCED_CODE = r"(?:```|~~~)[\s\S]*?(?:```|~~~|\Z)"
+_MATH = r"\$\$[\s\S]+?\$\$|(?<![\\$])\$[^$\n]+?\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\]"
+_MATH_SPANS = re.compile(_MATH)
+
+
+def _outside(spans: re.Pattern, text: str, fn: Callable[[str], str]) -> str:
+    """Apply ``fn`` to the parts of ``text`` that ``spans`` does not match."""
+    out: list[str] = []
+    last = 0
+    for m in spans.finditer(text):
+        out.append(fn(text[last : m.start()]))
+        out.append(m.group(0))
+        last = m.end()
+    out.append(fn(text[last:]))
+    return "".join(out)
+
+
+def _decode_newlines(text: str) -> str:
+    return text.replace("\\r\\n", "\n").replace("\\n", "\n")
 
 
 # Ouro's markdown parser only recognizes one mention spelling: the
@@ -1975,23 +2088,42 @@ def normalize_markdown_input(markdown: str) -> str:
 # which notify the user. Normalize every supported spelling to the canonical
 # form so a mention works regardless of how the agent wrote it.
 _MENTION_USER = r"([A-Za-z0-9_]{1,64})"
+# Braces come off first, so a backticked spelling (`{@u}`, `@{u}`) is left as
+# `@u` for the last reducer.
 _MENTION_REDUCERS = (
-    re.compile(r"`\{@" + _MENTION_USER + r"\}`"),  # `{@u}` (already canonical)
-    re.compile(r"`@" + _MENTION_USER + r"`"),  # `@u`
     re.compile(r"\{@" + _MENTION_USER + r"\}"),  # {@u}
     re.compile(r"@\{" + _MENTION_USER + r"\}"),  # @{u}
+    re.compile(r"`@" + _MENTION_USER + r"`"),  # `@u`
 )
 # Bare @username, but not mid-word, not an email local part, and not already
 # wrapped in a brace or backtick.
 _MENTION_BARE = re.compile(r"(?<![\w`{])@" + _MENTION_USER + r"\b")
+# Code and math to leave alone (``@property`` in a code block is a decorator).
+# An inline span holding only a mention (`@u`, `{@u}`) is a mention spelling,
+# so it is matched first and rewritten rather than skipped.
+_MENTION_SKIP = re.compile(
+    r"(?P<mention>`(?:\{@\w{1,64}\}|@\{\w{1,64}\}|@\w{1,64})`)|" + _FENCED_CODE + r"|`[^`\n]+`|" + _MATH
+)
 
 
-def _normalize_mentions(text: str) -> str:
+def _rewrite_mentions(text: str) -> str:
     # Phase 1: strip any wrapping spelling back down to a bare @username token.
     for pattern in _MENTION_REDUCERS:
         text = pattern.sub(r"@\1", text)
     # Phase 2: wrap bare @username uniformly into the canonical mention syntax.
     return _MENTION_BARE.sub(r"`{@\1}`", text)
+
+
+def _normalize_mentions(text: str) -> str:
+    out: list[str] = []
+    last = 0
+    for m in _MENTION_SKIP.finditer(text):
+        out.append(_rewrite_mentions(text[last : m.start()]))
+        span = m.group(0)
+        out.append(_rewrite_mentions(span) if m.group("mention") else span)
+        last = m.end()
+    out.append(_rewrite_mentions(text[last:]))
+    return "".join(out)
 
 
 def content_from_markdown(ouro: Any, markdown: str) -> Any:

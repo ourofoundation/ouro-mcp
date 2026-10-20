@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any, Optional
 
 from pydantic import Field
@@ -11,6 +12,7 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.constants import GLOBAL_ORG_ID
 from ouro_mcp.utils import (
     resolve_location,
+    collapse_whitespace,
     content_from_markdown,
     dump_json,
     format_search_hit,
@@ -27,6 +29,18 @@ from ouro_mcp.utils import (
 def _org_name(team: Team) -> str | None:
     org = team.organization
     return (org.name or org.display_name) if org else None
+
+
+# A list row needs enough to pick a team; get_teams(id=...) has the full text.
+TEAM_LIST_DESCRIPTION_CHARS = 160
+_FENCED_BLOCK = re.compile(r"```[\s\S]*?(?:```|\Z)")
+
+
+def short_team_description(text: str | None) -> str | None:
+    """A team description cut to one line, without embedded asset blocks."""
+    if not text:
+        return None
+    return collapse_whitespace(_FENCED_BLOCK.sub(" ", text), max_length=TEAM_LIST_DESCRIPTION_CHARS) or None
 
 
 def _team_summary(team: Team) -> dict[str, Any]:
@@ -112,8 +126,14 @@ def register(mcp: FastMCP) -> None:
         id: Annotated[str, Field(description="Team UUID")],
         ctx: Context,
         name: Annotated[Optional[str], Field(description="New slug name")] = None,
-        description: Annotated[Optional[str], Field(description="New description (plain text or markdown)")] = None,
-        visibility: Annotated[Optional[str], Field(description='"public" | "private"')] = None,
+        description: Annotated[
+            Optional[str],
+            Field(description='New description (plain text or markdown). Pass "" to clear it'),
+        ] = None,
+        visibility: Annotated[
+            Optional[str],
+            Field(description='"public" (anyone can see it) | "organization" (internal members only)'),
+        ] = None,
         default_role: Annotated[Optional[str], Field(description='"read" | "write" | "admin"')] = None,
         actor_type_policy: Annotated[Optional[str], Field(description='"any" | "verified_only" | "agents_only"')] = None,
         source_policy: Annotated[Optional[str], Field(description='"any" | "web_only" | "api_only"')] = None,
@@ -121,7 +141,7 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Update a team's name, description, visibility, default_role, or policy settings."""
         ouro = ctx.request_context.lifespan_context.ouro
-        desc_content = content_from_markdown(ouro, description) if description else None
+        desc_content = content_from_markdown(ouro, description) if description is not None else None
         team = ouro.teams.update(
             id=id,
             name=name,
@@ -194,13 +214,20 @@ def register(mcp: FastMCP) -> None:
 
             results.append(entry)
 
+        # One organization: say it once in the header, not on every row
+        org_ids = {row.get("org_id") for row in results}
+        one_org = len(org_ids) == 1 and results
+        extras = None
+        if one_org:
+            first = results[0]
+            extras = [f"org: {first.get('organization_name') or '?'} — org_id: `{first.get('org_id')}`"]
+
         def _team_line(row: dict[str, Any]) -> str:
-            parts = [
-                markdown_id(row.get("id")),
-                f"org_id: `{row['org_id']}`" if row.get("org_id") else None,
-            ]
-            if row.get("organization_name"):
-                parts.append(f"org: {row['organization_name']}")
+            parts = [markdown_id(row.get("id"))]
+            if not one_org:
+                parts.append(f"org_id: `{row['org_id']}`" if row.get("org_id") else None)
+                if row.get("organization_name"):
+                    parts.append(f"org: {row['organization_name']}")
             if row.get("visibility"):
                 parts.append(str(row["visibility"]))
             if row.get("role"):
@@ -214,7 +241,7 @@ def register(mcp: FastMCP) -> None:
             return markdown_bullet(
                 str(row.get("name") or "(unnamed)"),
                 *parts,
-                body=row.get("description"),
+                body=short_team_description(row.get("description")),
             )
 
         return render_markdown_list(
@@ -222,6 +249,7 @@ def register(mcp: FastMCP) -> None:
             line_fn=_team_line,
             noun="teams",
             empty_text="No teams found.",
+            extras=extras,
         )
 
     @mcp.tool(annotations={"readOnlyHint": True})

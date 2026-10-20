@@ -67,14 +67,9 @@ class TestSlimAssetTags(unittest.TestCase):
             slim_asset_tags(rows),
             [
                 {
+                    "name": "chemistry",
+                    "type": "domain",
                     "source": "manual",
-                    "tag": {
-                        "id": tag_id,
-                        "name": "chemistry",
-                        "slug": "chemistry",
-                        "type": "domain",
-                        "description": "Chemistry",
-                    },
                 }
             ],
         )

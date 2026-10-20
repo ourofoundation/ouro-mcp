@@ -39,6 +39,7 @@ def _message_summary(message: Message) -> dict:
         "id": str(message.id),
         "conversation_id": str(message.conversation_id),
         "user_id": str(message.user_id),
+        "username": message.user.username if message.user else None,
         "type": message.type or "message",
         "text": message.text,
         "json": message.data,
@@ -222,18 +223,16 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(
                 description=(
-                    "ISO timestamp cursor: return only messages strictly older than this. "
-                    "Pass the `created_at` of the oldest message in the previous page to "
-                    "load the next page. Omit for the newest page."
+                    "Cursor for older messages: pass the `before` value from the previous "
+                    "page's header. Omit for the most recent messages."
                 )
             ),
         ] = None,
     ) -> str:
-        """List messages in a conversation, newest-first.
+        """List messages in a conversation, oldest first within each page.
 
-        The backend uses a `before` timestamp cursor (not offset/limit) — page
-        by taking the `created_at` of the oldest message in the previous page
-        and passing it as `before` on the next call.
+        The first call returns the most recent messages. To read further back,
+        pass the `before` value the header gives.
         """
         if limit <= 0 or limit > 200:
             raise ValueError("limit must be between 1 and 200.")
@@ -248,19 +247,17 @@ def register(mcp: FastMCP) -> None:
         results = [_message_summary(message) for message in page]
 
         def _message_line(row: dict) -> str:
+            author = f"@{row['username']}" if row.get("username") else "message"
+            if row.get("type") and row.get("type") != "message":
+                author += f" ({row['type']})"
             parts = [
                 markdown_id(row.get("id")),
-                f"user_id: `{row['user_id']}`" if row.get("user_id") else None,
+                None if row.get("username") else f"user_id: `{row['user_id']}`",
+                row.get("created_at"),
             ]
-            if row.get("type") and row.get("type") != "message":
-                parts.append(f"type: {row['type']}")
-            if row.get("created_at"):
-                parts.append(row["created_at"])
-            text = row.get("text") or ""
-            primary = text[:80] + ("…" if len(text) > 80 else "") if text else "(empty)"
-            body = text if len(text) > 80 else None
-            return markdown_bullet(primary, *parts, body=body)
+            return markdown_bullet(author, *parts, body=row.get("text") or "(empty)")
 
+        cursor = (page.next_cursor or {}).get("before") if page.has_more else None
         return truncate_response(
             render_markdown_list(
                 results,
@@ -268,9 +265,7 @@ def register(mcp: FastMCP) -> None:
                 pagination=page_pagination(page),
                 noun="messages",
                 empty_text="No messages.",
-                extras=[
-                    f"conversation_id: `{conversation_id}`",
-                    "Newest first. Page with before=<oldest created_at>.",
-                ],
+                extras=[f"conversation_id: `{conversation_id}`"],
+                next_page=f"before=`{cursor}`" if cursor else None,
             )
         )

@@ -23,38 +23,27 @@ class _CaptureMCP:
         return decorator
 
 
-class _FakeDeleter:
+class _FakeAssets:
+    """``ouro.assets.delete``: detects the type and deletes through its resource."""
+
     def __init__(self, asset_type: str, name: str = "hello") -> None:
         self.asset_type = asset_type
         self.name = name
         self.delete_calls: list[dict] = []
 
-    def delete(
-        self, id: str, *, delete_children: bool = False, dry_run: bool = False
-    ) -> DeleteResult:
+    def delete(self, id: str, *, delete_children=None, dry_run: bool = False) -> DeleteResult:
+        if self.asset_type not in {"comment", "post", "route"}:
+            raise ValueError(f"Cannot delete asset of type '{self.asset_type}' via assets.delete")
         self.delete_calls.append(
             {"id": id, "delete_children": delete_children, "dry_run": dry_run}
         )
-        return DeleteResult(
-            id=id, name=self.name, asset_type=self.asset_type, dry_run=dry_run
-        )
+        return DeleteResult(id=id, name=self.name, asset_type=self.asset_type, dry_run=dry_run)
 
 
-class _FakeAssets:
-    def __init__(self, asset: SimpleNamespace) -> None:
-        self._asset = asset
-
-    def retrieve(self, id: str) -> SimpleNamespace:
-        assert id == self._asset.id
-        return self._asset
-
-
-def _ctx(assets: _FakeAssets, **resources: object) -> SimpleNamespace:
+def _ctx(assets: _FakeAssets) -> SimpleNamespace:
     return SimpleNamespace(
         request_context=SimpleNamespace(
-            lifespan_context=SimpleNamespace(
-                ouro=SimpleNamespace(assets=assets, **resources)
-            )
+            lifespan_context=SimpleNamespace(ouro=SimpleNamespace(assets=assets))
         )
     )
 
@@ -66,15 +55,9 @@ def _asset_tools() -> dict[str, object]:
 
 
 def test_delete_asset_deletes_comments() -> None:
-    comment = SimpleNamespace(id=COMMENT_ID, name="", asset_type="comment")
-    posts = _FakeDeleter("comment")
-    tools = _asset_tools()
+    assets = _FakeAssets("comment")
 
-    result = json.loads(
-        tools["delete_asset"](
-            id=COMMENT_ID, ctx=_ctx(_FakeAssets(comment), posts=posts)
-        )
-    )
+    result = json.loads(_asset_tools()["delete_asset"](id=COMMENT_ID, ctx=_ctx(assets)))
 
     assert result == {
         "deleted": True,
@@ -84,40 +67,31 @@ def test_delete_asset_deletes_comments() -> None:
         "deleted_children": [],
         "deleted_children_count": 0,
     }
-    assert posts.delete_calls == [
-        {"id": COMMENT_ID, "delete_children": False, "dry_run": False}
+    # Children default is the SDK's call (services cascade, others don't)
+    assert assets.delete_calls == [
+        {"id": COMMENT_ID, "delete_children": None, "dry_run": False}
     ]
 
 
 def test_delete_asset_dry_run_previews_comments() -> None:
-    comment = SimpleNamespace(id=COMMENT_ID, name="", asset_type="comment")
-    posts = _FakeDeleter("comment")
-    tools = _asset_tools()
+    assets = _FakeAssets("comment")
 
     result = json.loads(
-        tools["delete_asset"](
-            id=COMMENT_ID,
-            ctx=_ctx(_FakeAssets(comment), posts=posts),
-            dry_run=True,
-        )
+        _asset_tools()["delete_asset"](id=COMMENT_ID, ctx=_ctx(assets), dry_run=True)
     )
 
     assert result["deleted"] is False
     assert result["dry_run"] is True
-    assert posts.delete_calls == [
-        {"id": COMMENT_ID, "delete_children": False, "dry_run": True}
+    assert assets.delete_calls == [
+        {"id": COMMENT_ID, "delete_children": None, "dry_run": True}
     ]
 
 
 def test_delete_asset_deletes_routes() -> None:
-    route = SimpleNamespace(id=ROUTE_ID, name="predict", asset_type="route")
-    routes = _FakeDeleter("route", name="predict")
-    tools = _asset_tools()
+    assets = _FakeAssets("route", name="predict")
 
     result = json.loads(
-        tools["delete_asset"](
-            id=ROUTE_ID, ctx=_ctx(_FakeAssets(route), routes=routes)
-        )
+        _asset_tools()["delete_asset"](id=ROUTE_ID, ctx=_ctx(assets), delete_children=True)
     )
 
     assert result == {
@@ -128,22 +102,16 @@ def test_delete_asset_deletes_routes() -> None:
         "deleted_children": [],
         "deleted_children_count": 0,
     }
-    assert routes.delete_calls == [
-        {"id": ROUTE_ID, "delete_children": False, "dry_run": False}
+    assert assets.delete_calls == [
+        {"id": ROUTE_ID, "delete_children": True, "dry_run": False}
     ]
 
 
 def test_delete_asset_rejects_unsupported_types() -> None:
-    asset = SimpleNamespace(id="other-1", name="x", asset_type="unknown")
-    posts = _FakeDeleter("comment")
-    tools = _asset_tools()
+    assets = _FakeAssets("unknown")
 
-    result = json.loads(
-        tools["delete_asset"](
-            id="other-1", ctx=_ctx(_FakeAssets(asset), posts=posts)
-        )
-    )
+    result = json.loads(_asset_tools()["delete_asset"](id="other-1", ctx=_ctx(assets)))
 
-    assert result["error"] == "unsupported_type"
+    assert result["error"] == "invalid_arguments"
     assert "unknown" in result["message"]
-    assert posts.delete_calls == []
+    assert assets.delete_calls == []

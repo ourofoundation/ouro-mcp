@@ -13,6 +13,9 @@ from ouro.utils.content import description_to_markdown
 from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    asset_type_of,
+    route_caller_parameters,
+    collapse_whitespace,
     dump_json,
     format_asset_properties,
     format_asset_summary,
@@ -70,11 +73,13 @@ def register(mcp: FastMCP) -> None:
                     "with a `↳ name (type · @owner · #team) — description` line under each embedded asset "
                     "so you don't need get_asset per embed, "
                     "plus a compact creation_action pointer (action_id/status/route_id), "
-                    "connections (comment edges omitted — see comments preview / get_comments), "
+                    "connections, up to 20 per type (comment edges omitted — see comments preview / "
+                    "get_comments; a post's own links and embeds are in its body), "
                     "`derived`: the versions, results and supporting assets that came from it, "
                     "tags, and a bounded comments/replies preview when present. "
                     "Both levels include `properties`: values Ouro computes (word_count, "
-                    "column_statistics) and values route runs calculated "
+                    "column_statistics: column names in summary, per-column stats in full) "
+                    "and values route runs calculated "
                     "(e.g. curie_temperature), each run's value with its route and action_id. "
                     "Use list_asset_actions(role=\"output\") for the full producer action."
                 )
@@ -99,7 +104,7 @@ def register(mcp: FastMCP) -> None:
         else:
             result = format_asset_summary(asset)
         _enrich_counts(result, ouro, id)
-        _enrich_properties(result, ouro, id)
+        _enrich_properties(result, ouro, id, full=detail == "full")
         return dump_json(result)
 
     @mcp.tool(
@@ -198,7 +203,7 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool(
-        annotations={"destructiveHint": True},
+        annotations={"destructiveHint": True, "idempotentHint": True},
     )
     @handle_ouro_errors
     def delete_asset(
@@ -232,46 +237,11 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        asset = ouro.assets.retrieve(id)
-        asset_type = asset.asset_type
-        name = asset.name
-
-        if delete_children is None:
-            effective_delete_children = asset_type == "service"
-        else:
-            effective_delete_children = delete_children
-
-        delete_kwargs = {
-            "delete_children": effective_delete_children,
-            "dry_run": dry_run,
-        }
-
-        if asset_type == "dataset":
-            result = ouro.datasets.delete(id, **delete_kwargs)
-        elif asset_type in {"post", "comment"}:
-            # Comments share DELETE /posts/:id (permission is type-agnostic;
-            # the handler cascades the reply thread).
-            result = ouro.posts.delete(id, **delete_kwargs)
-        elif asset_type == "file":
-            result = ouro.files.delete(id, **delete_kwargs)
-        elif asset_type == "quest":
-            result = ouro.quests.delete(id, **delete_kwargs)
-        elif asset_type == "service":
-            result = ouro.services.delete(id, **delete_kwargs)
-        elif asset_type == "route":
-            result = ouro.routes.delete(id, **delete_kwargs)
-        else:
-            return dump_json(
-                {
-                    "error": "unsupported_type",
-                    "message": f"Cannot delete asset of type '{asset_type}' via this tool.",
-                }
-            )
-
+        result = ouro.assets.delete(id, delete_children=delete_children, dry_run=dry_run)
         payload = {
             "deleted": not dry_run,
             "id": str(result.id),
-            "name": result.name or name,
+            "name": result.name,
             "asset_type": result.asset_type,
             "deleted_children": [
                 child.model_dump(mode="json", exclude_none=True)
@@ -284,7 +254,7 @@ def register(mcp: FastMCP) -> None:
         return dump_json(payload)
 
     @mcp.tool(
-        annotations={"destructiveHint": True},
+        annotations={"destructiveHint": True, "idempotentHint": True},
     )
     @handle_ouro_errors
     def share_asset(
@@ -314,7 +284,7 @@ def register(mcp: FastMCP) -> None:
         ouro.assets.share(id, user_id, role=role)
         return dump_json({"id": id, "user_id": user_id, "role": role})
 
-    @mcp.tool(annotations={"idempotentHint": False})
+    @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def download_asset(
         id: Annotated[str, Field(description="UUID of the asset to download")],
@@ -410,7 +380,7 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
         omit_outgoing_refs = False
         try:
-            omit_outgoing_refs = ouro.assets.retrieve(id).asset_type == "dataset"
+            omit_outgoing_refs = asset_type_of(ouro, id) == "dataset"
         except Exception:
             log.debug("Failed to resolve asset type for connections on %s", id, exc_info=True)
         connections = slim_connection_graph(
@@ -479,10 +449,12 @@ def register(mcp: FastMCP) -> None:
         Prefer this over scraping posts for action IDs. Returns compact
         markdown. ``created_by`` is the action that produced the asset (if
         any). ``as_input`` is the list of executions that used the asset as
-        an input — use this to find which routes ran on a file or dataset
-        and to get embed/status/response.
+        an input — use this to find which routes ran on a file or dataset.
+        Each row shows the run's inputs, outputs, run time and cost; pass
+        include_response for its response too.
         """
         from ouro_mcp.tools.services import (
+            ACTION_LINK_HINT,
             _format_action_summary,
             action_summary_line,
         )
@@ -533,7 +505,7 @@ def register(mcp: FastMCP) -> None:
                 for action in as_input
             ]
 
-        extras: list[str] = [f"asset_id: `{asset_id}`", f"role: {role}"]
+        extras: list[str] = [f"asset_id: `{asset_id}`", f"role: {role}", ACTION_LINK_HINT]
         if role in {"input", "both"}:
             extras.append(f"as_input showing {len(as_input)} (offset={offset}, limit={limit})")
             if bundle.has_more:
@@ -651,7 +623,32 @@ def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
         result["counts"] = nonzero
 
 
-def _enrich_properties(result: dict, ouro: Any, asset_id: str) -> None:
+def _compact_column_statistics(stats: Any, *, full: bool) -> Any:
+    """Column statistics without the repeats.
+
+    A summary read only names the columns: the per-column numbers are for
+    analysis, so they come with ``detail="full"``. Either way a ``label``
+    equal to the column name, and scan bookkeeping that says the whole table
+    was read, are dropped.
+    """
+    if not isinstance(stats, dict) or not isinstance(stats.get("columns"), list):
+        return stats
+    columns = [c for c in stats["columns"] if isinstance(c, dict)]
+    compact: dict[str, Any] = {"row_count": stats.get("row_count")}
+    if stats.get("sampled"):
+        compact["sampled"] = True
+        compact["scanned_rows"] = stats.get("scanned_rows")
+    if full:
+        compact["columns"] = [
+            {k: v for k, v in c.items() if not (k == "label" and v == c.get("name"))}
+            for c in columns
+        ]
+    else:
+        compact["columns"] = [c.get("name") for c in columns]
+    return {k: v for k, v in compact.items() if v is not None}
+
+
+def _enrich_properties(result: dict, ouro: Any, asset_id: str, *, full: bool = False) -> None:
     """Best-effort merge of the asset's properties (word count, column
     statistics, calculated values such as a Curie temperature)."""
     try:
@@ -660,6 +657,10 @@ def _enrich_properties(result: dict, ouro: Any, asset_id: str) -> None:
         log.debug("Failed to fetch properties for asset %s", asset_id, exc_info=True)
         return
     formatted = format_asset_properties(properties)
+    if formatted and "column_statistics" in formatted:
+        formatted["column_statistics"] = _compact_column_statistics(
+            formatted["column_statistics"], full=full
+        )
     if formatted:
         result["properties"] = formatted
 
@@ -670,12 +671,17 @@ def _compact_creation_action(created_by: Action) -> dict[str, Any]:
     Full action payloads (response, assets, metadata) belong on
     ``list_asset_actions`` / ``get_action``, not inline on every full asset read.
     """
-    return {
+    pointer = {
         "action_id": str(created_by.id),
         "action_status": created_by.status,
-        "route_id": str(created_by.route_id),
     }
+    if created_by.route_id:
+        pointer["route_id"] = str(created_by.route_id)
+    return pointer
 
+
+# Connections of one type listed on a full read; get_asset_connections has the rest.
+CONNECTIONS_PREVIEW_LIMIT = 20
 
 # Versions, results and supporting assets listed on a full read; a family root
 # can hold hundreds (every relaxed CIF and phonon run on one structure).
@@ -717,7 +723,15 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
             # Comment stubs duplicate the bounded `comments` preview (and
             # `get_comments`); omit them so connections stay lineage-focused.
             omit_comments=True,
+            # A post's own links and embeds are already in content_text
+            omit_outgoing_types=(
+                ("link", "reference") if result.get("content_text") else ()
+            ),
         )
+        for edge_type, rows in slimmed.items():
+            if len(rows) > CONNECTIONS_PREVIEW_LIMIT:
+                slimmed[edge_type] = rows[:CONNECTIONS_PREVIEW_LIMIT]
+                result["connections_has_more"] = True
         if slimmed:
             result["connections"] = slimmed
     except Exception:
@@ -808,6 +822,10 @@ def _enrich_comments_preview(result: dict, ouro: Any, asset_id: str) -> None:
         result["comments_has_more"] = True
 
 
+# A service can hold dozens of routes; get_asset on a route has the full text.
+SERVICE_ROUTE_DESCRIPTION_CHARS = 300
+
+
 def _format_asset_detail(asset: Any, ouro: Any) -> dict:
     """Build a type-appropriate detail response for any asset."""
     base = format_asset_summary(asset)
@@ -854,7 +872,11 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
                 {
                     "id": str(r.id),
                     "name": r.name,
-                    "description": route_description_markdown(r.route.description) if r.route else None,
+                    "description": collapse_whitespace(
+                        route_description_markdown(r.route.description) if r.route else None,
+                        max_length=SERVICE_ROUTE_DESCRIPTION_CHARS,
+                    )
+                    or None,
                 }
                 for r in routes
             ]
@@ -864,8 +886,13 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
 
     elif asset_type == "route":
         if asset.route:
-            base["route_description"] = route_description_markdown(asset.route.description)
-            base["parameters"] = asset.route.parameters
+            # The route's own description in full, in place of the summary's cut-down copy
+            full_description = route_description_markdown(asset.route.description)
+            if full_description:
+                base["description"] = full_description
+            parameters = route_caller_parameters(asset.route.parameters)
+            if parameters:
+                base["parameters"] = parameters
             base["request_body"] = route_request_body_without_input_assets(asset.route)
             base["input_assets"] = route_input_assets_summary(asset.route)
             base["output_assets"] = route_output_assets_summary(asset.route)

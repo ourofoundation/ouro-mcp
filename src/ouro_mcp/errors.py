@@ -51,9 +51,24 @@ except ImportError:  # ouro-py < 0.5.4 (pre-transport-error mapping)
 
 log = logging.getLogger(__name__)
 
-# Money-moving tools: timeouts/connection errors must not be auto-retried by
-# agents (a late success after retry could double-spend).
-_NON_RETRYABLE_TRANSPORT_TOOLS = frozenset({"send_money", "unlock_asset"})
+# Tools whose request may already have taken effect when the transport fails:
+# a retry could charge, create or send twice. Money tools are listed here;
+# register_all_tools adds every other tool that is neither read-only nor
+# idempotent (execute_route, create_*, send_message, ...).
+NON_RETRYABLE_TRANSPORT_TOOLS: set[str] = {"send_money", "unlock_asset"}
+
+_MAY_HAVE_APPLIED = (
+    " The request may already have gone through: check before retrying"
+    " (list_my_actions for a route run, search_assets for a new asset)."
+)
+
+
+class ToolErrorText(str):
+    """A tool's JSON error payload. Registration reports it with ``isError``.
+
+    It is still a ``str``, so code that calls a tool function directly reads the
+    same JSON it always did.
+    """
 
 
 def _request_url(e: Exception) -> str | None:
@@ -181,7 +196,7 @@ def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
     """Convert an ouro-py exception to an agent-friendly JSON error string."""
     raw = str(e)
     raw_lower = raw.lower()
-    force_non_retryable_transport = tool_name in _NON_RETRYABLE_TRANSPORT_TOOLS
+    force_non_retryable_transport = tool_name in NON_RETRYABLE_TRANSPORT_TOOLS
 
     # Known server-side failures that agents should handle without retries.
     if "json object requested, multiple (or no) rows returned" in raw_lower or "thread depth" in raw_lower:
@@ -235,6 +250,17 @@ def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
         return json.dumps(payload)
     if isinstance(e, BadRequestError):
         message = _server_detail(e) or raw
+        bad_id = re.search(r'invalid input syntax for type uuid: "([^"]*)"', message)
+        if bad_id:
+            return json.dumps(
+                {
+                    "error": "invalid_id",
+                    "message": f'"{bad_id.group(1)}" is not an Ouro id. Ids are UUIDs; '
+                    "copy them verbatim from an earlier result.",
+                    "status": 400,
+                    "retryable": False,
+                }
+            )
         payload = _base_error_payload("bad_request", message, status=400)
         payload["retryable"] = False
         return json.dumps(_attach_sql_diagnostics(payload, e, message=message))
@@ -299,8 +325,9 @@ def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
     if isinstance(e, APITimeoutError):
         payload = {
             "error": "timeout",
-            "message": raw or "Request to Ouro API timed out.",
-            "retryable": False if force_non_retryable_transport else True,
+            "message": (raw or "Request to Ouro API timed out.")
+            + (_MAY_HAVE_APPLIED if force_non_retryable_transport else ""),
+            "retryable": not force_non_retryable_transport,
         }
         url = _request_url(e)
         if url:
@@ -309,8 +336,9 @@ def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
     if isinstance(e, APIConnectionError):
         payload = {
             "error": "connection_failed",
-            "message": raw or "Failed to connect to Ouro API.",
-            "retryable": False if force_non_retryable_transport else True,
+            "message": (raw or "Failed to connect to Ouro API.")
+            + (_MAY_HAVE_APPLIED if force_non_retryable_transport else ""),
+            "retryable": not force_non_retryable_transport,
         }
         url = _request_url(e)
         if url:
@@ -320,8 +348,8 @@ def _format_ouro_error(e: Exception, *, tool_name: str | None = None) -> str:
         return json.dumps(
             {
                 "error": "timeout",
-                "message": raw,
-                "retryable": False if force_non_retryable_transport else True,
+                "message": raw + (_MAY_HAVE_APPLIED if force_non_retryable_transport else ""),
+                "retryable": not force_non_retryable_transport,
             }
         )
     if isinstance(e, ValueError):
@@ -358,21 +386,8 @@ def handle_ouro_errors(fn: Callable) -> Callable:
         async def async_wrapper(*args, **kwargs) -> Any:
             try:
                 return await fn(*args, **kwargs)
-            except (
-                NotFoundError,
-                AuthenticationError,
-                PermissionDeniedError,
-                RateLimitError,
-                BadRequestError,
-                UnprocessableEntityError,
-                InternalServerError,
-                RouteExecutionError,
-                APITimeoutError,
-                APIConnectionError,
-                TimeoutError,
-                Exception,
-            ) as e:
-                return _format_ouro_error(e, tool_name=tool_name)
+            except Exception as e:
+                return ToolErrorText(_format_ouro_error(e, tool_name=tool_name))
 
         return async_wrapper
 
@@ -380,20 +395,7 @@ def handle_ouro_errors(fn: Callable) -> Callable:
     def wrapper(*args, **kwargs) -> Any:
         try:
             return fn(*args, **kwargs)
-        except (
-            NotFoundError,
-            AuthenticationError,
-            PermissionDeniedError,
-            RateLimitError,
-            BadRequestError,
-            UnprocessableEntityError,
-            InternalServerError,
-            RouteExecutionError,
-            APITimeoutError,
-            APIConnectionError,
-            TimeoutError,
-            Exception,
-        ) as e:
-            return _format_ouro_error(e, tool_name=tool_name)
+        except Exception as e:
+            return ToolErrorText(_format_ouro_error(e, tool_name=tool_name))
 
     return wrapper

@@ -1111,7 +1111,7 @@ def register(mcp: FastMCP) -> None:
             )
         return dump_json(_view_result(view, dataset_id))
 
-    @mcp.tool(annotations={"destructiveHint": True})
+    @mcp.tool(annotations={"destructiveHint": True, "idempotentHint": True})
     @handle_ouro_errors
     def delete_dataset_view(
         dataset_id: Annotated[str, Field(description="Dataset UUID")],

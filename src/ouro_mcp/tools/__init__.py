@@ -1,9 +1,13 @@
 """Tool registration for the Ouro MCP server."""
 
+import functools
 import inspect
-from typing import Any
+from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolResult, TextContent
+
+from ouro_mcp.errors import NON_RETRYABLE_TRANSPORT_TOOLS, ToolErrorText
 
 _NULL = {"type": "null"}
 # Keys whose values are name -> schema maps rather than schemas.
@@ -43,6 +47,38 @@ def compact_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _as_call_result(result: Any) -> Any:
+    if isinstance(result, ToolErrorText):
+        return CallToolResult(content=[TextContent(type="text", text=str(result))], is_error=True)
+    return result
+
+
+def report_errors(fn: Callable, is_async: bool) -> Callable:
+    """Return a tool's JSON error payload with ``isError`` so clients see a failure."""
+    if is_async:
+
+        @functools.wraps(fn)
+        async def async_wrapper(**kwargs: Any) -> Any:
+            return _as_call_result(await fn(**kwargs))
+
+        return async_wrapper
+
+    @functools.wraps(fn)
+    def wrapper(**kwargs: Any) -> Any:
+        return _as_call_result(fn(**kwargs))
+
+    return wrapper
+
+
+def _hint(tool: Any, name: str) -> bool:
+    """An annotation hint by its wire name (``readOnlyHint``), on either SDK."""
+    hints = tool.annotations
+    if isinstance(hints, dict):
+        return bool(hints.get(name))
+    snake = "".join(f"_{c.lower()}" if c.isupper() else c for c in name)
+    return bool(getattr(hints, name, None) or getattr(hints, snake, None))
+
+
 def register_all_tools(mcp: FastMCP) -> None:
     """Import all tool modules so their @mcp.tool() decorators fire."""
     from ouro_mcp.tools import (
@@ -77,6 +113,9 @@ def register_all_tools(mcp: FastMCP) -> None:
 
     for tool in mcp._tool_manager.list_tools():
         tool.description = inspect.cleandoc(tool.description)
+        tool.fn = report_errors(tool.fn, tool.is_async)
+        if not _hint(tool, "readOnlyHint") and not _hint(tool, "idempotentHint"):
+            NON_RETRYABLE_TRANSPORT_TOOLS.add(tool.name)
         # Reject unknown arguments; otherwise a misspelled or unsupported
         # filter is silently dropped and the agent trusts unfiltered results.
         arg_model = tool.fn_metadata.arg_model

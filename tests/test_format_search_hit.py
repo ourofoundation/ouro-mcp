@@ -74,3 +74,26 @@ def test_format_search_hit_omits_absent_optional_fields():
     assert "username" not in hit
     assert "snippet" not in hit
     assert "match_source" not in hit
+
+
+def test_route_snippet_that_repeats_the_row_is_dropped() -> None:
+    from ouro_mcp.utils import format_search_hit
+
+    description = (
+        "Optimize atomic positions and (optionally) unit-cell parameters of a crystal structure "
+        "using a configurable machine learning interatomic potential such as Orb, MACE, or CHGNet."
+    )
+    row = format_search_hit(
+        {
+            "id": "d040d3b6-faad-40cf-9d7c-999a5c769ed8",
+            "name": "Relax a crystal structure",
+            "asset_type": "route",
+            "description": description,
+            "snippet": "Relax a crystal structure route: Relax a crystal structure "
+            "POST /materials/structure/relax " + description[:150] + "…",
+            "match_source": "route",
+        }
+    )
+
+    assert "snippet" not in row
+    assert "match_source" not in row

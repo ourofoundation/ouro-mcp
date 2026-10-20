@@ -823,7 +823,7 @@ def register(mcp: FastMCP) -> None:
         )
         return dump_json(completion.model_dump(mode="json"))
 
-    @mcp.tool(annotations={"idempotentHint": False})
+    @mcp.tool(annotations={"destructiveHint": True, "idempotentHint": True})
     @handle_ouro_errors
     def delete_quest_item(
         quest_id: Annotated[str, Field(description="Quest UUID")],

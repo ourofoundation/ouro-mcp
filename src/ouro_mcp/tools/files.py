@@ -97,7 +97,7 @@ def upload_command(upload: dict[str, Any], file_name: str) -> str:
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool(annotations={"idempotentHint": False})
+    @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def create_upload_url(
         file_name: Annotated[

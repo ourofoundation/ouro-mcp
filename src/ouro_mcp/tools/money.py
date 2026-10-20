@@ -6,7 +6,7 @@ from typing import Annotated, Literal, Optional
 
 from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
-from ouro.models import BitcoinTransaction, UsdBalance, UsdTransaction
+from ouro.models import BitcoinTransaction, UsdTransaction
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
@@ -36,22 +36,22 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Read the authenticated user's wallet balance.
 
-        Returns ``{"currency": "btc" | "usd", "balance": int, ...}`` where the
-        balance is always in the currency's smallest unit:
+        Amounts are in the currency's smallest unit:
 
-        - BTC: satoshis (1 BTC = 100_000_000 sats).
-        - USD: cents (1 USD = 100 cents).
-
-        When the backend provides an ``available`` amount (balance minus soft
-        escrow holds), it is included in the response.
+        - USD: cents, in ``*_cents`` fields. ``available_cents`` is what you
+          can spend now (balance minus holds for running jobs);
+          ``credits_cents`` can only be spent on Ouro; ``withdrawable_cents``
+          is the part of ``earnings_cents`` you can cash out now.
+        - BTC: satoshis (1 BTC = 100_000_000 sats), in ``balance`` and
+          ``available``.
 
         Read-only; no side effects.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         balance = ouro.money.get_balance(currency=currency)
-        payload = {**balance.model_dump(mode="json"), "currency": currency}
-        if isinstance(balance, UsdBalance):
-            payload["available"] = balance.available_cents
+        payload = {**balance.model_dump(mode="json", exclude_none=True), "currency": currency}
+        if not payload.get("requirements"):
+            payload.pop("requirements", None)
         return dump_json(payload)
 
     @mcp.tool(annotations={"readOnlyHint": True})

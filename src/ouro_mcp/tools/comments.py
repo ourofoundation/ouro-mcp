@@ -12,6 +12,7 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
     content_from_markdown,
     dump_json,
+    retrieve_without_view,
     format_asset_summary,
     markdown_bullet,
     markdown_id,
@@ -42,7 +43,7 @@ def register(mcp: FastMCP) -> None:
 
         parent_context = None
         try:
-            parent = ouro.assets.retrieve(parent_id) if offset == 0 else None
+            parent = retrieve_without_view(ouro, parent_id) if offset == 0 else None
             if parent:
                 parent_context = {
                     "id": str(parent.id),

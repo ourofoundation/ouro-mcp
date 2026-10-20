@@ -81,6 +81,31 @@ class TestNormalizeMarkdownInput(unittest.TestCase):
             self.utils.normalize_markdown_input(text), "email foo@bar.com here"
         )
 
+    def test_keeps_latex_when_text_has_real_newlines(self) -> None:
+        text = "The gradient $\\nabla f$ and $a \\neq b$.\n\n$$\\nu = 1$$"
+        self.assertEqual(self.utils.normalize_markdown_input(text), text)
+
+    def test_keeps_latex_inside_escaped_one_line_text(self) -> None:
+        text = "Intro\\n\\nThe gradient $\\nabla f$ is zero.\\nDone"
+        self.assertEqual(
+            self.utils.normalize_markdown_input(text),
+            "Intro\n\nThe gradient $\\nabla f$ is zero.\nDone",
+        )
+
+    def test_leaves_mentions_in_code_alone(self) -> None:
+        text = "Ask @feynman.\n\n```python\n@property\ndef x(self): ...\n```\n\nUse `@mcp.tool()` here."
+        self.assertEqual(
+            self.utils.normalize_markdown_input(text),
+            "Ask `{@feynman}`.\n\n```python\n@property\ndef x(self): ...\n```\n\nUse `@mcp.tool()` here.",
+        )
+
+    def test_mention_span_next_to_other_code(self) -> None:
+        text = "`@feynman` see `x = 1` and `@{bohr}`"
+        self.assertEqual(
+            self.utils.normalize_markdown_input(text),
+            "`{@feynman}` see `x = 1` and `{@bohr}`",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

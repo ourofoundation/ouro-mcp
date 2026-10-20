@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime
 from typing import Annotated, Any, Literal, Optional
 
 from pydantic import Field
@@ -12,7 +13,9 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.utils import (
+    collapse_whitespace,
     resolve_location,
+    route_caller_parameters,
     MAX_BILLABLE_SECONDS_DESC,
     PRICE_CURRENCY_DESC,
     UNIT_COST_SATS_DESC,
@@ -598,27 +601,66 @@ def _format_action_summary(
     return {k: v for k, v in result.items() if v is not None}
 
 
-def action_summary_line(summary: Any) -> str:
-    """Render one action summary dict as a markdown bullet."""
+def _action_asset_refs(rows: Any) -> Optional[str]:
+    """``name `id`, ...`` for an action's input or output assets."""
+    refs = []
+    for row in rows or []:
+        asset = row.get("asset") or {}
+        if asset.get("id"):
+            label = collapse_whitespace(asset.get("name") or asset.get("asset_type") or "asset")
+            refs.append(f"{label} `{asset['id']}`")
+    return ", ".join(refs) or None
+
+
+def _action_duration(summary: dict[str, Any]) -> Optional[str]:
+    try:
+        started = datetime.fromisoformat(str(summary["started_at"]).replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(str(summary["finished_at"]).replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    seconds = max(0, round((finished - started).total_seconds()))
+    return f"ran {seconds // 60}m {seconds % 60}s" if seconds >= 60 else f"ran {seconds}s"
+
+
+# How to cite a run, said once in a list header instead of once per row
+ACTION_LINK_HINT = (
+    "Link a run in Ouro markdown as [label](action:<id>); "
+    "get_action returns the embed block."
+)
+
+
+def action_summary_line(summary: Any, *, show_route: bool = True) -> str:
+    """Render one action summary dict as a markdown bullet.
+
+    Inputs, outputs, run time and cost are on the line so an agent can tell
+    runs apart without a ``get_action`` per row. The response (when the
+    caller asked for it) goes in the body.
+    """
     if not isinstance(summary, dict):
         summary = _format_action_summary(summary)
     status_val = summary.get("action_status") or summary.get("status")
+    route = summary.get("route") if isinstance(summary.get("route"), dict) else None
+    cost = summary.get("cost") if isinstance(summary.get("cost"), dict) else None
     parts = [
         markdown_id(summary.get("action_id") or summary.get("id")),
         f"status: {status_val}" if status_val else None,
+        f"route_id: `{summary['route_id']}`" if show_route and summary.get("route_id") else None,
+        summary.get("created_at"),
+        _action_duration(summary),
+        (cost or {}).get("cost_summary"),
     ]
-    route_id = summary.get("route_id")
-    if route_id:
-        parts.append(f"route_id: `{route_id}`")
-    if summary.get("created_at"):
-        parts.append(str(summary["created_at"]))
-    route = summary.get("route") if isinstance(summary.get("route"), dict) else None
+    body = []
+    inputs = _action_asset_refs(summary.get("input_assets"))
+    if inputs:
+        body.append(f"in: {inputs}")
+    outputs = _action_asset_refs(summary.get("output_assets"))
+    if outputs:
+        body.append(f"out: {outputs}")
+    if "response" in summary:
+        response = json.dumps(summary["response"], default=str)
+        body.append("response: " + (response[:600] + "…" if len(response) > 600 else response))
     name = (route or {}).get("name") or "action"
-    return markdown_bullet(
-        str(name),
-        *parts,
-        body=summary.get("embed_markdown") or summary.get("link_markdown"),
-    )
+    return markdown_bullet(str(name), *parts, body=" · ".join(body) or None)
 
 
 def _format_log_entry(log_entry: Any) -> dict[str, Any]:
@@ -1172,7 +1214,7 @@ def register(mcp: FastMCP) -> None:
         return dump_json(format_asset_summary(route))
 
     @mcp.tool(
-        annotations={"destructiveHint": True, "openWorldHint": True},
+        annotations={"destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
     )
     @handle_ouro_errors
     def execute_route(
@@ -1367,7 +1409,7 @@ def register(mcp: FastMCP) -> None:
                 "execution_mode": execution_mode,
                 "p95_completion_ms": p95_completion_ms,
                 "avg_completion_ms": avg_completion_ms,
-                "expected_parameters": route.route.parameters if route.route else None,
+                "expected_parameters": route_caller_parameters(route.route.parameters) if route.route else None,
                 "expected_request_body": (
                     route_request_body_without_input_assets(route.route)
                     if route.route
@@ -1545,7 +1587,7 @@ def register(mcp: FastMCP) -> None:
                 action = ouro.routes.retrieve_action(action_id)
                 snapshot = _format_action_result(
                     action,
-                    route_id=str(action.route_id),
+                    route_id=str(action.route_id) if action.route_id else None,
                     include_response=include_response,
                 )
                 snapshot["message"] = _pending_message(
@@ -1560,7 +1602,7 @@ def register(mcp: FastMCP) -> None:
 
         result = _format_action_result(
             action,
-            route_id=str(action.route_id),
+            route_id=str(action.route_id) if action.route_id else None,
             include_response=include_response,
         )
         if include_logs:
@@ -1603,11 +1645,10 @@ def register(mcp: FastMCP) -> None:
             Field(description="Include each action response payload. Leave false for compact browsing."),
         ] = False,
     ) -> str:
-        """List previous executions for a route.
+        """List previous executions for a route, newest first.
 
         Use this when you need to find prior runs to reference or embed. Each
-        result includes `embed_markdown` (block receipt) and `link_markdown`
-        (inline `[label](action:<uuid>)` link) ready to paste into Ouro markdown.
+        row shows the run's input and output assets, run time and cost.
         """
         if limit <= 0 or limit > 200:
             raise ValueError("limit must be between 1 and 200.")
@@ -1637,17 +1678,12 @@ def register(mcp: FastMCP) -> None:
         return truncate_response(
             render_markdown_list(
                 results,
-                line_fn=action_summary_line,
+                line_fn=lambda row: action_summary_line(row, show_route=False),
                 pagination=page_pagination(page),
                 offset=offset,
                 noun="route actions",
                 empty_text="No route actions.",
-                extras=[
-                    f"route_id: `{route.id}`",
-                    f"route: {route.name}",
-                    "Use embed_markdown for a block action receipt, or "
-                    "link_markdown for an inline action link.",
-                ],
+                extras=[f"route: {route.name} — route_id: `{route.id}`", ACTION_LINK_HINT],
             )
         )
 
@@ -1694,11 +1730,7 @@ def register(mcp: FastMCP) -> None:
 
         return truncate_response(
             render_markdown_list(
-                # One line per run: the inline link, not the block embed
-                [
-                    {k: v for k, v in _format_action_summary(action).items() if k != "embed_markdown"}
-                    for action in page
-                ],
+                [_format_action_summary(action) for action in page],
                 line_fn=action_summary_line,
                 pagination=page_pagination(page),
                 offset=offset,
