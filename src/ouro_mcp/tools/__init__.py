@@ -2,10 +2,12 @@
 
 import functools
 import inspect
+import json
 from typing import Any, Callable
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
+from pydantic import ValidationError
 
 from ouro_mcp.errors import NON_RETRYABLE_TRANSPORT_TOOLS, ToolErrorText
 
@@ -70,6 +72,34 @@ def report_errors(fn: Callable, is_async: bool) -> Callable:
     return wrapper
 
 
+def _invalid_arguments(e: ValidationError) -> CallToolResult:
+    """Argument errors in the shape tool errors use, one line per bad argument."""
+    problems = []
+    for error in e.errors(include_url=False):
+        where = ".".join(str(part) for part in error["loc"]) or "arguments"
+        got = f" (got {error['input']!r})" if error["type"] not in {"missing", "extra_forbidden"} else ""
+        problems.append(f"{where}: {error['msg']}{got}")
+    payload = {"error": "invalid_arguments", "message": "; ".join(problems), "retryable": False}
+    return _as_call_result(ToolErrorText(json.dumps(payload, default=str)))
+
+
+def _with_argument_errors(metadata: Any) -> Any:
+    """``metadata`` reporting argument validation errors as tool errors.
+
+    The SDK raises them as "Error executing tool …: 1 validation error for
+    …Arguments" with a pydantic docs link; agents read the JSON form better.
+    """
+
+    class FriendlyArguments(type(metadata)):
+        async def call_fn_with_arg_validation(self, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return await super().call_fn_with_arg_validation(*args, **kwargs)
+            except ValidationError as e:
+                return _invalid_arguments(e)
+
+    return FriendlyArguments.model_construct(**{name: getattr(metadata, name) for name in type(metadata).model_fields})
+
+
 def _hint(tool: Any, name: str) -> bool:
     """An annotation hint by its wire name (`readOnlyHint`), on either SDK."""
     hints = tool.annotations
@@ -125,3 +155,4 @@ def register_all_tools(mcp: FastMCP) -> None:
         # Tools return rendered text; a {"result": str} structured copy would
         # send every response twice.
         tool.fn_metadata.output_schema = None
+        tool.fn_metadata = _with_argument_errors(tool.fn_metadata)

@@ -94,7 +94,7 @@ def resolve_location(
         needed = "org_id and team_id are" if need_team else "org_id is"
         raise ValueError(
             f"{needed} required: this server is not pinned to an organization. "
-            "Call get_organizations() and get_teams(org_id=...) to choose where to publish."
+            "Call list_organizations() and list_teams(org_id=...) to choose where to publish."
         )
     return org_id, team_id
 

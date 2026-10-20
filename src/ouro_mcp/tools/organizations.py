@@ -18,7 +18,7 @@ from ouro_mcp.rendering import (
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
-    def get_organizations(
+    def list_organizations(
         ctx: Context,
         discover: Annotated[bool, Field(description="Browse discoverable orgs you could join")] = False,
     ) -> str:

@@ -54,8 +54,8 @@ Provided context:
 
 Before creating any quest:
 
-1. Call `get_organizations()` to see where the user can publish.
-2. Call `get_teams(org_id=...)` for the target organization.
+1. Call `list_organizations()` to see where the user can publish.
+2. Call `list_teams(org_id=...)` for the target organization.
 3. Choose the most specific relevant team and verify `agent_can_create` is true.
 4. If the user did not specify a location and there is no obvious team, ask them to choose.
 5. Pass both `org_id` and `team_id` to `create_quest`.

@@ -8,6 +8,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.params import NotificationCategories
 from ouro_mcp.rendering import (
     clip,
     collapse_whitespace,
@@ -25,10 +26,10 @@ NOTIFICATION_TEXT_CHARS = 160
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
-    def get_notifications(
+    def list_notifications(
         ctx: Context,
-        offset: Annotated[int, Field(description="Pagination offset")] = 0,
-        limit: Annotated[int, Field(description="Max results to return")] = 20,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(ge=1, le=100, description="Max results to return")] = 20,
         org_id: Annotated[
             Optional[str], Field(description="Filter by organization UUID")
         ] = None,
@@ -36,12 +37,7 @@ def register(mcp: FastMCP) -> None:
             bool, Field(description="Only return unread notifications")
         ] = False,
         category: Annotated[
-            Optional[str],
-            Field(
-                description=(
-                    "Comma-separated categories: mentions, comments, references, shares, money, actions"
-                )
-            ),
+            Optional[NotificationCategories], Field(description='Only these kinds, e.g. ["mentions", "comments"]')
         ] = None,
     ) -> str:
         """List notifications for the authenticated user, newest first."""
@@ -52,7 +48,7 @@ def register(mcp: FastMCP) -> None:
             limit=limit,
             org_id=org_id,
             unread_only=unread_only,
-            category=category,
+            category=",".join(category) if category else None,
         )
 
         me_id = str(getattr(getattr(ouro, "user", None), "id", ""))

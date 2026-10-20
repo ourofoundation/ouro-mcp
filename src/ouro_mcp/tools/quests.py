@@ -14,6 +14,15 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.markdown_input import (
     content_from_markdown,
 )
+from ouro_mcp.params import (
+    ATTRIBUTION_DESC,
+    Attribution,
+    QuestItemStatus,
+    QuestItemStatuses,
+    QuestStatus,
+    QuestType,
+    QuestVisibility,
+)
 from ouro_mcp.pricing import (
     format_one_time_cost_summary,
 )
@@ -295,30 +304,21 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         visibility: Annotated[
-            Optional[str],
-            Field(
-                description='"public" | "private" | "organization". '
-                "Omit to follow the team: public in a public team, organization in an internal one"
-            ),
+            Optional[QuestVisibility],
+            Field(description="Omit to follow the team: public in a public team, organization in an internal one"),
         ] = None,
         type: Annotated[
-            str,
+            QuestType,
             Field(
                 description=(
-                    '"closable" | "continuous". Closable: one active entry per '
-                    "contributor per item. Continuous: unlimited entries per item."
+                    "closable: one active entry per contributor per item; "
+                    "continuous: unlimited entries per item"
                 )
             ),
         ] = "closable",
-        status: Annotated[
-            str,
-            Field(description='"draft" | "open" | "closed" | "cancelled"'),
-        ] = "open",
+        status: Annotated[QuestStatus, Field(description="Start as a draft, or open")] = "open",
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Top-level provenance object; separate from quest metadata"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Create a new quest on Ouro with optional task items.
 
@@ -367,18 +367,14 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="Replacement quest description in extended markdown (same syntax as create_post)"),
         ] = None,
-        visibility: Annotated[Optional[str], Field(description='"public" | "private" | "organization"')] = None,
+        visibility: Annotated[Optional[QuestVisibility], Field(description="New visibility")] = None,
         status: Annotated[
-            Optional[str],
-            Field(description='"draft" | "open" | "closed" | "cancelled" ("closed" and "cancelled" are terminal)'),
+            Optional[QuestStatus], Field(description='"closed" and "cancelled" are final')
         ] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
         license_id: Annotated[Optional[str], Field(description="New asset license identifier")] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Updated top-level provenance object"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Update a quest's description or metadata. Pass description_markdown to replace the body."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -410,13 +406,8 @@ def register(mcp: FastMCP) -> None:
     def list_assigned_quest_items(
         ctx: Context,
         status: Annotated[
-            Optional[str],
-            Field(
-                description=(
-                    "Comma-separated item statuses to include. Defaults to "
-                    "'pending,in_progress'. Pass 'all' to include terminal items."
-                )
-            ),
+            Optional[QuestItemStatuses],
+            Field(description='Item statuses to include; default ["pending", "in_progress"], ["all"] for every item'),
         ] = None,
         assignee_id: Annotated[
             Optional[str],
@@ -424,8 +415,8 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         org_id: Annotated[Optional[str], Field(description="Organization UUID filter")] = None,
         team_id: Annotated[Optional[str], Field(description="Team UUID filter")] = None,
-        limit: Annotated[int, Field(description="Page size, 1-100")] = 20,
-        offset: Annotated[int, Field(description="Offset for pagination")] = 0,
+        limit: Annotated[int, Field(ge=1, le=100, description="Page size")] = 20,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
         """List actionable quest items assigned to the authenticated user.
 
@@ -435,7 +426,7 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
         page = ouro.quests.list_assigned_items(
-            status=status,
+            status=",".join(status) if status else None,
             assignee_id=assignee_id,
             org_id=org_id,
             team_id=team_id,
@@ -581,10 +572,7 @@ def register(mcp: FastMCP) -> None:
         quest_id: Annotated[str, Field(description="Quest UUID")],
         item_id: Annotated[str, Field(description="Item UUID")],
         ctx: Context,
-        status: Annotated[
-            Optional[str],
-            Field(description='"pending" | "in_progress" | "done" | "skipped"'),
-        ] = None,
+        status: Annotated[Optional[QuestItemStatus], Field(description="New item status")] = None,
         description: Annotated[
             Optional[str],
             Field(description="Updated task description in extended markdown"),
@@ -680,12 +668,7 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         leaderboard_order: Annotated[
-            Optional[str],
-            Field(
-                description=(
-                    '"desc" (higher score wins) or "asc" (lower score wins)'
-                )
-            ),
+            Optional[Literal["desc", "asc"]], Field(description='"desc": higher score wins')
         ] = None,
         eval_trigger: Annotated[
             Optional[Literal["submit", "owner"]],
@@ -721,8 +704,7 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         reward_currency: Annotated[
-            Optional[str],
-            Field(description='"btc" or "usd" — currency of the per-entry reward'),
+            Optional[Literal["btc", "usd"]], Field(description="Currency of the per-entry reward")
         ] = None,
         reward_amount: Annotated[
             Optional[int],
@@ -910,11 +892,10 @@ def register(mcp: FastMCP) -> None:
         quest_id: Annotated[str, Field(description="Quest UUID")],
         ctx: Context,
         status: Annotated[
-            Optional[str],
-            Field(description='"submitted" | "accepted" | "rejected"'),
+            Optional[Literal["submitted", "accepted", "rejected"]], Field(description="Only entries in this state")
         ] = None,
-        limit: Annotated[int, Field(description="Page size, 1-200")] = 50,
-        offset: Annotated[int, Field(description="Offset for pagination")] = 0,
+        limit: Annotated[int, Field(ge=1, le=200, description="Page size")] = 50,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
         """List contributor entries for a quest."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -961,8 +942,8 @@ def register(mcp: FastMCP) -> None:
         quest_id: Annotated[str, Field(description="Quest UUID")],
         item_id: Annotated[str, Field(description="Leaderboard-enabled quest item UUID")],
         ctx: Context,
-        limit: Annotated[int, Field(description="Page size, 1-200")] = 50,
-        offset: Annotated[int, Field(description="Offset for pagination")] = 0,
+        limit: Annotated[int, Field(ge=1, le=200, description="Page size")] = 50,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
         """List ranked scored submissions for a quest item leaderboard.
 
@@ -1017,7 +998,7 @@ def register(mcp: FastMCP) -> None:
     def review_quest_entry(
         quest_id: Annotated[str, Field(description="Quest UUID")],
         entry_id: Annotated[str, Field(description="Quest entry UUID")],
-        status: Annotated[str, Field(description='"accepted" | "rejected"')],
+        status: Annotated[Literal["accepted", "rejected"], Field(description="Your decision")],
         ctx: Context,
         review_markdown: Annotated[
             Optional[str],

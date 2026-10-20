@@ -112,12 +112,12 @@ def test_read_notification_aggregates_failures() -> None:
     assert notifications.read_calls == ["ok", "also-ok"]
 
 
-def test_get_notifications_passes_category() -> None:
+def test_list_notifications_passes_category() -> None:
     notifications = _FakeNotifications()
     tools = _tools()
-    result = tools["get_notifications"](
+    result = tools["list_notifications"](
         ctx=_ctx(notifications),
-        category="mentions,comments,shares",
+        category=["mentions", "comments", "shares"],
         unread_only=True,
         limit=10,
     )

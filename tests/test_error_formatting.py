@@ -282,3 +282,18 @@ def test_registered_tool_errors_set_is_error() -> None:
 
     assert result.is_error is True
     assert json.loads(result.content[0].text)["error"] == "invalid_arguments"
+
+
+def test_bad_arguments_come_back_as_invalid_arguments() -> None:
+    import asyncio
+
+    from ouro_mcp.server import mcp
+
+    tool = mcp._tool_manager.get_tool("search_assets")
+    result = asyncio.run(tool.run({"sort": "best", "limit": 500}, context=None, convert_result=True))
+
+    assert result.is_error is True
+    payload = json.loads(result.content[0].text)
+    assert payload["error"] == "invalid_arguments"
+    assert "sort: Input should be 'relevant'" in payload["message"]
+    assert "limit: Input should be less than or equal to 100 (got 500)" in payload["message"]

@@ -97,8 +97,7 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         limit: Annotated[
-            int,
-            Field(description="Max assets to include when asset_ids is omitted."),
+            int, Field(ge=1, le=50, description="Max assets to include when asset_ids is omitted")
         ] = 50,
     ) -> str:
         """What happened to what you made — engagement impact with external attribution.

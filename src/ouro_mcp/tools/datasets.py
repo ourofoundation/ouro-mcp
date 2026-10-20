@@ -13,6 +13,14 @@ from ouro.models import Dataset, ResolvedRef
 from pydantic import BeforeValidator, Field
 
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.params import (
+    ATTRIBUTION_DESC,
+    Attribution,
+    JsonArray,
+    JsonObject,
+    ResponseFormat,
+    Visibility,
+)
 from ouro_mcp.pricing import (
     PRICE_CURRENCY_DESC,
     PRICE_SATS_DESC,
@@ -408,7 +416,7 @@ def _dataset_proof(
 
 
 _VIEW_CONFIG_DESCRIPTION = (
-    "Chart config as a JSON object or JSON string. Every key names a sql_query "
+    "Chart config. Every key names a sql_query "
     "result column. Shape: {type: bar|line|area|composed|scatter|pie|donut|radar, "
     "layout?: 'vertical' (horizontal bars; only flips orientation), "
     "category: {dataKey, label?, type?: 'category'|'number', format?, decimals?, angle?}, "
@@ -497,16 +505,10 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         limit: Annotated[
-            int,
-            Field(
-                description=(
-                    "Max rows to return (1-1000). limit=0 is treated as the default."
-                )
-            ),
+            int, Field(ge=0, le=_MAX_QUERY_LIMIT, description="Max rows to return; 0 means the default")
         ] = _DEFAULT_QUERY_LIMIT,
         offset: Annotated[
-            int,
-            Field(description="Row offset for pagination, in the table or in a query's result."),
+            int, Field(ge=0, description="Row offset for pagination, in the table or in a query's result")
         ] = 0,
         cursor: Annotated[
             Optional[str],
@@ -532,13 +534,8 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = False,
         response_format: Annotated[
-            Optional[str],
-            Field(
-                description=(
-                    'Output format: "md" (default markdown table) or "json". '
-                    "Overrides OURO_MCP_RESPONSE_FORMAT when set."
-                )
-            ),
+            Optional[ResponseFormat],
+            Field(description='Default "md" (a markdown table); overrides OURO_MCP_RESPONSE_FORMAT'),
         ] = None,
     ) -> str:
         """Query a dataset's contents as a compact markdown table (or JSON).
@@ -574,10 +571,6 @@ def register(mcp: FastMCP) -> None:
         # Agents sometimes pass limit=0 to "clear" the param
         if limit <= 0:
             limit = _DEFAULT_QUERY_LIMIT
-        if limit > _MAX_QUERY_LIMIT:
-            raise ValueError(f"limit must be between 1 and {_MAX_QUERY_LIMIT}.")
-        if offset < 0:
-            raise ValueError("offset must be non-negative.")
 
         ouro = ctx.request_context.lifespan_context.ouro
         is_query = sql is not None or prompt is not None
@@ -632,7 +625,7 @@ def register(mcp: FastMCP) -> None:
             Optional[str | list[dict[str, Any]]],
             BeforeValidator(_coerce_data),
             Field(
-                description='JSON row array as a string or parsed array: \'[{"col": "val"}, ...]\''
+                description='Rows as a JSON array, e.g. [{"col": "val"}, ...]'
             ),
         ] = None,
         data_path: Annotated[
@@ -646,11 +639,8 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         visibility: Annotated[
-            Optional[str],
-            Field(
-                description='"public" | "private" | "organization" | "monetized". '
-                "Omit to follow the team: public in a public team, organization in an internal one"
-            ),
+            Optional[Visibility],
+            Field(description="Omit to follow the team: public in a public team, organization in an internal one"),
         ] = None,
         price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
         price_currency: Annotated[
@@ -660,7 +650,7 @@ def register(mcp: FastMCP) -> None:
         price_sats: Annotated[Optional[int], Field(description=PRICE_SATS_DESC)] = None,
         description: Annotated[Optional[str], Field(description="Dataset description")] = None,
         refs: Annotated[
-            Optional[str | dict[str, Any]],
+            Optional[JsonObject],
             Field(
                 description=(
                     "Columns that hold Ouro object ids, keyed by column name. "
@@ -668,40 +658,37 @@ def register(mcp: FastMCP) -> None:
                     "for its kind: asset -> public.assets(id), action -> "
                     "public.actions(id). Values may be a kind string "
                     '("asset"/"action"), an asset target type ("file"), or a '
-                    'mapping like \'{"file_id": {"kind": "asset", "asset_type": '
-                    '"file"}, "run_id": {"kind": "action"}}\'.'
+                    'mapping like {"file_id": {"kind": "asset", "asset_type": '
+                    '"file"}, "run_id": {"kind": "action"}}.'
                 )
             ),
         ] = None,
         enum_columns: Annotated[
-            Optional[str | dict[str, Any]],
+            Optional[JsonObject],
             Field(
                 description=(
                     "Columns with a closed set of string values, keyed by "
                     "column name. Each column gets a DB CHECK constraint and "
-                    'schema metadata. Example: \'{"status": {"values": '
-                    '["todo", "done"]}}\'.'
+                    'schema metadata. Example: {"status": {"values": '
+                    '["todo", "done"]}}.'
                 )
             ),
         ] = None,
         indexes: Annotated[
-            Optional[str | list[Any]],
+            Optional[JsonArray],
             Field(
                 description=(
                     "Columns to index, for large datasets queried by those "
                     "columns. A list of column names, column lists (up to 4), "
                     'or {"columns": [...], "unique": true}. Example: '
-                    '\'["chemsys", {"columns": ["source", "source_id"], "unique": true}]\'.'
+                    '["chemsys", {"columns": ["source", "source_id"], "unique": true}].'
                 )
             ),
         ] = None,
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Top-level provenance object; separate from dataset metadata"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
         view: Annotated[
-            Optional[str | dict[str, Any]],
+            Optional[JsonObject],
             Field(
                 description=(
                     "Optional saved view (chart) to create with the dataset: "
@@ -808,9 +795,7 @@ def register(mcp: FastMCP) -> None:
         id: Annotated[str, Field(description="Dataset UUID")],
         ctx: Context,
         name: Annotated[Optional[str], Field(description="New name")] = None,
-        visibility: Annotated[
-            Optional[str], Field(description='"public" | "private" | "organization" | "monetized"')
-        ] = None,
+        visibility: Annotated[Optional[Visibility], Field(description="New visibility")] = None,
         price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
@@ -820,7 +805,7 @@ def register(mcp: FastMCP) -> None:
         data: Annotated[
             Optional[str | list[dict[str, Any]]],
             BeforeValidator(_coerce_data),
-            Field(description="JSON row array for dataset ingest (string or parsed array)"),
+            Field(description='Rows to ingest as a JSON array, e.g. [{"col": "val"}, ...]'),
         ] = None,
         data_path: Annotated[
             Optional[str],
@@ -833,39 +818,36 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         data_mode: Annotated[
-            str, Field(description='"append" | "overwrite" | "upsert" | "update"')
+            Literal["append", "overwrite", "upsert", "update"], Field(description="How new rows apply")
         ] = "append",
         description: Annotated[Optional[str], Field(description="New description")] = None,
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
         refs: Annotated[
-            Optional[str | dict[str, Any]],
+            Optional[JsonObject],
             Field(
                 description=(
                     "Promote existing columns to references. Every value in "
                     "each column must already be a valid id of that kind or "
                     "null. Values may be a kind string ('asset'/'action'), an "
                     'asset target type ("file"), or a mapping like '
-                    '\'{"file_id": {"kind": "asset", "asset_type": "file"}, '
-                    '"run_id": {"kind": "action"}}\'.'
+                    '{"file_id": {"kind": "asset", "asset_type": "file"}, '
+                    '"run_id": {"kind": "action"}}.'
                 )
             ),
         ] = None,
         enum_columns: Annotated[
-            Optional[str | dict[str, Any]],
+            Optional[JsonObject],
             Field(
                 description=(
                     "Promote existing columns to enum columns. Existing values "
                     "must be null or in the declared values list. Example: "
-                    '\'{"status": {"values": ["todo", "done"]}}\'.'
+                    '{"status": {"values": ["todo", "done"]}}.'
                 )
             ),
         ] = None,
         license_id: Annotated[Optional[str], Field(description="New asset license identifier")] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Updated top-level provenance object"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Update a dataset's data or metadata.
 
@@ -938,11 +920,10 @@ def register(mcp: FastMCP) -> None:
     def edit_dataset_columns(
         dataset_id: Annotated[str, Field(description="Dataset UUID")],
         operations: Annotated[
-            str | list[dict[str, Any]],
+            JsonArray,
             Field(
                 description=(
-                    "Column operations applied in order. A JSON array (or "
-                    "array string) of objects, each with an `op` field:\n"
+                    "Column operations applied in order, each an object with an `op` field:\n"
                     '- {"op": "add", "name": "...", "type": "text"|"numeric"|'
                     '"boolean"|"timestamptz"|"enum", "nullable": true, '
                     '"label": "...", "enum_values": ["..."]}\n'
@@ -1041,10 +1022,7 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = None,
-        config: Annotated[
-            Optional[Any],
-            Field(description=_VIEW_CONFIG_DESCRIPTION),
-        ] = None,
+        config: Annotated[Optional[JsonObject], Field(description=_VIEW_CONFIG_DESCRIPTION)] = None,
         prompt: Annotated[
             Optional[str],
             Field(description="Natural-language prompt to guide AI generation of the view's SQL and chart config"),

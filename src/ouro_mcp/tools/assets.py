@@ -13,6 +13,13 @@ from pydantic import Field
 
 from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.params import (
+    ActionStatuses,
+    AssetType,
+    JsonObject,
+    TeamRole,
+    Visibility,
+)
 from ouro_mcp.rendering import (
     collapse_whitespace,
     dump_json,
@@ -46,7 +53,6 @@ from ouro_mcp.summaries import (
 )
 from ouro_mcp.utils import (
     asset_type_of,
-    json_arg,
     optional_kwargs,
     present_kwargs,
 )
@@ -71,7 +77,7 @@ def register(mcp: FastMCP) -> None:
         id: Annotated[str, Field(description="UUID of any asset type")],
         ctx: Context,
         detail: Annotated[
-            str,
+            Literal["summary", "full"],
             Field(
                 description=(
                     '"summary" (default) returns name, short description, visibility, '
@@ -82,7 +88,7 @@ def register(mcp: FastMCP) -> None:
                     "so you don't need get_asset per embed, "
                     "plus a compact creation_action pointer (action_id/status/route_id), "
                     "connections, up to 20 per type (comment edges omitted — see comments preview / "
-                    "get_comments; a post's own links and embeds are in its body), "
+                    "list_comments; a post's own links and embeds are in its body), "
                     "`derived`: the versions, results and supporting assets that came from it, "
                     "tags, and a bounded comments/replies preview when present. "
                     "Both levels include `properties`: values Ouro computes (word_count, "
@@ -101,10 +107,6 @@ def register(mcp: FastMCP) -> None:
         Both levels include engagement counts (views, comments, reactions, downloads).
         Full detail also includes a small comments preview when comments exist.
         """
-        allowed_detail = {"summary", "full"}
-        if detail not in allowed_detail:
-            raise ValueError(f"Invalid detail={detail!r}. Must be one of: " f"{sorted(allowed_detail)}.")
-
         ouro = ctx.request_context.lifespan_context.ouro
         asset = ouro.assets.retrieve(id)
         if detail == "full":
@@ -122,36 +124,32 @@ def register(mcp: FastMCP) -> None:
     def search_assets(
         ctx: Context,
         query: Annotated[str, Field(description="Search query or UUID for direct lookup")] = "",
-        asset_type: Annotated[
-            Optional[str], Field(description='"dataset" | "post" | "file" | "service" | "route" | "quest"')
+        asset_type: Annotated[Optional[AssetType], Field(description="Only this asset type")] = None,
+        scope: Annotated[
+            Optional[Literal["personal", "org", "shared", "purchased", "global", "all"]],
+            Field(description='"shared": assets others shared with you; "purchased": assets you bought'),
         ] = None,
-        scope: Annotated[Optional[str], Field(description='"personal" | "org" | "shared" (assets others shared with you) | "purchased" (assets you bought) | "global" | "all"')] = None,
         org_id: Annotated[Optional[str], Field(description="Organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Team UUID")] = None,
         user_id: Annotated[Optional[str], Field(description="Asset owner UUID")] = None,
-        visibility: Annotated[
-            Optional[str], Field(description='"public" | "private" | "organization" | "monetized"')
-        ] = None,
+        visibility: Annotated[Optional[Visibility], Field(description="Only this visibility")] = None,
         file_type: Annotated[
-            Optional[str], Field(description='File category: "image" | "video" | "audio" | "pdf"')
+            Optional[Literal["image", "video", "audio", "pdf"]], Field(description="File category")
         ] = None,
         extension: Annotated[Optional[str], Field(description='File extension, e.g. "csv", "json", "png"')] = None,
         metadata_filters: Annotated[
-            Optional[Any],
-            Field(description='Metadata key/value filters as JSON object or string, e.g. \'{"key": "value"}\''),
+            Optional[JsonObject], Field(description='Metadata key/value filters, e.g. {"key": "value"}')
         ] = None,
         sort: Annotated[
-            Optional[str],
-            Field(
-                description='"relevant" (default with query) | "recent" (default without query) | "popular" | "updated"'
-            ),
+            Optional[Literal["relevant", "recent", "popular", "updated"]],
+            Field(description='Default "relevant" with a query, "recent" without'),
         ] = None,
         time_window: Annotated[
-            Optional[str],
-            Field(description='For sort="popular": "day" | "week" | "month" (default) | "all"'),
+            Optional[Literal["day", "week", "month", "all"]],
+            Field(description='For sort="popular"; default "month"'),
         ] = None,
-        limit: Annotated[int, Field(description="Max results to return")] = 10,
-        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(ge=1, le=100, description="Max results to return")] = 10,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
         """Search or browse assets on Ouro. Supports chunk-level hybrid semantic + full-text search.
 
@@ -167,7 +165,7 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
 
         # Invalid filters fail: unfiltered results would look like filtered ones
-        merged_metadata: dict[str, Any] = dict(json_arg(metadata_filters, "metadata_filters", kind=dict) or {})
+        merged_metadata: dict[str, Any] = dict(metadata_filters or {})
         if file_type:
             merged_metadata["file_type"] = file_type
         if extension:
@@ -262,10 +260,7 @@ def register(mcp: FastMCP) -> None:
             str, Field(description="UUID of the user to grant access to")
         ],
         ctx: Context,
-        role: Annotated[
-            str,
-            Field(description='"read" (default) | "write" | "admin"'),
-        ] = "read",
+        role: Annotated[TeamRole, Field(description="Access to grant")] = "read",
     ) -> str:
         """Grant a user direct permission on an asset.
 
@@ -299,8 +294,8 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         asset_type: Annotated[
-            Optional[str],
-            Field(description='Optional override: "file" | "dataset" | "post"'),
+            Optional[Literal["file", "dataset", "post"]],
+            Field(description="Optional override of the detected type"),
         ] = None,
         format: Annotated[
             Optional[Literal["markdown", "html"]],
@@ -359,7 +354,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_asset_connections(
-        id: Annotated[str, Field(description="UUID of the asset")],
+        asset_id: Annotated[str, Field(description="Asset UUID")],
         ctx: Context,
     ) -> str:
         """Get the connection graph for an asset.
@@ -372,7 +367,7 @@ def register(mcp: FastMCP) -> None:
         included when the backend provides it so you can follow up with
         get_action or list_asset_actions.
 
-        Comment edges are omitted — use `get_comments` (or the comments
+        Comment edges are omitted — use `list_comments` (or the comments
         preview on `get_asset(detail=\"full\")`). For datasets, outgoing
         `reference` edges (row-level file/action IDs) are also omitted —
         use the dataset schema / `query_dataset` instead. Incoming
@@ -381,12 +376,12 @@ def register(mcp: FastMCP) -> None:
         ouro = ctx.request_context.lifespan_context.ouro
         omit_outgoing_refs = False
         try:
-            omit_outgoing_refs = asset_type_of(ouro, id) == "dataset"
+            omit_outgoing_refs = asset_type_of(ouro, asset_id) == "dataset"
         except Exception:
-            log.debug("Failed to resolve asset type for connections on %s", id, exc_info=True)
+            log.debug("Failed to resolve asset type for connections on %s", asset_id, exc_info=True)
         connections = slim_connection_graph(
-            ouro.assets.connections(id),
-            current_asset_id=id,
+            ouro.assets.connections(asset_id),
+            current_asset_id=asset_id,
             omit_outgoing_references=omit_outgoing_refs,
             omit_comments=True,
         )
@@ -414,7 +409,7 @@ def register(mcp: FastMCP) -> None:
         asset_id: Annotated[str, Field(description="Asset UUID")],
         ctx: Context,
         role: Annotated[
-            str,
+            Literal["input", "output", "both"],
             Field(
                 description=(
                     '"both" (default): created_by + as_input. '
@@ -424,13 +419,8 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = "both",
         status: Annotated[
-            Optional[str],
-            Field(
-                description=(
-                    'Optional filter on as_input / input: "queued" | "in-progress" | '
-                    '"success" | "error" | "timed-out"'
-                )
-            ),
+            Optional[ActionStatuses],
+            Field(description='Statuses to keep among as_input runs, e.g. ["error", "timed-out"]'),
         ] = None,
         include_response: Annotated[
             bool,
@@ -438,11 +428,8 @@ def register(mcp: FastMCP) -> None:
                 description="Include each action response payload. Leave false for compact browsing."
             ),
         ] = False,
-        limit: Annotated[
-            int,
-            Field(description="Max as_input actions to return (1-200)"),
-        ] = 20,
-        offset: Annotated[int, Field(description="Pagination offset for as_input")] = 0,
+        limit: Annotated[int, Field(ge=1, le=200, description="Max as_input runs to return")] = 20,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset for as_input")] = 0,
     ) -> str:
         """List route actions linked to an asset.
 
@@ -455,31 +442,9 @@ def register(mcp: FastMCP) -> None:
         """
         from ouro_mcp.tools.services import (
             ACTION_LINK_HINT,
-            _format_action_summary,
             action_summary_line,
+            format_action_summary,
         )
-
-        allowed_roles = {"input", "output", "both"}
-        if role not in allowed_roles:
-            raise ValueError(
-                f"Invalid role={role!r}. Must be one of: {sorted(allowed_roles)}."
-            )
-        if limit <= 0 or limit > 200:
-            raise ValueError("limit must be between 1 and 200.")
-        if offset < 0:
-            raise ValueError("offset must be non-negative.")
-        if status:
-            allowed_status = {
-                "queued",
-                "in-progress",
-                "success",
-                "error",
-                "timed-out",
-            }
-            if status not in allowed_status:
-                raise ValueError(
-                    f"Invalid status={status!r}. Must be one of: {sorted(allowed_status)}."
-                )
 
         ouro = ctx.request_context.lifespan_context.ouro
         bundle = ouro.assets.actions(
@@ -488,20 +453,20 @@ def register(mcp: FastMCP) -> None:
             include_response=include_response,
             limit=limit,
             offset=offset,
-            **optional_kwargs(status=status),
+            **optional_kwargs(status=",".join(status) if status else None),
         )
         as_input = bundle.as_input
 
         sections: dict[str, list[Any]] = {}
         if role in {"output", "both"}:
             sections["created_by"] = (
-                [_format_action_summary(bundle.created_by, include_response=include_response)]
+                [format_action_summary(bundle.created_by, include_response=include_response)]
                 if bundle.created_by is not None
                 else []
             )
         if role in {"input", "both"}:
             sections["as_input"] = [
-                _format_action_summary(action, include_response=include_response)
+                format_action_summary(action, include_response=include_response)
                 for action in as_input
             ]
 
@@ -521,7 +486,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_compatible_routes(
-        id: Annotated[str, Field(description="UUID of the asset")],
+        asset_id: Annotated[str, Field(description="Asset UUID")],
         ctx: Context,
         query: Annotated[
             Optional[str],
@@ -534,11 +499,10 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         sort: Annotated[
-            str,
-            Field(description='"popular" (default, most used first) | "recent" | "updated"'),
+            Literal["popular", "recent", "updated"], Field(description='"popular": most used first')
         ] = "popular",
-        limit: Annotated[int, Field(description="Max routes to return (1-200)")] = 10,
-        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(ge=1, le=200, description="Max routes to return")] = 10,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
         """Find routes that can operate on this asset.
 
@@ -547,18 +511,10 @@ def register(mcp: FastMCP) -> None:
         popularity order so the most-used routes appear first. Pass `query` to
         search those routes by intent instead of paging through the list.
         """
-        allowed_sort = {"popular", "recent", "updated"}
-        if sort not in allowed_sort:
-            raise ValueError(f"Invalid sort={sort!r}. Must be one of: {sorted(allowed_sort)}.")
-        if limit <= 0 or limit > 200:
-            raise ValueError("limit must be between 1 and 200.")
-        if offset < 0:
-            raise ValueError("offset must be non-negative.")
-
         ouro = ctx.request_context.lifespan_context.ouro
         query = (query or "").strip() or None
         page = ouro.assets.compatible_routes(
-            id,
+            asset_id,
             query=query,
             limit=limit,
             offset=offset,
@@ -713,7 +669,7 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
             # routinely number in the thousands; keep only incoming refs.
             omit_outgoing_references=result.get("asset_type") == "dataset",
             # Comment stubs duplicate the bounded `comments` preview (and
-            # `get_comments`); omit them so connections stay lineage-focused.
+            # `list_comments`); omit them so connections stay lineage-focused.
             omit_comments=True,
             # A post's own links and embeds are already in content_text
             omit_outgoing_types=(
@@ -772,7 +728,7 @@ def _enrich_comments_preview(result: dict, ouro: Any, asset_id: str) -> None:
 
     This is intentionally bounded. It gives agents enough context to notice
     existing replies without turning `get_asset(detail="full")` into a full
-    thread dump; callers can still use `get_comments` for complete threads.
+    thread dump; callers can still use `list_comments` for complete threads.
     """
     comments_client = getattr(ouro, "comments", None)
     if not comments_client:

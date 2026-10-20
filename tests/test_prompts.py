@@ -35,7 +35,7 @@ def test_quest_authoring_guide_includes_context_and_guidance() -> None:
 
     assert "collect 2D materials lab data" in prompt
     assert "pay 1000 sats per accepted dataset" in prompt
-    assert "get_organizations()" in prompt
+    assert "list_organizations()" in prompt
     assert "agent_can_create" in prompt
     assert 'type="continuous"' in prompt
     assert "reward_amount" in prompt

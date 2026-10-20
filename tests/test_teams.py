@@ -75,15 +75,15 @@ def _sample_team() -> dict:
     }
 
 
-def test_get_teams_detail_omits_members_by_default(monkeypatch):
+def test_get_team_omits_members_by_default(monkeypatch):
     monkeypatch.delenv(ENV_OURO_FRONTEND_URL, raising=False)
     mcp = _CaptureMCP()
     register(mcp)
-    get_teams = mcp.tools["get_teams"]
+    get_team = mcp.tools["get_team"]
     teams = _FakeTeams(_sample_team())
     ctx = _ctx(teams)
 
-    payload = json.loads(get_teams(ctx=ctx, id=TEAM_ID))
+    payload = json.loads(get_team(ctx=ctx, id=TEAM_ID))
 
     assert teams.retrieve_calls == [
         {"team_id": TEAM_ID, "include_members": False}
@@ -93,14 +93,14 @@ def test_get_teams_detail_omits_members_by_default(monkeypatch):
     assert payload["url"] == "https://ouro.foundation/teams/matsci"
 
 
-def test_get_teams_detail_includes_members_when_requested():
+def test_get_team_includes_members_when_requested():
     mcp = _CaptureMCP()
     register(mcp)
-    get_teams = mcp.tools["get_teams"]
+    get_team = mcp.tools["get_team"]
     teams = _FakeTeams(_sample_team())
     ctx = _ctx(teams)
 
-    payload = json.loads(get_teams(ctx=ctx, id=TEAM_ID, include_members=True))
+    payload = json.loads(get_team(ctx=ctx, id=TEAM_ID, include_members=True))
 
     assert teams.retrieve_calls == [
         {"team_id": TEAM_ID, "include_members": True}

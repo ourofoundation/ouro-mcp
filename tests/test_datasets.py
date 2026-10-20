@@ -438,15 +438,12 @@ def test_query_dataset_response_format_json() -> None:
     }
 
 
-def test_query_dataset_validates_pagination_arguments() -> None:
-    tools = _dataset_tools()
+def test_query_dataset_bounds_pagination_in_its_schema() -> None:
+    from ouro_mcp.server import mcp
 
-    result = json.loads(
-        tools["query_dataset"]("dataset-1", _ctx(_FakeDatasets()), limit=1001)
-    )
+    limit = mcp._tool_manager.get_tool("query_dataset").parameters["properties"]["limit"]
 
-    assert result["error"] == "invalid_arguments"
-    assert result["retryable"] is False
+    assert (limit["minimum"], limit["maximum"]) == (0, 1000)
 
 
 SQL_ROWS = {

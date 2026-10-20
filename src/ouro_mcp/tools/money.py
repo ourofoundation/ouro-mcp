@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import BitcoinTransaction, UsdTransaction
@@ -16,6 +16,7 @@ from ouro_mcp.rendering import (
     page_pagination,
     render_markdown_list,
 )
+from ouro_mcp.utils import asset_type_of
 
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 
@@ -80,14 +81,14 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
-    def get_transactions(
+    def list_transactions(
         currency: Annotated[
             Literal["btc", "usd"],
             Field(description='"btc" or "usd"'),
         ],
         ctx: Context,
-        limit: Annotated[Optional[int], Field(description="Max transactions to return (USD only)")] = None,
-        offset: Annotated[Optional[int], Field(description="Pagination offset (USD only)")] = None,
+        limit: Annotated[Optional[int], Field(ge=1, le=200, description="Max transactions to return (USD only)")] = None,
+        offset: Annotated[Optional[int], Field(ge=0, description="Pagination offset (USD only)")] = None,
         type: Annotated[Optional[str], Field(description="Filter by transaction type (USD only)")] = None,
     ) -> str:
         """List wallet transactions in reverse-chronological order.
@@ -147,11 +148,7 @@ def register(mcp: FastMCP) -> None:
     )
     @handle_ouro_errors
     def unlock_asset(
-        asset_type: Annotated[str, Field(description='"post" | "file" | "dataset" | etc.')],
-        asset_id: Annotated[
-            str,
-            Field(description="Asset UUID", pattern=UUID_PATTERN),
-        ],
+        id: Annotated[str, Field(description="Asset UUID", pattern=UUID_PATTERN)],
         currency: Annotated[
             Literal["btc", "usd"],
             Field(description='"btc" or "usd"'),
@@ -170,16 +167,17 @@ def register(mcp: FastMCP) -> None:
         Pass one it is sold in; any other surfaces as a backend error.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+        asset_type = asset_type_of(ouro, id)
         purchase = ouro.money.unlock_asset(
             asset_type=asset_type,
-            asset_id=asset_id,
+            asset_id=id,
             currency=currency,
         )
         return dump_json({
             "success": True,
             "currency": currency,
             "asset_type": asset_type,
-            "asset_id": asset_id,
+            "id": id,
             **purchase.model_dump(mode="json"),
         })
 
@@ -257,27 +255,20 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
-    def get_usage_history(
+    def list_usage(
         ctx: Context,
-        limit: Annotated[Optional[int], Field(description="Max records to return")] = None,
-        offset: Annotated[Optional[int], Field(description="Pagination offset")] = None,
-        asset_id: Annotated[
-            Optional[str],
-            Field(description="Filter by asset UUID"),
+        limit: Annotated[int, Field(ge=1, le=200, description="Max records to return")] = 20,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
+        asset_id: Annotated[Optional[str], Field(description="Only charges for this route")] = None,
+        role: Annotated[
+            Optional[Literal["consumer", "creator"]],
+            Field(description='"consumer": what you spent; "creator": what you earned'),
         ] = None,
-        role: Annotated[Optional[str], Field(description='"consumer" (spending) or "creator" (earnings)')] = None,
     ) -> str:
-        """List pay-per-use route charges (USD). Read-only.
+        """List pay-per-use route charges (USD), newest first. Read-only.
 
-        Each record is one paid route call: which asset was called, the
-        charge in cents (paid from the caller's Ouro balance when the call
-        completed), and when. Use `role="consumer"` to see what the user spent and
-        `role="creator"` to see what they earned. Filter to a single
-        asset with `asset_id` to audit one route.
-
-        Pagination is offset-based via `limit` + `offset` and the
-        response carries the server's `pagination` block through to the
-        caller.
+        Each row is one paid run: the route, the charge, and the run's
+        action_id. Filter to one route with `asset_id` to audit it.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         history = ouro.money.get_usage_history(
@@ -286,11 +277,30 @@ def register(mcp: FastMCP) -> None:
             asset_id=asset_id,
             role=role,
         )
-        return dump_json({
-            "records": [record.model_dump(mode="json") for record in history],
-            "summary": history.summary.model_dump(mode="json"),
-            "pagination": page_pagination(history),
-        })
+
+        def _usage_line(record: Any) -> str:
+            asset = record.asset or {}
+            quantity = f"{record.quantity:g} {record.cost_unit}" if record.cost_unit else None
+            return markdown_bullet(
+                asset.get("name") or "route",
+                f"${record.total_cents / 100:,.2f}",
+                quantity,
+                markdown_id(record.id),
+                f"action_id: `{record.action_id}`" if record.action_id else None,
+                None if record.status in (None, "confirmed") else record.status,
+                record.created_at,
+            )
+
+        total = history.summary.total_cents
+        return render_markdown_list(
+            list(history),
+            line_fn=_usage_line,
+            pagination=page_pagination(history),
+            offset=offset,
+            noun="charges",
+            empty_text="No charges.",
+            extras=[f"total: ${total / 100:,.2f} over {history.summary.record_count} charges"],
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors

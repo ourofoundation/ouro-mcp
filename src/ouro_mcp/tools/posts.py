@@ -11,6 +11,7 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.markdown_input import (
     content_from_markdown,
 )
+from ouro_mcp.params import ATTRIBUTION_DESC, Attribution, Visibility
 from ouro_mcp.pricing import (
     PRICE_CURRENCY_DESC,
     PRICE_SATS_DESC,
@@ -106,11 +107,8 @@ def register(mcp: FastMCP) -> None:
             Field(description="upload_id from create_upload_url for a .md file holding the body"),
         ] = None,
         visibility: Annotated[
-            Optional[str],
-            Field(
-                description='"public" | "private" | "organization" | "monetized". '
-                "Omit to follow the team: public in a public team, organization in an internal one"
-            ),
+            Optional[Visibility],
+            Field(description="Omit to follow the team: public in a public team, organization in an internal one"),
         ] = None,
         price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
         price_currency: Annotated[
@@ -120,10 +118,7 @@ def register(mcp: FastMCP) -> None:
         price_sats: Annotated[Optional[int], Field(description=PRICE_SATS_DESC)] = None,
         description: Annotated[Optional[str], Field(description="Short description/subtitle")] = None,
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Top-level provenance object; separate from asset metadata"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Create a new post on Ouro from extended markdown. Provide content_markdown, content_path, or upload_id.
 
@@ -198,9 +193,7 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="upload_id from create_upload_url for a .md file with the replacement body"),
         ] = None,
-        visibility: Annotated[
-            Optional[str], Field(description='"public" | "private" | "organization" | "monetized"')
-        ] = None,
+        visibility: Annotated[Optional[Visibility], Field(description="New visibility")] = None,
         price: Annotated[Optional[float], Field(description=UNLOCK_PRICE_DESC)] = None,
         price_currency: Annotated[
             Optional[Literal["usd", "btc"]], Field(description=PRICE_CURRENCY_DESC)
@@ -211,10 +204,7 @@ def register(mcp: FastMCP) -> None:
         org_id: Annotated[Optional[str], Field(description="Move to organization UUID")] = None,
         team_id: Annotated[Optional[str], Field(description="Move to team UUID")] = None,
         license_id: Annotated[Optional[str], Field(description="New asset license identifier")] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Updated top-level provenance object"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Update a post's content or metadata. Pass content_markdown, content_path, or upload_id to replace the body.
 

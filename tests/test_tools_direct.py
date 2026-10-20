@@ -97,7 +97,7 @@ def main():
                 print(f"   OK — {len(assets)} assets (user_id filter applied)")
                 passed += 1
             else:
-                print(f"   FAIL — some results not owned by user")
+                print("   FAIL — some results not owned by user")
                 failed += 1
         else:
             print("   SKIP — no user_id available")

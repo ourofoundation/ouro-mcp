@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Conversation, Message
@@ -15,6 +15,7 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.markdown_input import (
     content_from_markdown,
 )
+from ouro_mcp.params import ATTRIBUTION_DESC, Attribution
 from ouro_mcp.rendering import (
     dump_json,
     markdown_bullet,
@@ -137,8 +138,8 @@ def register(mcp: FastMCP) -> None:
             Optional[str],
             Field(description="Filter by organization UUID"),
         ] = None,
-        limit: Annotated[int, Field(description="Max results to return")] = 20,
-        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(ge=1, le=100, description="Max results to return")] = 20,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
         """List conversations you belong to."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -147,12 +148,12 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
     def get_conversation(
-        conversation_id: Annotated[str, Field(description="Conversation UUID")],
+        id: Annotated[str, Field(description="Conversation UUID")],
         ctx: Context,
     ) -> str:
         """Get one conversation by ID, including member user IDs."""
         ouro = ctx.request_context.lifespan_context.ouro
-        return _get_conversation(ouro, conversation_id)
+        return _get_conversation(ouro, id)
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -166,10 +167,7 @@ def register(mcp: FastMCP) -> None:
         name: Annotated[Optional[str], Field(description="Conversation name")] = None,
         summary: Annotated[Optional[str], Field(description="Conversation summary")] = None,
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Top-level provenance object; separate from conversation metadata"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Create a conversation with the specified member user IDs."""
         ouro = ctx.request_context.lifespan_context.ouro
@@ -205,10 +203,7 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         type: Annotated[
-            Optional[str],
-            Field(
-                description="Message type: 'message' (default), 'reasoning', or 'tool_call'."
-            ),
+            Optional[Literal["message", "reasoning", "tool_call"]], Field(description='Default "message"')
         ] = None,
     ) -> str:
         """Send a message to a conversation using extended Ouro markdown."""
@@ -234,7 +229,7 @@ def register(mcp: FastMCP) -> None:
     def list_messages(
         conversation_id: Annotated[str, Field(description="Conversation UUID")],
         ctx: Context,
-        limit: Annotated[int, Field(description="Max messages to return (1-200)")] = 20,
+        limit: Annotated[int, Field(ge=1, le=200, description="Max messages to return")] = 20,
         before: Annotated[
             Optional[str],
             Field(
@@ -250,9 +245,6 @@ def register(mcp: FastMCP) -> None:
         The first call returns the most recent messages. To read further back,
         pass the `before` value the header gives.
         """
-        if limit <= 0 or limit > 200:
-            raise ValueError("limit must be between 1 and 200.")
-
         ouro = ctx.request_context.lifespan_context.ouro
 
         page = Messages(ouro).list(

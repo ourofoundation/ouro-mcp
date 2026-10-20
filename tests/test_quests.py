@@ -296,7 +296,7 @@ def test_list_assigned_quest_items_calls_sdk() -> None:
     quests = _FakeQuests()
     result = _quest_tools()["list_assigned_quest_items"](
         _ctx(quests),
-        status="pending,in_progress",
+        status=["pending", "in_progress"],
         assignee_id="user-1",
         org_id="org-1",
         team_id="team-1",

@@ -94,7 +94,7 @@ def test_get_action_wait_timeout_reports_still_running() -> None:
             return _action("in-progress")
 
     result = json.loads(
-        _call("get_action", _StillRunning(), action_id=ACTION_ID, wait=True, timeout=1)
+        _call("get_action", _StillRunning(), id=ACTION_ID, wait=True, timeout=1)
     )
 
     assert result["status"] == "in-progress"
@@ -105,7 +105,7 @@ def test_get_action_wait_timeout_reports_still_running() -> None:
 def test_get_action_timed_out_status_is_a_final_failure() -> None:
     routes = _FakeRoutes(polled=_action("timed-out"))
 
-    result = json.loads(_call("get_action", routes, action_id=ACTION_ID))
+    result = json.loads(_call("get_action", routes, id=ACTION_ID))
 
     assert result["status"] == "timed-out"
     assert result["finished"] is True
@@ -144,7 +144,7 @@ def test_list_my_actions_passes_status_filter() -> None:
         page=[_action("in-progress", route={"id": ROUTE_ID, "name": "Relax"})]
     )
 
-    text = _call("list_my_actions", routes, status="queued, in-progress")
+    text = _call("list_my_actions", routes, status=["queued", "in-progress"])
 
     assert routes.list_calls[0]["status"] == ["queued", "in-progress"]
     assert ACTION_ID in text
@@ -152,10 +152,17 @@ def test_list_my_actions_passes_status_filter() -> None:
     assert "assetComponent" not in text
 
 
-def test_list_my_actions_rejects_unknown_status() -> None:
-    result = json.loads(_call("list_my_actions", _FakeRoutes(), status="running"))
+def test_status_filters_take_a_list_or_commas_and_reject_unknown_statuses() -> None:
+    import pytest
+    from pydantic import TypeAdapter, ValidationError
 
-    assert "error" in result
+    from ouro_mcp.params import ActionStatuses
+
+    statuses = TypeAdapter(ActionStatuses)
+    assert statuses.validate_python("queued, in-progress") == ["queued", "in-progress"]
+    assert statuses.validate_python(["error"]) == ["error"]
+    with pytest.raises(ValidationError):
+        statuses.validate_python("running")
 
 
 ORG_ID = "00000000-0000-0000-0000-0000000000aa"

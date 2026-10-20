@@ -12,6 +12,18 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
 from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.params import (
+    ATTRIBUTION_DESC,
+    ActionStatuses,
+    Attribution,
+    ExecutionMode,
+    HttpMethod,
+    JsonArray,
+    JsonObject,
+    RouteVisibility,
+    ServiceAuthentication,
+    ServiceVisibility,
+)
 from ouro_mcp.pricing import (
     MAX_BILLABLE_SECONDS_DESC,
     PRICE_CURRENCY_DESC,
@@ -47,7 +59,6 @@ from ouro_mcp.summaries import (
 )
 from ouro_mcp.utils import (
     as_dict,
-    json_arg,
     optional_kwargs,
     resolve_location,
 )
@@ -57,8 +68,9 @@ log = logging.getLogger(__name__)
 # MCP clients abort requests after 60 s by default, discarding the action_id a
 # longer wait would have returned with the still-running action.
 DEFAULT_WAIT_S = 45
+# Each wait holds a server thread, and clients give up at 60 s anyway
+MAX_WAIT_S = 55
 
-ACTION_STATUSES = {"queued", "in-progress", "success", "error", "timed-out"}
 FINAL_ACTION_STATUSES = {"success", "error", "timed-out"}
 
 
@@ -71,22 +83,11 @@ TIMED_OUT_NOTE = (
 )
 
 
-def _parse_statuses(status: Optional[str]) -> list[str]:
-    """Split a comma-separated status filter, rejecting unknown statuses."""
-    statuses = [s.strip() for s in (status or "").split(",") if s.strip()]
-    invalid = sorted(set(statuses) - ACTION_STATUSES)
-    if invalid:
-        raise ValueError(
-            f"Invalid status {invalid}. Must be among: {sorted(ACTION_STATUSES)}."
-        )
-    return statuses
-
-
 def _pending_message(action_id: str, lead: str) -> str:
     return (
         f"{lead} The action is STILL RUNNING: it has not finished, succeeded, "
         "or failed, and there is no result yet. Do not execute the route "
-        "again. Check on it with `get_action(action_id)` (wait=true blocks "
+        "again. Check on it with `get_action(id=<action_id>)` (wait=true blocks "
         "up to `timeout`). If you have a shell with ouro-py installed and "
         f"OURO_API_KEY set, run `ouro action wait {action_id}` as a background "
         "command instead: it exits when the action finishes, so you are told "
@@ -482,7 +483,7 @@ def _unified_action_assets(
     return None
 
 
-def _format_action_summary(
+def format_action_summary(
     action: Any,
     *,
     include_response: bool = False,
@@ -583,7 +584,7 @@ def action_summary_line(summary: Any, *, show_route: bool = True) -> str:
     caller asked for it) goes in the body.
     """
     if not isinstance(summary, dict):
-        summary = _format_action_summary(summary)
+        summary = format_action_summary(summary)
     status_val = summary.get("action_status") or summary.get("status")
     route = summary.get("route") if isinstance(summary.get("route"), dict) else None
     cost = summary.get("cost") if isinstance(summary.get("cost"), dict) else None
@@ -665,9 +666,9 @@ _LICENSE_DESC = (
     '"AGPL-3.0-only" | "MPL-2.0" | "ARR". Defaults to MIT for new services.'
 )
 _OUTPUT_ASSETS_DESC = (
-    "Keyed Ouro asset outputs as a JSON object, e.g. "
-    '\'{"structure": {"asset_type": "file", "primary": true, "role": "version"}, '
-    '"phases_dataset": {"asset_type": "dataset", "when": {"include_dataset": true}}}\'. '
+    "Keyed Ouro asset outputs, e.g. "
+    '{"structure": {"asset_type": "file", "primary": true, "role": "version"}, '
+    '"phases_dataset": {"asset_type": "dataset", "when": {"include_dataset": true}}}. '
     "`when` names request body fields that switch an output on (all must match; "
     "a list matches any value; a field the caller omits takes its schema default); "
     "`optional: true` means a run may not produce it; `embedded_in` names the post "
@@ -676,12 +677,6 @@ _OUTPUT_ASSETS_DESC = (
     '"result" (computed about it, e.g. phonons; the default with an input), '
     '"supporting" (intermediate or raw, e.g. a trajectory) or "new" (standalone). '
     "Lists fold versions, results and supporting assets under their source."
-)
-_ORIGINALITY_DESC = '"original" | "derivative" | "third-party"'
-_RELATION_TYPE_DESC = (
-    'DataCite relation of this asset to the related paper: '
-    '"IsSupplementTo" | "IsDerivedFrom" | "References" | '
-    '"IsVariantFormOf" | "IsIdenticalTo"'
 )
 
 
@@ -704,13 +699,7 @@ def register(mcp: FastMCP) -> None:
             Field(description="Team UUID. Omit to use the pinned organization's default team"),
         ] = None,
         authentication: Annotated[
-            str,
-            Field(
-                description=(
-                    'Upstream auth scheme: "None" | "Ouro" | '
-                    '"Personal Access Token" | "OAuth 2.0"'
-                )
-            ),
+            ServiceAuthentication, Field(description="How Ouro authenticates to the upstream API")
         ] = "None",
         spec_url: Annotated[
             Optional[str],
@@ -732,11 +721,8 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         visibility: Annotated[
-            Optional[str],
-            Field(
-                description='"public" | "private" | "organization". '
-                "Omit to follow the team: public in a public team, organization in an internal one"
-            ),
+            Optional[ServiceVisibility],
+            Field(description="Omit to follow the team: public in a public team, organization in an internal one"),
         ] = None,
         description: Annotated[
             Optional[str], Field(description="Short description of the service")
@@ -747,28 +733,7 @@ def register(mcp: FastMCP) -> None:
             Field(description="OAuth authorization URL (only for 'OAuth 2.0' auth)"),
         ] = None,
         license_id: Annotated[str, Field(description=_LICENSE_DESC)] = "MIT",
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Top-level provenance object; separate from service metadata"),
-        ] = None,
-        originality: Annotated[
-            Optional[str], Field(description=_ORIGINALITY_DESC)
-        ] = None,
-        github_url: Annotated[
-            Optional[str], Field(description="Source repo URL (https://github.com/...)")
-        ] = None,
-        paper_url: Annotated[
-            Optional[str], Field(description="Paper or preprint URL")
-        ] = None,
-        doi_url: Annotated[
-            Optional[str], Field(description="DOI URL (https://doi.org/...)")
-        ] = None,
-        external_url: Annotated[
-            Optional[str], Field(description="Other project/homepage URL")
-        ] = None,
-        relation_type: Annotated[
-            Optional[str], Field(description=_RELATION_TYPE_DESC)
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Publish an external API as a service on Ouro.
 
@@ -779,26 +744,10 @@ def register(mcp: FastMCP) -> None:
         in Ouro's spec storage. Omit all three to create a service with no
         routes yet, then add routes from the web UI.
 
-        Set `license_id` and provenance (`originality`, `github_url`,
-        `paper_url`, `doi_url`, `external_url`, `relation_type`) when wrapping
-        third-party models. Provenance is stored on `attribution`, not service
-        metadata.
+        Set `license_id` and `attribution` when wrapping third-party models.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         org_id, team_id = resolve_location(ouro, org_id, team_id)
-        provenance = (
-            attribution
-            if attribution is not None
-            else optional_kwargs(
-                originality=originality,
-                github_url=github_url,
-                paper_url=paper_url,
-                doi_url=doi_url,
-                external_url=external_url,
-                relation_type=relation_type,
-            )
-        )
-
         service = ouro.services.create(
             name=name,
             base_url=base_url,
@@ -808,7 +757,7 @@ def register(mcp: FastMCP) -> None:
             org_id=org_id,
             team_id=team_id,
             license_id=license_id,
-            attribution=provenance,
+            attribution=attribution,
             **optional_kwargs(
                 spec_url=spec_url,
                 spec_path=spec_path,
@@ -830,13 +779,8 @@ def register(mcp: FastMCP) -> None:
             Optional[str], Field(description="New upstream base URL (must be unique)")
         ] = None,
         authentication: Annotated[
-            Optional[str],
-            Field(
-                description=(
-                    'Upstream auth scheme: "None" | "Ouro" | '
-                    '"Personal Access Token" | "OAuth 2.0"'
-                )
-            ),
+            Optional[ServiceAuthentication],
+            Field(description="How Ouro authenticates to the upstream API"),
         ] = None,
         spec_url: Annotated[
             Optional[str],
@@ -861,9 +805,7 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = False,
-        visibility: Annotated[
-            Optional[str], Field(description='"public" | "private" | "organization"')
-        ] = None,
+        visibility: Annotated[Optional[ServiceVisibility], Field(description="New visibility")] = None,
         description: Annotated[Optional[str], Field(description="New description")] = None,
         version: Annotated[Optional[str], Field(description="New version string")] = None,
         auth_url: Annotated[Optional[str], Field(description="OAuth authorization URL")] = None,
@@ -872,28 +814,7 @@ def register(mcp: FastMCP) -> None:
         license_id: Annotated[
             Optional[str], Field(description=_LICENSE_DESC)
         ] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Updated top-level provenance object"),
-        ] = None,
-        originality: Annotated[
-            Optional[str], Field(description=_ORIGINALITY_DESC)
-        ] = None,
-        github_url: Annotated[
-            Optional[str], Field(description="Source repo URL (https://github.com/...)")
-        ] = None,
-        paper_url: Annotated[
-            Optional[str], Field(description="Paper or preprint URL")
-        ] = None,
-        doi_url: Annotated[
-            Optional[str], Field(description="DOI URL (https://doi.org/...)")
-        ] = None,
-        external_url: Annotated[
-            Optional[str], Field(description="Other project/homepage URL")
-        ] = None,
-        relation_type: Annotated[
-            Optional[str], Field(description=_RELATION_TYPE_DESC)
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Update a service's metadata (name, base_url, auth, visibility, ...).
 
@@ -903,14 +824,6 @@ def register(mcp: FastMCP) -> None:
         `refresh_spec=true` to re-fetch the stored remote spec URL.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        legacy_provenance = optional_kwargs(
-            originality=originality,
-            github_url=github_url,
-            paper_url=paper_url,
-            doi_url=doi_url,
-            external_url=external_url,
-            relation_type=relation_type,
-        )
         if refresh_spec and spec_url is None and spec_path is None and spec_upload_id is None:
             current = ouro.services.retrieve(id)
             spec_url = current.metadata.spec_url if current.metadata else None
@@ -935,7 +848,7 @@ def register(mcp: FastMCP) -> None:
                 org_id=org_id,
                 team_id=team_id,
                 license_id=license_id,
-                attribution=attribution if attribution is not None else legacy_provenance or None,
+                attribution=attribution,
             ),
         )
 
@@ -945,9 +858,7 @@ def register(mcp: FastMCP) -> None:
     @handle_ouro_errors
     def create_route(
         service_id: Annotated[str, Field(description="UUID of the service to add the route to")],
-        method: Annotated[
-            str, Field(description='HTTP method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"')
-        ],
+        method: Annotated[HttpMethod, Field(description="HTTP method")],
         path: Annotated[str, Field(description="Route path on the upstream API, e.g. '/predict'")],
         ctx: Context,
         name: Annotated[
@@ -956,13 +867,7 @@ def register(mcp: FastMCP) -> None:
         ] = None,
         description: Annotated[Optional[str], Field(description="Route description")] = None,
         visibility: Annotated[
-            Optional[str],
-            Field(
-                description=(
-                    '"public" | "private" | "organization" | "monetized"; '
-                    "defaults to the service's"
-                )
-            ),
+            Optional[RouteVisibility], Field(description="Defaults to the service's (\"inherit\")")
         ] = None,
         unit_cost: Annotated[Optional[float], Field(description=UNIT_COST_DESC)] = None,
         price_currency: Annotated[
@@ -984,35 +889,18 @@ def register(mcp: FastMCP) -> None:
         max_billable_seconds: Annotated[
             Optional[int], Field(description=MAX_BILLABLE_SECONDS_DESC)
         ] = None,
-        parameters: Annotated[
-            Optional[Any],
-            Field(description="OpenAPI-style parameters as a JSON array (object or string)"),
-        ] = None,
-        request_body: Annotated[
-            Optional[Any],
-            Field(description="Request body schema as a JSON object (object or string)"),
-        ] = None,
+        parameters: Annotated[Optional[JsonArray], Field(description="OpenAPI-style parameters")] = None,
+        request_body: Annotated[Optional[JsonObject], Field(description="Request body schema")] = None,
         input_assets: Annotated[
-            Optional[Any],
-            Field(
-                description=(
-                    "Keyed Ouro asset inputs as a JSON object, e.g. "
-                    '\'{"structure": {"asset_type": "file"}}\''
-                )
-            ),
+            Optional[JsonObject],
+            Field(description='Keyed Ouro asset inputs, e.g. {"structure": {"asset_type": "file"}}'),
         ] = None,
-        output_assets: Annotated[
-            Optional[Any],
-            Field(description=_OUTPUT_ASSETS_DESC),
-        ] = None,
+        output_assets: Annotated[Optional[JsonObject], Field(description=_OUTPUT_ASSETS_DESC)] = None,
         execution_mode: Annotated[
-            str, Field(description='"sync" (default) or "async" for long-running upstreams')
+            ExecutionMode, Field(description='"async" for long-running upstreams')
         ] = "sync",
         license_id: Annotated[Optional[str], Field(description=_LICENSE_DESC)] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Top-level provenance object; separate from route metadata"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Add a route (a single API endpoint) to a service.
 
@@ -1044,10 +932,10 @@ def register(mcp: FastMCP) -> None:
                 name=name,
                 description=description,
                 visibility=visibility,
-                parameters=json_arg(parameters, "parameters"),
-                request_body=json_arg(request_body, "request_body"),
-                input_assets=json_arg(input_assets, "input_assets"),
-                output_assets=json_arg(output_assets, "output_assets"),
+                parameters=parameters,
+                request_body=request_body,
+                input_assets=input_assets,
+                output_assets=output_assets,
                 license_id=license_id,
                 attribution=attribution,
             ),
@@ -1070,13 +958,12 @@ def register(mcp: FastMCP) -> None:
     def update_route(
         id: Annotated[str, Field(description='Route UUID or "entity_name/route_name"')],
         ctx: Context,
-        method: Annotated[Optional[str], Field(description="New HTTP method")] = None,
+        method: Annotated[Optional[HttpMethod], Field(description="New HTTP method")] = None,
         path: Annotated[Optional[str], Field(description="New route path")] = None,
         name: Annotated[Optional[str], Field(description="New display name")] = None,
         description: Annotated[Optional[str], Field(description="New description")] = None,
         visibility: Annotated[
-            Optional[str],
-            Field(description='"public" | "private" | "organization" | "inherit" | "monetized"'),
+            Optional[RouteVisibility], Field(description='"inherit" follows the service')
         ] = None,
         unit_cost: Annotated[Optional[float], Field(description=UNIT_COST_DESC)] = None,
         price_currency: Annotated[
@@ -1098,26 +985,13 @@ def register(mcp: FastMCP) -> None:
         max_billable_seconds: Annotated[
             Optional[int], Field(description=MAX_BILLABLE_SECONDS_DESC)
         ] = None,
-        parameters: Annotated[
-            Optional[Any], Field(description="Parameters as a JSON array (object or string)")
-        ] = None,
-        request_body: Annotated[
-            Optional[Any], Field(description="Request body schema as a JSON object (object or string)")
-        ] = None,
-        input_assets: Annotated[
-            Optional[Any], Field(description="Keyed Ouro asset inputs as a JSON object")
-        ] = None,
-        output_assets: Annotated[
-            Optional[Any], Field(description=_OUTPUT_ASSETS_DESC)
-        ] = None,
-        execution_mode: Annotated[
-            Optional[str], Field(description='"sync" or "async"')
-        ] = None,
+        parameters: Annotated[Optional[JsonArray], Field(description="OpenAPI-style parameters")] = None,
+        request_body: Annotated[Optional[JsonObject], Field(description="Request body schema")] = None,
+        input_assets: Annotated[Optional[JsonObject], Field(description="Keyed Ouro asset inputs")] = None,
+        output_assets: Annotated[Optional[JsonObject], Field(description=_OUTPUT_ASSETS_DESC)] = None,
+        execution_mode: Annotated[Optional[ExecutionMode], Field(description="Sync or async upstream")] = None,
         license_id: Annotated[Optional[str], Field(description=_LICENSE_DESC)] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Updated top-level provenance object"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Update a route's method, path, schema, or metadata.
 
@@ -1136,10 +1010,10 @@ def register(mcp: FastMCP) -> None:
                 description=description,
                 visibility=visibility,
                 execution_mode=execution_mode,
-                parameters=json_arg(parameters, "parameters"),
-                request_body=json_arg(request_body, "request_body"),
-                input_assets=json_arg(input_assets, "input_assets"),
-                output_assets=json_arg(output_assets, "output_assets"),
+                parameters=parameters,
+                request_body=request_body,
+                input_assets=input_assets,
+                output_assets=output_assets,
                 license_id=license_id,
                 attribution=attribution,
             ),
@@ -1169,31 +1043,12 @@ def register(mcp: FastMCP) -> None:
             Field(description='Route UUID or "entity_name/route_name"'),
         ],
         ctx: Context,
-        body: Annotated[
-            Optional[Any],
-            Field(
-                description=(
-                    "Route request body as JSON object or string, e.g. "
-                    '\'{"key": "value"}\''
-                )
-            ),
-        ] = None,
-        query: Annotated[
-            Optional[Any],
-            Field(description='Query parameters as JSON object or string, e.g. \'{"page": 1}\''),
-        ] = None,
-        params: Annotated[
-            Optional[Any],
-            Field(description='Route path parameters as JSON object or string, e.g. \'{"id": "abc"}\''),
-        ] = None,
+        body: Annotated[Optional[JsonObject], Field(description='Request body, e.g. {"key": "value"}')] = None,
+        query: Annotated[Optional[JsonObject], Field(description='Query parameters, e.g. {"page": 1}')] = None,
+        params: Annotated[Optional[JsonObject], Field(description='Path parameters, e.g. {"id": "abc"}')] = None,
         input_assets: Annotated[
-            Optional[Any],
-            Field(
-                description=(
-                    "Keyed Ouro asset inputs as JSON object or string. Values should be "
-                    'asset IDs, e.g. \'{"structure": "file-id"}\'.'
-                )
-            ),
+            Optional[JsonObject],
+            Field(description='Keyed Ouro asset inputs: asset ids, e.g. {"structure": "<file id>"}'),
         ] = None,
         currency: Annotated[
             Optional[Literal["usd", "btc"]],
@@ -1251,7 +1106,7 @@ def register(mcp: FastMCP) -> None:
                 description=(
                     "If true (default), block until the action reaches a terminal "
                     "state. If false, return the action_id immediately so you can "
-                    "check back later via get_action(action_id). Pass false for "
+                    "check back later via get_action(id=<action_id>). Pass false for "
                     "long-running async routes you don't want to block on."
                 )
             ),
@@ -1259,6 +1114,8 @@ def register(mcp: FastMCP) -> None:
         timeout: Annotated[
             int,
             Field(
+                ge=1,
+                le=MAX_WAIT_S,
                 description=(
                     "Max seconds to wait for the route to complete before returning "
                     "the still-running action (finished=false) with its action_id. "
@@ -1293,7 +1150,7 @@ def register(mcp: FastMCP) -> None:
         doesn't complete within `timeout`, the response has `finished: false`
         with `status` "queued" or "in-progress" and the `action_id`: this
         tool stopped waiting, the run did not stop. It has no result yet, so
-        call `get_action(action_id)` later rather than assuming an outcome or
+        call `get_action(id=<action_id>)` later rather than assuming an outcome or
         executing again (`list_my_actions` finds it if you lose the id).
         `status: "timed-out"` is different: a final failure where Ouro gave
         up on a run that went silent. Embed the route with
@@ -1303,7 +1160,7 @@ def register(mcp: FastMCP) -> None:
         Async routes: routes whose `execution_mode == "async"` (or those with a
         large `p95_completion_ms`) typically take a long time. For those, pass
         `wait=false` to get the `action_id` back immediately and check on it
-        later via `get_action(action_id)` rather than blocking the agent loop.
+        later via `get_action(id=<action_id>)` rather than blocking the agent loop.
 
         Outputs can depend on the request: a declared output with
         `when: {"include_dataset": true}` is only created when the body
@@ -1342,10 +1199,7 @@ def register(mcp: FastMCP) -> None:
             getattr(metrics, "avg_completion_ms", None) if metrics else None
         )
 
-        body_dict = json_arg(body, "body", kind=dict)
-        query_dict = json_arg(query, "query", kind=dict)
-        params_dict = json_arg(params, "params", kind=dict)
-        input_assets_dict = json_arg(input_assets, "input_assets", kind=dict)
+        body_dict, query_dict, params_dict, input_assets_dict = body, query, params, input_assets
 
         if dry_run:
             dry_run_payload: dict[str, Any] = {
@@ -1459,10 +1313,7 @@ def register(mcp: FastMCP) -> None:
     )
     @handle_ouro_errors
     def get_action(
-        action_id: Annotated[
-            str,
-            Field(description="Action UUID returned by execute_route"),
-        ],
+        id: Annotated[str, Field(description="Action UUID (the action_id execute_route returned)")],
         ctx: Context,
         wait: Annotated[
             bool,
@@ -1476,6 +1327,8 @@ def register(mcp: FastMCP) -> None:
         timeout: Annotated[
             int,
             Field(
+                ge=1,
+                le=MAX_WAIT_S,
                 description=(
                     "Max seconds to wait when `wait=true`. Keep it under your "
                     "client's request timeout (usually 60 s)."
@@ -1487,8 +1340,7 @@ def register(mcp: FastMCP) -> None:
             Field(description="Include recent action logs in the result"),
         ] = False,
         log_limit: Annotated[
-            int,
-            Field(description="Max logs to include when include_logs=true"),
+            int, Field(ge=1, le=500, description="Max logs to include when include_logs=true")
         ] = 50,
         include_response: Annotated[
             bool,
@@ -1518,6 +1370,7 @@ def register(mcp: FastMCP) -> None:
         body. Pass `include_response=true` when you need `data`/`error` payloads.
         """
         ouro = ctx.request_context.lifespan_context.ouro
+        action_id = id
 
         if wait:
             try:
@@ -1575,16 +1428,10 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = False,
-        limit: Annotated[int, Field(description="Max actions to return (1-200)")] = 20,
-        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(ge=1, le=200, description="Max actions to return")] = 20,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
         status: Annotated[
-            Optional[str],
-            Field(
-                description=(
-                    'Comma-separated statuses to keep: "queued" | "in-progress" | '
-                    '"success" | "error" | "timed-out"'
-                )
-            ),
+            Optional[ActionStatuses], Field(description='Statuses to keep, e.g. ["queued", "in-progress"]')
         ] = None,
         include_response: Annotated[
             bool,
@@ -1596,10 +1443,6 @@ def register(mcp: FastMCP) -> None:
         Use this when you need to find prior runs to reference or embed. Each
         row shows the run's input and output assets, run time and cost.
         """
-        if limit <= 0 or limit > 200:
-            raise ValueError("limit must be between 1 and 200.")
-        if offset < 0:
-            raise ValueError("offset must be non-negative.")
 
         ouro = ctx.request_context.lifespan_context.ouro
         route = ouro.routes.retrieve(route_id)
@@ -1612,12 +1455,12 @@ def register(mcp: FastMCP) -> None:
             include_other_users=include_other_users,
             limit=limit,
             offset=offset,
-            **optional_kwargs(status=_parse_statuses(status) or None),
+            **optional_kwargs(status=status or None),
         )
         actions = list(page)
 
         results = [
-            _format_action_summary(action, include_response=include_response)
+            format_action_summary(action, include_response=include_response)
             for action in actions
         ]
 
@@ -1640,34 +1483,24 @@ def register(mcp: FastMCP) -> None:
     def list_my_actions(
         ctx: Context,
         status: Annotated[
-            Optional[str],
-            Field(
-                description=(
-                    'Comma-separated statuses to keep: "queued" | "in-progress" | '
-                    '"success" | "error" | "timed-out". Pass "queued,in-progress" '
-                    "for everything still running. Omit for all."
-                )
-            ),
+            Optional[ActionStatuses],
+            Field(description='Statuses to keep; ["queued", "in-progress"] for everything still running'),
         ] = None,
         since: Annotated[
             Optional[str],
             Field(description="Only actions created at or after this ISO 8601 time"),
         ] = None,
-        limit: Annotated[int, Field(description="Max actions to return (1-100)")] = 20,
-        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(ge=1, le=100, description="Max actions to return")] = 20,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
         """List your own route actions across every route, newest first.
 
         Use this to find runs you started earlier — including ones still
         running — when you no longer have the action_id or don't know which
-        route they were on. Follow up with `get_action(action_id)` for
+        route they were on. Follow up with `get_action(id=<action_id>)` for
         outputs and cost.
         """
-        if limit <= 0 or limit > 100:
-            raise ValueError("limit must be between 1 and 100.")
-        if offset < 0:
-            raise ValueError("offset must be non-negative.")
-        statuses = _parse_statuses(status)
+        statuses = status or []
 
         ouro = ctx.request_context.lifespan_context.ouro
         page = ouro.routes.list_my_actions(
@@ -1676,7 +1509,7 @@ def register(mcp: FastMCP) -> None:
 
         return truncate_response(
             render_markdown_list(
-                [_format_action_summary(action) for action in page],
+                [format_action_summary(action) for action in page],
                 line_fn=action_summary_line,
                 pagination=page_pagination(page),
                 offset=offset,
@@ -1694,14 +1527,12 @@ def register(mcp: FastMCP) -> None:
         action_id: Annotated[str, Field(description="Action UUID")],
         ctx: Context,
         level: Annotated[
-            Optional[str],
-            Field(description='Optional log level filter, e.g. "info", "warn", or "error"'),
+            Optional[Literal["debug", "info", "warn", "error"]], Field(description="Only logs at this level")
         ] = None,
-        limit: Annotated[int, Field(description="Max logs to return (1-500)")] = 100,
-        offset: Annotated[int, Field(description="Pagination offset")] = 0,
+        limit: Annotated[int, Field(ge=1, le=500, description="Max logs to return")] = 100,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
         sort_order: Annotated[
-            str,
-            Field(description='"asc" for oldest-first (default) or "desc" for newest-first'),
+            Literal["asc", "desc"], Field(description='"asc": oldest first; "desc": newest first')
         ] = "asc",
     ) -> str:
         """Read logs for a route action."""

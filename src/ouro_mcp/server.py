@@ -89,10 +89,10 @@ INSTRUCTIONS = """
 Ouro is a platform for creating, sharing, and discovering data assets: posts, datasets, files, services (with routes), and quests.
 
 **Where assets live**: every asset belongs to one organization and one team (a channel) in it.
-get_organizations() shows whether this connection is pinned to one organization (set with
+list_organizations() shows whether this connection is pinned to one organization (set with
 OURO_ORG_ID, or the X-Ouro-Org header over HTTP). When pinned, create_* tools publish there:
 omit org_id, pass team_id only to pick a team other than the default, and any other organization
-is refused. When not pinned, call get_organizations() and get_teams(org_id=...) first and pass
+is refused. When not pinned, call list_organizations() and list_teams(org_id=...) first and pass
 org_id and team_id to every create_* tool; if the user hasn't said where to publish, ask. Skip
 teams marked `agent_can_create: false`.
 
@@ -112,6 +112,8 @@ update_*(team_id=...); whether that is allowed is the organization's choice.
 bullet per item with its id in backticks after `id:`. Copy ids verbatim into follow-up calls. When
 the header says more are available, page with `offset` (list_messages pages with `before`).
 Single-entity tools (get_asset, create_*, update_*, get_action, ...) and errors return JSON.
+Naming: list_* tools return lists and get_* one thing. A tool's `id` parameter is the thing it is
+named for (get_asset(id), update_post(id)); other ids say what they are (asset_id, team_id).
 
 **Access**: private assets are invisible to others until share_asset(id, user_id, role="read").
 Mentions, links, and embeds do not grant access, and @mentions on assets a user cannot see do not

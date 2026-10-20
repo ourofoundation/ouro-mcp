@@ -1,7 +1,7 @@
 """Regression tests for the unified action input/output asset shape.
 
 Covers `_compact_action_assets`, `_unified_action_assets`, and the
-agent-facing shape produced by `_format_action_summary` (mirrored in
+agent-facing shape produced by `format_action_summary` (mirrored in
 `_format_action_result`):
 
   - Agent responses only ever expose plural `input_assets` /
@@ -230,7 +230,7 @@ class TestFormatActionSummaryUnifiedShape(unittest.TestCase):
                 },
             ],
         )
-        row = self.services._format_action_summary(action)
+        row = self.services.format_action_summary(action)
         self.assertIn("output_assets", row)
         self.assertNotIn("output_asset", row)
         self.assertEqual([e["name"] for e in row["output_assets"]], ["report", "raw_results"])
@@ -240,7 +240,7 @@ class TestFormatActionSummaryUnifiedShape(unittest.TestCase):
             output_assets=[],
             output_asset={"id": "legacy", "asset_type": "file", "name": "Legacy"},
         )
-        row = self.services._format_action_summary(action)
+        row = self.services.format_action_summary(action)
         # The agent only sees the plural shape, even for pre-action_assets data.
         self.assertIn("output_assets", row)
         self.assertNotIn("output_asset", row)
@@ -251,7 +251,7 @@ class TestFormatActionSummaryUnifiedShape(unittest.TestCase):
 
     def test_no_output_keys_when_both_forms_absent(self) -> None:
         action = self._action()
-        row = self.services._format_action_summary(action)
+        row = self.services.format_action_summary(action)
         self.assertNotIn("output_assets", row)
         self.assertNotIn("output_asset", row)
 
@@ -262,7 +262,7 @@ class TestFormatActionSummaryUnifiedShape(unittest.TestCase):
             ],
             input_asset={"id": "legacy_in", "asset_type": "file"},
         )
-        row = self.services._format_action_summary(action)
+        row = self.services.format_action_summary(action)
         self.assertIn("input_assets", row)
         self.assertNotIn("input_asset", row)
         self.assertEqual(row["input_assets"][0]["name"], "structure")

@@ -62,6 +62,6 @@ def test_registered_tools_are_compact_and_unstructured() -> None:
 def test_unknown_tool_arguments_are_rejected() -> None:
     from ouro_mcp.server import mcp
 
-    arg_model = mcp._tool_manager.get_tool("get_comments").fn_metadata.arg_model
+    arg_model = mcp._tool_manager.get_tool("list_comments").fn_metadata.arg_model
     with pytest.raises(ValidationError, match="page_size"):
         arg_model.model_validate({"parent_id": "x", "page_size": 3})

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Optional
+from typing import Annotated, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Comment
@@ -14,6 +14,7 @@ from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.markdown_input import (
     content_from_markdown,
 )
+from ouro_mcp.params import ATTRIBUTION_DESC, Attribution
 from ouro_mcp.rendering import (
     clip,
     dump_json,
@@ -39,11 +40,11 @@ COMMENT_TEXT_CHARS = 500
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True})
     @handle_ouro_errors
-    def get_comments(
+    def list_comments(
         parent_id: Annotated[str, Field(description="Asset ID for top-level comments, or comment ID for replies")],
         ctx: Context,
-        limit: Annotated[int, Field(description="Page size, 1-200")] = 20,
-        offset: Annotated[int, Field(description="Offset for pagination")] = 0,
+        limit: Annotated[int, Field(ge=1, le=200, description="Page size")] = 20,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
         """List comments on an asset or replies to a comment, oldest first.
 
@@ -153,10 +154,7 @@ def register(mcp: FastMCP) -> None:
             Field(description="Comment UUID to edit. Provide to replace an existing comment's content."),
         ] = None,
         license_id: Annotated[Optional[str], Field(description="Asset license identifier")] = None,
-        attribution: Annotated[
-            Optional[dict[str, Any]],
-            Field(description="Top-level provenance object; separate from comment metadata"),
-        ] = None,
+        attribution: Annotated[Optional[Attribution], Field(description=ATTRIBUTION_DESC)] = None,
     ) -> str:
         """Create a comment/reply, or edit an existing comment.
 

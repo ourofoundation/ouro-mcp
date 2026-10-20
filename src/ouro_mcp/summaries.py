@@ -164,7 +164,7 @@ def slim_connection_graph(
 
     When ``omit_comments`` is true, skip ``type == "comment"`` edges.
     Comment bodies already ship via the ``comments`` preview on
-    ``get_asset(detail=\"full\")`` and via ``get_comments``; keeping the
+    ``get_asset(detail=\"full\")`` and via ``list_comments``; keeping the
     connection stubs just duplicates IDs without text.
     """
     current_id = str(current_asset_id) if current_asset_id is not None else None
