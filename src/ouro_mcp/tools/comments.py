@@ -51,7 +51,7 @@ def register(mcp: FastMCP) -> None:
                     "username": parent.user.username,
                 }
                 if isinstance(parent, Comment):
-                    text = description_to_markdown(parent.content or parent.text)
+                    text = description_to_markdown(parent.content or parent.text, embedded_assets=parent.assets)
                     if text:
                         parent_context["text"] = text[:500]
         except Exception:
@@ -67,7 +67,7 @@ def register(mcp: FastMCP) -> None:
             if c.user:
                 entry["author"] = c.user.username
 
-            text = description_to_markdown(c.content or c.text)
+            text = description_to_markdown(c.content or c.text, embedded_assets=c.assets)
             if text:
                 entry["text"] = text[:500]
 

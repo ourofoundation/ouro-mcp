@@ -134,9 +134,13 @@ class QuestItemInput(BaseModel):
     notes: Optional[str] = None
 
 
-def _item_description_text(description: Any, *, max_length: Optional[int] = None) -> str:
-    """Readable markdown for quest item descriptions (string or TipTap Content)."""
-    return description_to_markdown(description, max_length=max_length)
+def _item_description_text(item: Any, *, max_length: Optional[int] = None) -> str:
+    """Readable markdown for a quest item's or entry's description, embeds summarized."""
+    return description_to_markdown(
+        _item_field(item, "description"),
+        max_length=max_length,
+        embedded_assets=_item_field(item, "embedded_assets"),
+    )
 
 
 def _item_field(item: Any, name: str, default: Any = None) -> Any:
@@ -186,7 +190,7 @@ def _dump_model_record(value: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
 def _item_summary(item: Any) -> Dict[str, Any]:
     return {
         "id": str(_item_field(item, "id")),
-        "description": _item_description_text(_item_field(item, "description")),
+        "description": _item_description_text(item),
         "status": _item_field(item, "status"),
         "sort_order": _item_field(item, "sort_order"),
         "assignee_id": (
@@ -445,7 +449,7 @@ def register(mcp: FastMCP) -> None:
                     f"contributor_keys: {json.dumps(contributor_keys, default=str)}"
                 )
             return markdown_bullet(
-                _item_description_text(item.description) or "(no description)",
+                _item_description_text(item) or "(no description)",
                 *parts,
                 body=" · ".join(body_bits) if body_bits else None,
             )
@@ -485,7 +489,7 @@ def register(mcp: FastMCP) -> None:
             if getattr(i, "leaderboard_enabled", False):
                 order = getattr(i, "leaderboard_order", None) or "desc"
                 parts.append(f"leaderboard: {order}")
-            body_bits = [_item_description_text(i.description) or "(no description)"]
+            body_bits = [_item_description_text(i) or "(no description)"]
             if i.notes:
                 body_bits.append(str(i.notes))
             if getattr(i, "waiting_until", None):
@@ -928,7 +932,7 @@ def register(mcp: FastMCP) -> None:
             if entry.eval_action_id:
                 parts.append(f"action_id: `{entry.eval_action_id}`")
             return markdown_bullet(
-                _item_description_text(entry.description) or entry.status,
+                _item_description_text(entry) or entry.status,
                 *parts,
                 body=f"assets: {entry.assets}" if entry.assets else None,
             )

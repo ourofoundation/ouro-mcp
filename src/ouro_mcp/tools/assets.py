@@ -67,6 +67,8 @@ def register(mcp: FastMCP) -> None:
                     "flat username/org_id/team_id, and engagement counts. "
                     '"full" also includes type-specific content '
                     "(post body, dataset schema/stats, file download URL, service routes, route execution schemas), "
+                    "with a `↳ name (type · @owner · #team) — description` line under each embedded asset "
+                    "so you don't need get_asset per embed, "
                     "plus a compact creation_action pointer (action_id/status/route_id), "
                     "connections (comment edges omitted — see comments preview / get_comments), "
                     "`derived`: the versions, results and supporting assets that came from it, "
@@ -740,7 +742,7 @@ def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
 
 
 def _comment_text(comment: Comment, config: CommentPreviewConfig) -> str | None:
-    text = description_to_markdown(comment.content or comment.text)
+    text = description_to_markdown(comment.content or comment.text, embedded_assets=comment.assets)
     if not text or config.text_chars <= 0:
         return None
     return text[: config.text_chars]
@@ -833,7 +835,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
             base["preview"] = asset.preview[:5]
 
     elif asset_type in {"post", "comment"}:
-        base["content_text"] = description_to_markdown(asset.content) or None
+        base["content_text"] = description_to_markdown(asset.content, embedded_assets=asset.assets) or None
 
     elif asset_type == "file":
         if asset.data:

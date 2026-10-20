@@ -22,6 +22,6 @@ def register(mcp: FastMCP) -> None:
         post = ouro.posts.retrieve(id)
 
         result = format_asset_summary(post)
-        result["content_text"] = description_to_markdown(post.content) or None
+        result["content_text"] = description_to_markdown(post.content, embedded_assets=post.assets) or None
 
         return dump_json(result)
