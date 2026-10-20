@@ -9,7 +9,10 @@ from unittest.mock import MagicMock
 
 from ouro_mcp.tools.datasets import _resolve_dataset_data
 from ouro_mcp.tools.posts import _resolve_post_markdown
-from ouro_mcp.utils import discard_upload, source_names
+from ouro_mcp.uploads import (
+    discard_upload,
+    source_names,
+)
 
 
 def _ouro(content: bytes) -> MagicMock:

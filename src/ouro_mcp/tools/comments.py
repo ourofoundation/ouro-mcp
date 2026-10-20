@@ -2,25 +2,35 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Comment
 from ouro.utils.content import description_to_markdown
+from pydantic import Field
+
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
+from ouro_mcp.markdown_input import (
     content_from_markdown,
+)
+from ouro_mcp.rendering import (
+    clip,
     dump_json,
-    retrieve_without_view,
-    format_asset_summary,
     markdown_bullet,
     markdown_id,
     page_pagination,
     render_markdown_list,
     truncate_response,
 )
-from pydantic import Field
+from ouro_mcp.summaries import (
+    format_asset_summary,
+)
+from ouro_mcp.utils import (
+    retrieve_without_view,
+)
+
+# Comment text in list rows; longer comments end in "…".
+COMMENT_TEXT_CHARS = 500
 
 
 def register(mcp: FastMCP) -> None:
@@ -54,7 +64,7 @@ def register(mcp: FastMCP) -> None:
                 if isinstance(parent, Comment):
                     text = description_to_markdown(parent.content or parent.text, embedded_assets=parent.assets)
                     if text:
-                        parent_context["text"] = text[:500]
+                        parent_context["text"] = clip(text, COMMENT_TEXT_CHARS)
         except Exception:
             pass
 
@@ -70,7 +80,7 @@ def register(mcp: FastMCP) -> None:
 
             text = description_to_markdown(c.content or c.text, embedded_assets=c.assets)
             if text:
-                entry["text"] = text[:500]
+                entry["text"] = clip(text, COMMENT_TEXT_CHARS)
 
             replies = getattr(c, "replies", None)
             if replies is not None:

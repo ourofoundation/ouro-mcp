@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import Field
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import markdown_bullet, markdown_id, render_markdown_list
+from ouro_mcp.rendering import (
+    markdown_bullet,
+    markdown_id,
+    render_markdown_list,
+)
 
 
 def register(mcp: FastMCP) -> None:

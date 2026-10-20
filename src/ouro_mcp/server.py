@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -10,6 +9,8 @@ from dataclasses import dataclass
 
 from dotenv import find_dotenv, load_dotenv
 from mcp.server.fastmcp import FastMCP
+from ouro import Ouro
+
 from ouro_mcp import __version__
 from ouro_mcp.constants import (
     DEFAULT_HTTP_PORT,
@@ -32,8 +33,6 @@ from ouro_mcp.http_auth import (
     set_http_mode,
 )
 from ouro_mcp.logging_config import apply_ouro_mcp_logging, resolve_fastmcp_log_level
-
-from ouro import Ouro
 
 load_dotenv(find_dotenv(usecwd=True), override=True)
 

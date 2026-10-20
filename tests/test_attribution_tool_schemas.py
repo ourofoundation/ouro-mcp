@@ -4,7 +4,6 @@ import asyncio
 
 from ouro_mcp.server import mcp
 
-
 ATTRIBUTION_TOOLS = (
     "create_post",
     "update_post",

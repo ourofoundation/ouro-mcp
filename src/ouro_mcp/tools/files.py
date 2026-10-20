@@ -2,28 +2,36 @@
 
 from __future__ import annotations
 
-import json
 import shlex
 from base64 import b64decode
 from typing import Annotated, Any, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import Field
+
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
-    resolve_location,
+from ouro_mcp.pricing import (
     PRICE_CURRENCY_DESC,
     PRICE_SATS_DESC,
     PRICE_USD_DESC,
     UNLOCK_PRICE_DESC,
+    unlock_pricing_kwargs,
+)
+from ouro_mcp.rendering import (
     dump_json,
+)
+from ouro_mcp.summaries import (
     file_result,
-    optional_kwargs,
+)
+from ouro_mcp.uploads import (
     local_files_enabled,
     resolve_local_path,
     source_names,
-    unlock_pricing_kwargs,
 )
-from pydantic import Field
+from ouro_mcp.utils import (
+    optional_kwargs,
+    resolve_location,
+)
 
 
 def _source_names() -> str:
@@ -40,14 +48,14 @@ def _resolve_file_input(
 ) -> dict[str, Any]:
     """Return SDK kwargs for the file upload source.
 
-    Exactly one of ``file_path``, ``file_content_base64``,
-    ``file_content_text``, or ``upload_id`` must be provided.  When using
-    inline content, ``file_name`` (with extension) is required for MIME-type
+    Exactly one of `file_path`, `file_content_base64`,
+    `file_content_text`, or `upload_id` must be provided.  When using
+    inline content, `file_name` (with extension) is required for MIME-type
     detection.
 
-    Returns a dict that can be spread into ``ouro.files.create()`` /
-    ``ouro.files.update()`` (keys: ``file_path``, ``upload_id``, *or*
-    ``file_content`` + ``file_name``).
+    Returns a dict that can be spread into `ouro.files.create()` /
+    `ouro.files.update()` (keys: `file_path`, `upload_id`, *or*
+    `file_content` + `file_name`).
     """
     sources = [
         ("file_path", file_path is not None),
@@ -113,14 +121,14 @@ def register(mcp: FastMCP) -> None:
         - any file, as a file asset: create_file / update_file
         - a post's markdown: create_post / update_post
         - dataset rows (.csv, .json, .jsonl, .parquet): create_dataset / update_dataset
-        - an OpenAPI spec: create_service / update_service (``spec_upload_id``)
+        - an OpenAPI spec: create_service / update_service (`spec_upload_id`)
 
         1. Call this tool with the file's name.
-        2. Run the returned ``command`` in a shell, from the file's directory
-           (or change the path after ``@``). It prints nothing on success.
-        3. Pass ``upload_id`` to one of the tools above. Each upload is used once.
+        2. Run the returned `command` in a shell, from the file's directory
+           (or change the path after `@`). It prints nothing on success.
+        3. Pass `upload_id` to one of the tools above. Each upload is used once.
 
-        The URL works for ``expires_in`` seconds and needs no other credentials,
+        The URL works for `expires_in` seconds and needs no other credentials,
         so treat it as a secret.
         """
         ouro = ctx.request_context.lifespan_context.ouro

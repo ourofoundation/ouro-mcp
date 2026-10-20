@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Optional
 
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import BitcoinTransaction, UsdTransaction
+from pydantic import Field
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
+from ouro_mcp.rendering import (
     dump_json,
     markdown_bullet,
     markdown_id,
@@ -38,12 +38,12 @@ def register(mcp: FastMCP) -> None:
 
         Amounts are in the currency's smallest unit:
 
-        - USD: cents, in ``*_cents`` fields. ``available_cents`` is what you
+        - USD: cents, in `*_cents` fields. `available_cents` is what you
           can spend now (balance minus holds for running jobs);
-          ``credits_cents`` can only be spent on Ouro; ``withdrawable_cents``
-          is the part of ``earnings_cents`` you can cash out now.
-        - BTC: satoshis (1 BTC = 100_000_000 sats), in ``balance`` and
-          ``available``.
+          `credits_cents` can only be spent on Ouro; `withdrawable_cents`
+          is the part of `earnings_cents` you can cash out now.
+        - BTC: satoshis (1 BTC = 100_000_000 sats), in `balance` and
+          `available`.
 
         Read-only; no side effects.
         """
@@ -71,11 +71,11 @@ def register(mcp: FastMCP) -> None:
         Returns compact markdown. Amounts are in sats (BTC) or cents (USD).
 
         Pagination model:
-        - USD supports offset-based paging via ``limit`` + ``offset`` and
-          server-side ``type`` filtering. The header reflects whether more
+        - USD supports offset-based paging via `limit` + `offset` and
+          server-side `type` filtering. The header reflects whether more
           pages are available.
-        - BTC currently returns the full history in one call; ``limit`` /
-          ``offset`` / ``type`` are ignored.
+        - BTC currently returns the full history in one call; `limit` /
+          `offset` / `type` are ignored.
 
         Read-only; no side effects.
         """
@@ -176,13 +176,13 @@ def register(mcp: FastMCP) -> None:
 
         **Side effect:** immediately debits the caller's wallet and
         credits the recipient's. Amounts are always in the currency's
-        smallest unit — ``amount=500`` means 500 sats on BTC or $5.00
+        smallest unit — `amount=500` means 500 sats on BTC or $5.00
         (500 cents) on USD. Double-check the unit before calling.
 
         - BTC sends route through the Lightning "send-sats" endpoint; once
           the payment confirms it cannot be reversed by the SDK.
         - USD sends move cents between Ouro balances (after the platform
-          fee) and accept an optional ``message``; BTC ignores ``message``.
+          fee) and accept an optional `message`; BTC ignores `message`.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         transfer = ouro.money.send(
@@ -208,7 +208,7 @@ def register(mcp: FastMCP) -> None:
     def get_deposit_address(ctx: Context) -> str:
         """Return a Bitcoin L1 deposit address for funding the user's wallet.
 
-        Returns ``{"deposit_address": "bc1..."}``. Funds sent on-chain to
+        Returns `{"deposit_address": "bc1..."}`. Funds sent on-chain to
         this address credit the user's BTC balance in sats once confirmed
         by the network. Read-only; the backend may return the same address
         across calls.
@@ -237,12 +237,12 @@ def register(mcp: FastMCP) -> None:
 
         Each record is one paid route call: which asset was called, the
         charge in cents (paid from the caller's Ouro balance when the call
-        completed), and when. Use ``role="consumer"`` to see what the user spent and
-        ``role="creator"`` to see what they earned. Filter to a single
-        asset with ``asset_id`` to audit one route.
+        completed), and when. Use `role="consumer"` to see what the user spent and
+        `role="creator"` to see what they earned. Filter to a single
+        asset with `asset_id` to audit one route.
 
-        Pagination is offset-based via ``limit`` + ``offset`` and the
-        response carries the server's ``pagination`` block through to the
+        Pagination is offset-based via `limit` + `offset` and the
+        response carries the server's `pagination` block through to the
         caller.
         """
         ouro = ctx.request_context.lifespan_context.ouro
@@ -264,9 +264,9 @@ def register(mcp: FastMCP) -> None:
         """Read creator route earnings (USD, cents). Read-only.
 
         Route revenue lands in the user's Ouro balance as each paid call
-        completes (after the platform fee), so ``total_pending_cents`` is 0;
-        ``total_paid_out_cents`` is everything earned, ``in_progress_cents``
-        covers calls still running, and ``assets`` breaks it down per route.
+        completes (after the platform fee), so `total_pending_cents` is 0;
+        `total_paid_out_cents` is everything earned, `in_progress_cents`
+        covers calls still running, and `assets` breaks it down per route.
         Earnings are spendable immediately and withdrawable after 7 days.
         """
         ouro = ctx.request_context.lifespan_context.ouro
@@ -278,7 +278,7 @@ def register(mcp: FastMCP) -> None:
         """Return advisory instructions for topping up USD. Does not move money.
 
         USD top-ups require the Ouro web interface (Stripe-hosted flow).
-        This tool is purely informational — it returns ``{"message": str}``
+        This tool is purely informational — it returns `{"message": str}`
         with a link and brief instructions so the agent can hand the user
         off. No API call, no charge, no side effect.
         """

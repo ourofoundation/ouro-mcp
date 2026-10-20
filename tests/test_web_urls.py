@@ -8,13 +8,13 @@ from types import SimpleNamespace
 from ouro.models import Team
 
 from ouro_mcp.constants import ENV_OURO_FRONTEND_URL, GLOBAL_ORG_ID
-from ouro_mcp.tools.teams import _team_summary
-from ouro_mcp.utils import (
+from ouro_mcp.summaries import (
     absolute_web_url,
     asset_web_url,
     frontend_origin,
     team_web_url,
 )
+from ouro_mcp.tools.teams import _team_summary
 
 
 class TestFrontendOrigin(unittest.TestCase):
@@ -133,7 +133,9 @@ class TestTeamWebUrl(unittest.TestCase):
 
 class TestFormatAssetSummarySlim(unittest.TestCase):
     def test_omits_url_and_uses_flat_location_fields(self) -> None:
-        from ouro_mcp.utils import format_asset_summary
+        from ouro_mcp.summaries import (
+            format_asset_summary,
+        )
 
         now = datetime.now(UTC)
         asset = SimpleNamespace(

@@ -19,9 +19,9 @@ _LITERALS = ("default", "enum", "const", "examples")
 def compact_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Drop JSON-schema noise that costs agents tokens without informing them.
 
-    Pydantic titles every property and wraps each ``Optional`` parameter in
-    ``anyOf: [T, null]`` with ``default: null``. An omitted optional parameter
-    already means null, so both collapse to plain ``T``.
+    Pydantic titles every property and wraps each `Optional` parameter in
+    `anyOf: [T, null]` with `default: null`. An omitted optional parameter
+    already means null, so both collapse to plain `T`.
     """
     out: dict[str, Any] = {}
     for key, value in schema.items():
@@ -54,7 +54,7 @@ def _as_call_result(result: Any) -> Any:
 
 
 def report_errors(fn: Callable, is_async: bool) -> Callable:
-    """Return a tool's JSON error payload with ``isError`` so clients see a failure."""
+    """Return a tool's JSON error payload with `isError` so clients see a failure."""
     if is_async:
 
         @functools.wraps(fn)
@@ -71,7 +71,7 @@ def report_errors(fn: Callable, is_async: bool) -> Callable:
 
 
 def _hint(tool: Any, name: str) -> bool:
-    """An annotation hint by its wire name (``readOnlyHint``), on either SDK."""
+    """An annotation hint by its wire name (`readOnlyHint`), on either SDK."""
     hints = tool.annotations
     if isinstance(hints, dict):
         return bool(hints.get(name))

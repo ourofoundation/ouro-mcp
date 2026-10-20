@@ -8,21 +8,30 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Entry, QuestItem, QuestLeaderboardRow
 from ouro.utils.content import description_to_markdown
+from pydantic import BaseModel, ConfigDict, Field
+
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
-    resolve_location,
+from ouro_mcp.markdown_input import (
     content_from_markdown,
-    dump_json,
-    format_asset_summary,
+)
+from ouro_mcp.pricing import (
     format_one_time_cost_summary,
+)
+from ouro_mcp.rendering import (
+    clip,
+    dump_json,
     markdown_bullet,
     markdown_id,
-    optional_kwargs,
     page_pagination,
     render_markdown_list,
 )
-from pydantic import BaseModel, ConfigDict, Field
-
+from ouro_mcp.summaries import (
+    format_asset_summary,
+)
+from ouro_mcp.utils import (
+    optional_kwargs,
+    resolve_location,
+)
 
 AssetType = Literal["file", "dataset", "post"]
 # Contributors may also submit a route; the item's eval route runs it.
@@ -136,11 +145,11 @@ class QuestItemInput(BaseModel):
 
 def _item_description_text(item: Any, *, max_length: Optional[int] = None) -> str:
     """Readable markdown for a quest item's or entry's description, embeds summarized."""
-    return description_to_markdown(
+    text = description_to_markdown(
         _item_field(item, "description"),
-        max_length=max_length,
         embedded_assets=_item_field(item, "embedded_assets"),
     )
+    return clip(text, max_length)
 
 
 def _item_field(item: Any, name: str, default: Any = None) -> Any:
@@ -555,10 +564,10 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Batch-add items to an existing quest.
 
-        For non-eval items, ``submission_assets`` declares a keyed record of
-        contributor inputs. For eval items, set ``eval_route_id`` and optional
-        ``eval_static_inputs``; the server derives contributor keys from the
-        route. You may overlay ``label`` on those derived keys.
+        For non-eval items, `submission_assets` declares a keyed record of
+        contributor inputs. For eval items, set `eval_route_id` and optional
+        `eval_static_inputs`; the server derives contributor keys from the
+        route. You may overlay `label` on those derived keys.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         created = ouro.quests.create_items(
@@ -738,9 +747,9 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Update an item's metadata, status, reward, or auto-eval config.
 
-        ``submission_assets`` is for explicit non-eval declarations. With an
-        ``eval_route_id``, the server owns contributor keys and derives them
-        from route inputs minus ``eval_static_inputs``. For completions with
+        `submission_assets` is for explicit non-eval declarations. With an
+        `eval_route_id`, the server owns contributor keys and derives them
+        from route inputs minus `eval_static_inputs`. For completions with
         provenance, use complete_quest_item instead.
         """
         ouro = ctx.request_context.lifespan_context.ouro
@@ -810,8 +819,8 @@ def register(mcp: FastMCP) -> None:
         The quest must be open; draft quests reject entry-producing actions until
         they are published.
 
-        Provide ``assets`` when linking produced files or other inputs, and/or a
-        substantive ``description`` markdown note.
+        Provide `assets` when linking produced files or other inputs, and/or a
+        substantive `description` markdown note.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         content = content_from_markdown(ouro, description) if description else None
@@ -869,12 +878,12 @@ def register(mcp: FastMCP) -> None:
         The quest must be open. Draft quests are not accepting submissions until
         the owner publishes them.
 
-        Pass ``item_id`` and ``assets`` with one UUID per exact contributor key.
-        Inspect ``list_quest_items`` first; for eval items, also inspect the route.
+        Pass `item_id` and `assets` with one UUID per exact contributor key.
+        Inspect `list_quest_items` first; for eval items, also inspect the route.
         The server derives these keys from unpinned route inputs, so do not guess
         a generic file or artifact key.
 
-        Provide ``description_markdown`` with the contributor's explanation. For
+        Provide `description_markdown` with the contributor's explanation. For
         paid items, the quest author reviews that description and deterministic
         judge signals, not the underlying asset contents, until they accept the
         entry. Private assets stay private until accept.

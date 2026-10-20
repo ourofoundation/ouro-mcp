@@ -7,7 +7,10 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
-from ouro_mcp.utils import _attribution_summary, format_asset_summary
+from ouro_mcp.summaries import (
+    _attribution_summary,
+    format_asset_summary,
+)
 
 
 class AttributionSummaryTests(unittest.TestCase):

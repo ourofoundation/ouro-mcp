@@ -7,7 +7,9 @@ from pathlib import Path
 from unittest import mock
 
 from ouro_mcp.constants import ENV_WORKSPACE_MOUNT, ENV_WORKSPACE_ROOT
-from ouro_mcp.utils import resolve_local_path
+from ouro_mcp.uploads import (
+    resolve_local_path,
+)
 
 
 class TestResolveLocalPathNoWorkspace(unittest.TestCase):

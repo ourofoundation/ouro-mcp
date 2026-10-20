@@ -5,7 +5,10 @@ import unittest
 
 from ouro.models import AssetTag
 
-from ouro_mcp.utils import slim_asset_tags, strip_heavy_fields
+from ouro_mcp.summaries import (
+    slim_asset_tags,
+    strip_heavy_fields,
+)
 
 
 class TestStripHeavyFields(unittest.TestCase):

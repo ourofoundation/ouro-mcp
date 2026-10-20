@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from mcp.server.fastmcp import FastMCP
 from ouro.models import Entry, LeaderboardPage, Page, QuestItem
+
 from ouro_mcp.tools.quests import (
     EvalStaticInput,
     SubmissionAssetDeclaration,

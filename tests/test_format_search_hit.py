@@ -1,6 +1,8 @@
 """format_search_hit keeps discovery fields only."""
 
-from ouro_mcp.utils import format_search_hit
+from ouro_mcp.summaries import (
+    format_search_hit,
+)
 
 
 def test_format_search_hit_keeps_slim_fields():
@@ -77,7 +79,9 @@ def test_format_search_hit_omits_absent_optional_fields():
 
 
 def test_route_snippet_that_repeats_the_row_is_dropped() -> None:
-    from ouro_mcp.utils import format_search_hit
+    from ouro_mcp.summaries import (
+        format_search_hit,
+    )
 
     description = (
         "Optimize atomic positions and (optionally) unit-cell parameters of a crystal structure "

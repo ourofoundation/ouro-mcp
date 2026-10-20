@@ -6,11 +6,19 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from ouro.models import (
+    Connection,
+    Dataset,
+    DatasetColumn,
+    DatasetIndex,
+    DatasetRows,
+    DatasetView,
+)
 
-from ouro.models import DatasetIndex, Connection, Dataset, DatasetColumn, DatasetRows, DatasetView
-
+from ouro_mcp.summaries import (
+    slim_dataset_schema,
+)
 from ouro_mcp.tools.datasets import _resolve_dataset_data, register
-from ouro_mcp.utils import slim_dataset_schema
 
 
 def test_slim_dataset_schema_keeps_name_type_and_semantics() -> None:

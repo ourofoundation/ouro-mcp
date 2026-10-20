@@ -7,10 +7,13 @@ from typing import Annotated, Any, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Conversation, Message
 from ouro.resources.conversations import Messages
+from pydantic import Field
+
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
-    resolve_location,
+from ouro_mcp.markdown_input import (
     content_from_markdown,
+)
+from ouro_mcp.rendering import (
     dump_json,
     markdown_bullet,
     markdown_id,
@@ -18,7 +21,9 @@ from ouro_mcp.utils import (
     render_markdown_list,
     truncate_response,
 )
-from pydantic import Field
+from ouro_mcp.utils import (
+    resolve_location,
+)
 
 
 def _conversation_summary(conversation: Conversation) -> dict:
@@ -116,27 +121,6 @@ def register(mcp: FastMCP) -> None:
         """Get one conversation by ID, including member user IDs."""
         ouro = ctx.request_context.lifespan_context.ouro
         return _get_conversation(ouro, conversation_id)
-
-    @mcp.tool(annotations={"readOnlyHint": True})
-    @handle_ouro_errors
-    def get_conversations(
-        ctx: Context,
-        id: Annotated[
-            Optional[str],
-            Field(description="Conversation UUID for single lookup"),
-        ] = None,
-        org_id: Annotated[
-            Optional[str],
-            Field(description="Filter by organization UUID"),
-        ] = None,
-        limit: Annotated[int, Field(description="Max results to return")] = 20,
-        offset: Annotated[int, Field(description="Pagination offset")] = 0,
-    ) -> str:
-        """Compatibility wrapper. Prefer list_conversations() or get_conversation()."""
-        ouro = ctx.request_context.lifespan_context.ouro
-        if id:
-            return _get_conversation(ouro, id)
-        return _list_conversations(ouro, org_id=org_id, limit=limit, offset=offset)
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors

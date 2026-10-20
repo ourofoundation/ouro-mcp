@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.utils.content import description_to_markdown
+
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, format_asset_summary
+from ouro_mcp.rendering import (
+    dump_json,
+)
+from ouro_mcp.summaries import (
+    format_asset_summary,
+)
 
 
 def register(mcp: FastMCP) -> None:

@@ -6,7 +6,9 @@ from mcp.server.fastmcp import FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.http_auth import current_ouro
-from ouro_mcp.utils import dump_json
+from ouro_mcp.rendering import (
+    dump_json,
+)
 
 
 def register(mcp: FastMCP) -> None:

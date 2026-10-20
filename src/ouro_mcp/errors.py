@@ -8,46 +8,20 @@ import re
 from typing import Any, Callable
 
 from ouro import (
+    APIConnectionError,
     APIStatusError,
+    APITimeoutError,
     AuthenticationError,
     BadRequestError,
+    ExternalServiceError,
     InternalServerError,
     NotFoundError,
     OuroError,
     PermissionDeniedError,
     RateLimitError,
+    RouteExecutionError,
     UnprocessableEntityError,
 )
-
-try:
-    from ouro import RouteExecutionError
-except ImportError:  # ouro-py < 0.5.3
-    class RouteExecutionError(Exception):  # type: ignore[no-redef]
-        """Fallback stub when running against older ouro-py."""
-
-        action_id: str | None = None
-        status: str | None = None
-        response: Any = None
-        message: str = ""
-        retryable: bool | None = None
-
-try:
-    from ouro import ExternalServiceError
-except ImportError:  # ouro-py < external service typed errors
-    class ExternalServiceError(RouteExecutionError):  # type: ignore[no-redef]
-        status_code: int | None = None
-        code: str | None = None
-
-try:
-    from ouro import APIConnectionError, APITimeoutError
-except ImportError:  # ouro-py < 0.5.4 (pre-transport-error mapping)
-    class APIConnectionError(Exception):  # type: ignore[no-redef]
-        """Fallback stub for older ouro-py installs."""
-
-        request: Any = None
-
-    class APITimeoutError(APIConnectionError):  # type: ignore[no-redef]
-        """Fallback stub for older ouro-py installs."""
 
 log = logging.getLogger(__name__)
 

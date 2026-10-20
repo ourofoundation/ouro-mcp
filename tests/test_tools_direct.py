@@ -7,7 +7,6 @@ user_id, visibility. Run with OURO_API_KEY set (and optionally OURO_BASE_URL).
 
 from __future__ import annotations
 
-import json
 import os
 
 from dotenv import load_dotenv

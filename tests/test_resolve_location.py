@@ -5,7 +5,9 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from ouro_mcp.utils import resolve_location
+from ouro_mcp.utils import (
+    resolve_location,
+)
 
 
 class TestResolveLocation(unittest.TestCase):

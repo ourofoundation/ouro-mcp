@@ -1,49 +1,16 @@
 from __future__ import annotations
 
-import importlib
 import json
 import os
-import sys
-import types
 import unittest
 
-
-def _load_utils_module():
-    if "mcp" not in sys.modules:
-        mcp_module = types.ModuleType("mcp")
-
-        class _DummyClientCapabilities:
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
-
-        class _DummyElicitationCapability:
-            pass
-
-        mcp_module.types = types.SimpleNamespace(
-            ClientCapabilities=_DummyClientCapabilities,
-            ElicitationCapability=_DummyElicitationCapability,
-        )
-        sys.modules["mcp"] = mcp_module
-
-    if "mcp.server" not in sys.modules:
-        sys.modules["mcp.server"] = types.ModuleType("mcp.server")
-
-    if "mcp.server.fastmcp" not in sys.modules:
-        fastmcp_module = types.ModuleType("mcp.server.fastmcp")
-
-        class _DummyContext:
-            pass
-
-        fastmcp_module.Context = _DummyContext
-        sys.modules["mcp.server.fastmcp"] = fastmcp_module
-
-    return importlib.import_module("ouro_mcp.utils")
+from ouro_mcp import rendering
 
 
 class TestTimestampLocalization(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.utils = _load_utils_module()
+        cls.utils = rendering
 
     def test_dump_json_rewrites_timestamp_to_local_iso_when_timezone_configured(
         self,

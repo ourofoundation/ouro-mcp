@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 from mcp_types import INVALID_REQUEST
-
 from ouro import AuthenticationError
+
 from ouro_mcp import http_auth
 from ouro_mcp.http_auth import (
     ApiKeyHeaderShim,
@@ -22,7 +22,9 @@ from ouro_mcp.http_auth import (
     jwt_claims,
     set_http_mode,
 )
-from ouro_mcp.utils import resolve_local_path
+from ouro_mcp.uploads import (
+    resolve_local_path,
+)
 
 
 def _jwt(claims: dict) -> str:

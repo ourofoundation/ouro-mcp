@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import shlex
 from typing import Annotated, Any, Literal, Optional
@@ -10,38 +9,47 @@ from typing import Annotated, Any, Literal, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Action, Comment
 from ouro.utils.content import description_to_markdown
+from pydantic import Field
+
 from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
-    asset_type_of,
-    route_caller_parameters,
+from ouro_mcp.rendering import (
     collapse_whitespace,
     dump_json,
-    format_asset_properties,
-    format_asset_summary,
-    format_search_hit,
     markdown_bullet,
     markdown_id,
-    optional_kwargs,
     page_pagination,
-    present_kwargs,
     render_markdown_list,
     render_markdown_sections,
+    search_hit_line,
+    truncate_response,
+)
+from ouro_mcp.routes import (
+    route_caller_parameters,
     route_description_markdown,
     route_input_assets_summary,
     route_output_assets_summary,
     route_properties_summary,
     route_request_body_without_input_assets,
     route_response_charts_summary,
-    search_hit_line,
+)
+from ouro_mcp.summaries import (
+    format_asset_properties,
+    format_asset_summary,
+    format_search_hit,
+    short_description,
     slim_asset_tags,
     slim_connection_graph,
     slim_dataset_schema,
     strip_heavy_fields,
-    truncate_response,
     user_summary,
 )
-from pydantic import Field
+from ouro_mcp.utils import (
+    asset_type_of,
+    json_arg,
+    optional_kwargs,
+    present_kwargs,
+)
 
 log = logging.getLogger(__name__)
 
@@ -158,17 +166,8 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        merged_metadata: dict[str, Any] = {}
-        if metadata_filters:
-            if isinstance(metadata_filters, dict):
-                merged_metadata.update(metadata_filters)
-            elif isinstance(metadata_filters, str):
-                try:
-                    parsed = json.loads(metadata_filters)
-                    if isinstance(parsed, dict):
-                        merged_metadata.update(parsed)
-                except (json.JSONDecodeError, TypeError):
-                    log.warning("Ignoring invalid metadata_filters JSON: %s", metadata_filters)
+        # Invalid filters fail: unfiltered results would look like filtered ones
+        merged_metadata: dict[str, Any] = dict(json_arg(metadata_filters, "metadata_filters", kind=dict) or {})
         if file_type:
             merged_metadata["file_type"] = file_type
         if extension:
@@ -314,15 +313,15 @@ def register(mcp: FastMCP) -> None:
         markdown: the same extended markdown create_post and update_post take.
 
         With output_path the asset is saved there; a directory keeps the server-provided filename.
-        Without it, the result is a link and the ``command`` that fetches it.
-        Run the command in a shell: it saves the asset as ``file_name`` in the
+        Without it, the result is a link and the `command` that fetches it.
+        Run the command in a shell: it saves the asset as `file_name` in the
         current directory and prints nothing on success. The link works for
-        ``expires_in`` seconds and needs no other credentials, so treat it as
+        `expires_in` seconds and needs no other credentials, so treat it as
         a secret.
 
         Work on the downloaded file instead of paging the asset through chat:
         - bulk dataset analysis (scoring, filtering hundreds+ rows, local
-          scripts): download the CSV and compute locally. Use ``query_dataset``
+          scripts): download the CSV and compute locally. Use `query_dataset`
           for peeks, small samples, and SQL top-N.
         - editing a long post: download the markdown, edit the file, upload it
           with create_upload_url and pass upload_id to update_post.
@@ -331,7 +330,9 @@ def register(mcp: FastMCP) -> None:
         format = format or "markdown"
 
         if output_path is not None:
-            from ouro_mcp.utils import resolve_local_path
+            from ouro_mcp.uploads import (
+                resolve_local_path,
+            )
 
             download = ouro.assets.download(
                 id,
@@ -371,10 +372,10 @@ def register(mcp: FastMCP) -> None:
         included when the backend provides it so you can follow up with
         get_action or list_asset_actions.
 
-        Comment edges are omitted — use ``get_comments`` (or the comments
-        preview on ``get_asset(detail=\"full\")``). For datasets, outgoing
-        ``reference`` edges (row-level file/action IDs) are also omitted —
-        use the dataset schema / ``query_dataset`` instead. Incoming
+        Comment edges are omitted — use `get_comments` (or the comments
+        preview on `get_asset(detail=\"full\")`). For datasets, outgoing
+        `reference` edges (row-level file/action IDs) are also omitted —
+        use the dataset schema / `query_dataset` instead. Incoming
         references and other connection types are still returned.
         """
         ouro = ctx.request_context.lifespan_context.ouro
@@ -447,8 +448,8 @@ def register(mcp: FastMCP) -> None:
         """List route actions linked to an asset.
 
         Prefer this over scraping posts for action IDs. Returns compact
-        markdown. ``created_by`` is the action that produced the asset (if
-        any). ``as_input`` is the list of executions that used the asset as
+        markdown. `created_by` is the action that produced the asset (if
+        any). `as_input` is the list of executions that used the asset as
         an input — use this to find which routes ran on a file or dataset.
         Each row shows the run's inputs, outputs, run time and cost; pass
         include_response for its response too.
@@ -573,7 +574,7 @@ def register(mcp: FastMCP) -> None:
                 id=str(route.id),
                 name=route.name,
                 asset_type=route.asset_type,
-                description=(route.description.text[:200] or None) if route.description else None,
+                description=short_description(route.description),
             )
             for route in page
         ]
@@ -627,7 +628,7 @@ def _compact_column_statistics(stats: Any, *, full: bool) -> Any:
     """Column statistics without the repeats.
 
     A summary read only names the columns: the per-column numbers are for
-    analysis, so they come with ``detail="full"``. Either way a ``label``
+    analysis, so they come with `detail="full"`. Either way a `label`
     equal to the column name, and scan bookkeeping that says the whole table
     was read, are dropped.
     """
@@ -669,7 +670,7 @@ def _compact_creation_action(created_by: Action) -> dict[str, Any]:
     """Pointer-only producer action for get_asset(detail=full).
 
     Full action payloads (response, assets, metadata) belong on
-    ``list_asset_actions`` / ``get_action``, not inline on every full asset read.
+    `list_asset_actions` / `get_action`, not inline on every full asset read.
     """
     pointer = {
         "action_id": str(created_by.id),

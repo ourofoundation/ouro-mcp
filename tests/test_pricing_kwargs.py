@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from ouro_mcp.utils import (
+from ouro_mcp.pricing import (
     format_monetization_block,
     format_pay_per_use_cost_summary,
     per_use_pricing_kwargs,

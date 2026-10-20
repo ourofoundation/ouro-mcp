@@ -27,9 +27,9 @@ import httpx
 from mcp.server.auth.provider import AccessToken
 from mcp.shared.exceptions import MCPError
 from mcp_types import INVALID_REQUEST
+from ouro import AuthenticationError, Ouro, PermissionDeniedError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ouro import AuthenticationError, Ouro, PermissionDeniedError
 from ouro_mcp import __version__
 from ouro_mcp.constants import ENV_OURO_API_KEY, ENV_OURO_BASE_URL, OURO_MCP_OAUTH_SCOPE
 

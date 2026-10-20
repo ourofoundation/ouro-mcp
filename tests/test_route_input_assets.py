@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
-from ouro_mcp.tools.assets import _format_asset_detail
-from ouro_mcp.tools.services import _format_route_cost_preview, _parse_json_param
-from ouro_mcp.utils import (
+from ouro_mcp.pricing import (
     format_monetization_block,
+)
+from ouro_mcp.routes import (
     route_input_assets_summary,
     route_output_assets_for_body,
     route_output_assets_summary,
@@ -15,21 +13,8 @@ from ouro_mcp.utils import (
     route_request_body_without_input_assets,
     route_response_charts_summary,
 )
-
-
-def test_parse_input_assets_allows_keyed_asset_ids() -> None:
-    assert _parse_json_param(
-        '{"structure": "file-id", "reference_dataset": {"assetId": "dataset-id"}}',
-        "input_assets",
-    ) == {
-        "structure": "file-id",
-        "reference_dataset": {"assetId": "dataset-id"},
-    }
-
-
-def test_parse_input_assets_rejects_non_object() -> None:
-    with pytest.raises(ValueError):
-        _parse_json_param('["file-id"]', "input_assets")
+from ouro_mcp.tools.assets import _format_asset_detail
+from ouro_mcp.tools.services import _format_route_cost_preview
 
 
 def test_route_request_body_hides_asset_input_schema() -> None:

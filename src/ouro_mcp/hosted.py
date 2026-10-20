@@ -1,12 +1,12 @@
 """Tool surface for the hosted HTTP server.
 
 On the hosted server a filesystem path means the server's disk, not the
-caller's, so ``resolve_local_path`` rejects every one. Advertising those
+caller's, so `resolve_local_path` rejects every one. Advertising those
 parameters anyway makes an agent try them and fail. HTTP mode removes them, so
 the schema says what the server can do. Each tool has another way in or out:
 an upload_id for content, and a download link where it would write a file.
 
-Tools register at import time, before ``main()`` knows the transport, so this
+Tools register at import time, before `main()` knows the transport, so this
 edits the registered tools instead of the tool definitions.
 """
 
@@ -74,7 +74,7 @@ _DESCRIPTION_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
 
 
 def apply_hosted_tool_surface(server: FastMCP) -> None:
-    """Remove local-path parameters from the tools registered on ``server``."""
+    """Remove local-path parameters from the tools registered on `server`."""
     tools = server._tool_manager._tools
     for name, param in LOCAL_PATH_PARAMS.items():
         tool = tools[name]

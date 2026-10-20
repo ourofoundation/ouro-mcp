@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from io import TextIOBase
 from typing import Literal, TextIO
 
 from ouro_mcp.constants import ENV_OURO_MCP_LOG_LEVEL, ENV_OURO_MCP_LOG_STYLE

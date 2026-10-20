@@ -5,7 +5,12 @@ from __future__ import annotations
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import dump_json, file_result
+from ouro_mcp.rendering import (
+    dump_json,
+)
+from ouro_mcp.summaries import (
+    file_result,
+)
 
 
 def register(mcp: FastMCP) -> None:

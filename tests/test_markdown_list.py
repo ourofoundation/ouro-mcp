@@ -11,9 +11,8 @@ from ouro_mcp.constants import (
     ENV_OURO_MCP_RESPONSE_FORMAT,
     MAX_RESPONSE_SIZE,
 )
-from ouro_mcp.utils import (
+from ouro_mcp.rendering import (
     collapse_whitespace,
-    format_search_hit,
     format_table_response,
     markdown_bullet,
     render_markdown_list,
@@ -23,6 +22,9 @@ from ouro_mcp.utils import (
     resolve_response_format,
     search_hit_line,
     truncate_response,
+)
+from ouro_mcp.summaries import (
+    format_search_hit,
 )
 
 

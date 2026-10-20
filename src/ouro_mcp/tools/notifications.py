@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Annotated, Optional, Union
 
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import Field
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
+from ouro_mcp.rendering import (
     dump_json,
     markdown_bullet,
     markdown_id,

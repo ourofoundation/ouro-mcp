@@ -7,8 +7,10 @@ import logging
 from mcp.server.fastmcp import Context, FastMCP
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
+from ouro_mcp.rendering import (
     dump_json,
+)
+from ouro_mcp.summaries import (
     enum_columns_from_schema,
     format_asset_summary,
     refs_from_schema,

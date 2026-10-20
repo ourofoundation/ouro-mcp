@@ -10,32 +10,42 @@ from typing import Annotated, Any, Literal, Optional
 import pandas as pd
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Dataset, ResolvedRef
+from pydantic import BeforeValidator, Field
+
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
-    resolve_location,
+from ouro_mcp.pricing import (
     PRICE_CURRENCY_DESC,
     PRICE_SATS_DESC,
     PRICE_USD_DESC,
     UNLOCK_PRICE_DESC,
+    unlock_pricing_kwargs,
+)
+from ouro_mcp.rendering import (
     dump_json,
-    enum_columns_from_schema,
-    format_asset_summary,
     format_table_response,
     markdown_bullet,
     markdown_id,
-    discard_upload,
-    optional_kwargs,
-    read_upload,
-    refs_from_schema,
     render_markdown_list,
-    resolve_local_path,
-    source_names,
-    unlock_pricing_kwargs,
-    slim_connection_graph,
-    slim_dataset_schema,
     truncate_response,
 )
-from pydantic import BeforeValidator, Field
+from ouro_mcp.summaries import (
+    enum_columns_from_schema,
+    format_asset_summary,
+    refs_from_schema,
+    slim_connection_graph,
+    slim_dataset_schema,
+)
+from ouro_mcp.uploads import (
+    discard_upload,
+    read_upload,
+    resolve_local_path,
+    source_names,
+)
+from ouro_mcp.utils import (
+    json_arg,
+    optional_kwargs,
+    resolve_location,
+)
 
 _DEFAULT_QUERY_LIMIT = 100
 _MAX_QUERY_LIMIT = 1000
@@ -145,33 +155,11 @@ def _coerce_string_list(value: Any, *, parameter_name: str) -> Optional[list[str
     raise ValueError(f"{parameter_name} must be a JSON array of column-name strings.")
 
 
-def _coerce_json_object(value: Any, *, parameter_name: str) -> Optional[dict[str, Any]]:
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"{parameter_name} must be valid JSON: {e}") from e
-        if not isinstance(parsed, dict):
-            raise ValueError(f"{parameter_name} must decode to a JSON object.")
-        return parsed
-    raise ValueError(f"{parameter_name} must be a JSON object or JSON string.")
-
-
 _COLUMN_OPS = ("add", "update", "rename", "drop", "index", "drop_index")
 
 
 def _coerce_column_operations(value: Any) -> list[dict[str, Any]]:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"operations must be valid JSON: {e}") from e
-    if not isinstance(value, list):
-        raise ValueError("operations must be a JSON array of column operations.")
+    value = json_arg(value, "operations", kind=list)
     if not value:
         raise ValueError("operations must contain at least one column operation.")
     if any(not isinstance(op, dict) for op in value):
@@ -180,16 +168,8 @@ def _coerce_column_operations(value: Any) -> list[dict[str, Any]]:
 
 
 def _coerce_indexes(value: Any) -> Optional[list[Any]]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"indexes must be valid JSON: {e}") from e
-    if not isinstance(value, list):
-        raise ValueError("indexes must be a list of columns, column lists or {columns, unique}.")
-    return value
+    """Indexes: a list of columns, column lists or `{columns, unique}`."""
+    return json_arg(value, "indexes", kind=list)
 
 
 def _apply_column_op(ouro: Any, dataset_id: str, op: dict[str, Any]) -> dict[str, Any]:
@@ -333,8 +313,8 @@ def _ingest_summary(dataset: Dataset) -> dict[str, Any]:
     """Surface partial-success ingest info stashed on the dataset by ouro-py.
 
     Reference columns are FK-enforced, so rows with bad/missing ref ids are
-    skipped rather than failing the whole write. ``row_ingest`` reports
-    {inserted, updated, skipped} and ``ingest_warning`` lists the offending ids per
+    skipped rather than failing the whole write. `row_ingest` reports
+    {inserted, updated, skipped} and `ingest_warning` lists the offending ids per
     column so an agent can fix and retry them.
     """
     summary: dict[str, Any] = {}
@@ -367,10 +347,10 @@ def _dataset_proof(
 ) -> dict[str, Any]:
     """Collect verification data after create / structural update.
 
-    ``include_verification`` should be true when the call creates a dataset or
+    `include_verification` should be true when the call creates a dataset or
     changes column structure (refs/enum promotion, edit_dataset_columns).
     Row-only updates skip schema, resolved-refs preview, and connections.
-    Empty ``resolved_refs_preview`` / ``connections`` are omitted.
+    Empty `resolved_refs_preview` / `connections` are omitted.
     """
     if not include_verification:
         return {}
@@ -461,7 +441,7 @@ def _dataset_embed_markdown(dataset_id: str, view_id: Optional[str] = None) -> s
 def _view_result(view: Any, dataset_id: str) -> dict[str, Any]:
     """A saved view plus ready-to-paste embed markdown.
 
-    The API adds ``warnings`` and ``sample_rows`` on writes; they come through
+    The API adds `warnings` and `sample_rows` on writes; they come through
     as extra model fields.
     """
     result = view.model_dump(mode="json")
@@ -470,7 +450,7 @@ def _view_result(view: Any, dataset_id: str) -> dict[str, Any]:
 
 
 def _coerce_view_spec(value: Any) -> Optional[dict[str, Any]]:
-    spec = _coerce_json_object(value, parameter_name="view")
+    spec = json_arg(value, "view", kind=dict)
     if spec is None:
         return None
     unknown = set(spec) - _VIEW_KEYS
@@ -482,7 +462,7 @@ def _coerce_view_spec(value: Any) -> Optional[dict[str, Any]]:
     if not spec.get("prompt") and not (spec.get("sql_query") and spec.get("config")):
         raise ValueError("view needs a prompt, or both sql_query and config.")
     if "config" in spec:
-        spec["config"] = _coerce_json_object(spec["config"], parameter_name="view.config")
+        spec["config"] = json_arg(spec["config"], "view.config", kind=dict)
     return spec
 
 
@@ -565,25 +545,25 @@ def register(mcp: FastMCP) -> None:
 
         Use this for schema peeks, small samples, filters, aggregations, and
         top-N rankings. For bulk analysis (scoring/filtering hundreds+ rows or
-        local scripts), prefer ``download_asset`` (CSV) and compute locally —
+        local scripts), prefer `download_asset` (CSV) and compute locally —
         do not page large tables into chat.
 
-        With neither ``sql`` nor ``prompt``, pages through the table. Pass
-        ``sql`` to run a read-only PostgreSQL query (reference the table as
-        ``{{table}}``; column names are lowercase snake_case, unquoted), or
-        ``prompt`` to describe the rows in plain language and have Ouro write
+        With neither `sql` nor `prompt`, pages through the table. Pass
+        `sql` to run a read-only PostgreSQL query (reference the table as
+        `{{table}}`; column names are lowercase snake_case, unquoted), or
+        `prompt` to describe the rows in plain language and have Ouro write
         the SQL. Either way the result is paged server-side with its total
         count, and the response shows the SQL that ran. Writes are rejected
         and queries time out after 10 seconds.
 
-        Inspect the schema first (``ouro://datasets/{id}/schema``): columns with
-        ``semantic_type: "reference"`` hold Ouro object ids (``ref_kind`` is
-        "asset" or "action"). Pass ``resolve_refs=true`` when you need their
+        Inspect the schema first (`ouro://datasets/{id}/schema`): columns with
+        `semantic_type: "reference"` hold Ouro object ids (`ref_kind` is
+        "asset" or "action"). Pass `resolve_refs=true` when you need their
         names, types, or URLs.
 
         Default response is a markdown table (much smaller than JSON for wide
-        tables). Set ``response_format="json"`` or ``OURO_MCP_RESPONSE_FORMAT=json``
-        for the ``{rows, offset, limit, hasMore}`` envelope.
+        tables). Set `response_format="json"` or `OURO_MCP_RESPONSE_FORMAT=json`
+        for the `{rows, offset, limit, hasMore}` envelope.
         """
         if sql is not None and prompt is not None:
             raise ValueError("Pass sql or prompt, not both.")
@@ -738,18 +718,18 @@ def register(mcp: FastMCP) -> None:
         For more than a few dozen rows, upload the file with create_upload_url
         and pass upload_id, so the rows are not written out as JSON.
 
-        The result includes ``embed_markdown``, a ready-to-paste post embed. Pass
-        ``view`` to also save a chart; the embed then shows it. If the view is
-        rejected, the dataset is still created and ``view_error`` says why; fix
-        it with ``write_dataset_view``.
+        The result includes `embed_markdown`, a ready-to-paste post embed. Pass
+        `view` to also save a chart; the embed then shows it. If the view is
+        rejected, the dataset is still created and `view_error` says why; fix
+        it with `write_dataset_view`.
 
-        To make a column reference Ouro objects, pass ``refs``. Reference
+        To make a column reference Ouro objects, pass `refs`. Reference
         columns get a real DB foreign key, show up as
-        ``semantic_type: "reference"`` (with ``ref_kind``) in the schema, and
-        resolve to names/URLs via ``query_dataset(resolve_refs=true)``.
+        `semantic_type: "reference"` (with `ref_kind`) in the schema, and
+        resolve to names/URLs via `query_dataset(resolve_refs=true)`.
 
-        To make a column categorical, pass ``enum_columns``. Enum columns show
-        up as ``semantic_type: "enum"`` with ``enum_values`` in the schema.
+        To make a column categorical, pass `enum_columns`. Enum columns show
+        up as `semantic_type: "enum"` with `enum_values` in the schema.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         org_id, team_id = resolve_location(ouro, org_id, team_id)
@@ -760,10 +740,8 @@ def register(mcp: FastMCP) -> None:
         if df.empty or len(df.columns) == 0:
             raise ValueError("Dataset data must include at least one column and one row.")
 
-        declared_refs = _coerce_json_object(refs, parameter_name="refs")
-        declared_enum_columns = _coerce_json_object(
-            enum_columns, parameter_name="enum_columns"
-        )
+        declared_refs = json_arg(refs, "refs", kind=dict)
+        declared_enum_columns = json_arg(enum_columns, "enum_columns", kind=dict)
         view_spec = _coerce_view_spec(view)
 
         dataset = ouro.datasets.create(
@@ -914,10 +892,8 @@ def register(mcp: FastMCP) -> None:
         if df is not None and (df.empty or len(df.columns) == 0):
             raise ValueError("Dataset row updates must include at least one column and one row.")
 
-        declared_refs = _coerce_json_object(refs, parameter_name="refs")
-        declared_enum_columns = _coerce_json_object(
-            enum_columns, parameter_name="enum_columns"
-        )
+        declared_refs = json_arg(refs, "refs", kind=dict)
+        declared_enum_columns = json_arg(enum_columns, "enum_columns", kind=dict)
 
         dataset = ouro.datasets.update(
             id,
@@ -983,13 +959,13 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Add, update, rename, or drop columns on an existing dataset's table, or index them.
 
-        This is the structural counterpart to ``update_dataset`` (which handles
+        This is the structural counterpart to `update_dataset` (which handles
         row ingest and whole-dataset metadata). Operations run in the given
         order against the live table.
 
-        Pass ``enum_values`` on an add/update op to make a column categorical:
-        ``type`` defaults to ``"enum"``, a DB CHECK constraint is added, and the
-        column reads back as ``semantic_type: "enum"`` with ``enum_values`` in
+        Pass `enum_values` on an add/update op to make a column categorical:
+        `type` defaults to `"enum"`, a DB CHECK constraint is added, and the
+        column reads back as `semantic_type: "enum"` with `enum_values` in
         the schema. For an existing column, every current value must be null or
         in the supplied list.
 
@@ -1082,11 +1058,11 @@ def register(mcp: FastMCP) -> None:
         config. Provide both, or pass a prompt to have the API generate them via AI.
 
         The API runs the SQL and checks the config against the result; a bad view
-        is rejected with the errors to fix. The result includes ``warnings``, a few
-        ``sample_rows``, and ``embed_markdown`` to paste into a post.
+        is rejected with the errors to fix. The result includes `warnings`, a few
+        `sample_rows`, and `embed_markdown` to paste into a post.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        cfg = _coerce_json_object(config, parameter_name="config")
+        cfg = json_arg(config, "config", kind=dict)
 
         if view_id is None:
             if not name:

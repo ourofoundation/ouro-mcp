@@ -1,6 +1,10 @@
 """present_kwargs drops blank optional filter values."""
 
-from ouro_mcp.utils import is_absent_optional, optional_kwargs, present_kwargs
+from ouro_mcp.utils import (
+    is_absent_optional,
+    optional_kwargs,
+    present_kwargs,
+)
 
 
 def test_optional_kwargs_keeps_empty_string():

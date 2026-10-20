@@ -5,24 +5,31 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any, Optional
 
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Team
-from ouro_mcp.errors import handle_ouro_errors
+from pydantic import Field
+
 from ouro_mcp.constants import GLOBAL_ORG_ID
-from ouro_mcp.utils import (
-    resolve_location,
-    collapse_whitespace,
+from ouro_mcp.errors import handle_ouro_errors
+from ouro_mcp.markdown_input import (
     content_from_markdown,
+)
+from ouro_mcp.rendering import (
+    collapse_whitespace,
     dump_json,
-    format_search_hit,
     markdown_bullet,
     markdown_id,
     render_markdown_list,
-    resolve_team_policy,
     search_hit_line,
-    team_web_url,
     truncate_response,
+)
+from ouro_mcp.summaries import (
+    format_search_hit,
+    team_web_url,
+)
+from ouro_mcp.utils import (
+    resolve_location,
+    resolve_team_policy,
 )
 
 
@@ -264,9 +271,9 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """Browse a team's activity feed or unread items.
 
-        Returns the same compact markdown discovery rows as ``search_assets``
+        Returns the same compact markdown discovery rows as `search_assets`
         (id, name, asset_type, description, username, created_at). Use
-        ``get_asset`` for full detail on any result.
+        `get_asset` for full detail on any result.
         """
         ouro = ctx.request_context.lifespan_context.ouro
 

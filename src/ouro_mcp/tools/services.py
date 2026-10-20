@@ -8,36 +8,48 @@ import time
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional
 
-from pydantic import Field
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import Field
 
 from ouro_mcp.errors import handle_ouro_errors
-from ouro_mcp.utils import (
-    collapse_whitespace,
-    resolve_location,
-    route_caller_parameters,
+from ouro_mcp.pricing import (
     MAX_BILLABLE_SECONDS_DESC,
     PRICE_CURRENCY_DESC,
-    UNIT_COST_SATS_DESC,
-    UNIT_COST_USD_DESC,
     ROUTE_PRICING_DESC,
     UNIT_COST_DESC,
-    dump_json,
-    format_asset_summary,
-    format_one_time_cost_summary,
+    UNIT_COST_SATS_DESC,
+    UNIT_COST_USD_DESC,
     dual_price_fields,
+    format_one_time_cost_summary,
     format_pay_per_use_cost_summary,
+    per_use_pricing_kwargs,
+)
+from ouro_mcp.rendering import (
+    clip,
+    collapse_whitespace,
+    dump_json,
     markdown_bullet,
     markdown_id,
-    optional_kwargs,
     page_pagination,
-    per_use_pricing_kwargs,
     render_markdown_list,
+    truncate_response,
+)
+from ouro_mcp.routes import (
+    route_caller_parameters,
     route_input_assets_summary,
     route_output_assets_for_body,
     route_properties_for_body,
     route_request_body_without_input_assets,
-    truncate_response,
+)
+from ouro_mcp.summaries import (
+    format_asset_summary,
+    short_description,
+)
+from ouro_mcp.utils import (
+    as_dict,
+    json_arg,
+    optional_kwargs,
+    resolve_location,
 )
 
 log = logging.getLogger(__name__)
@@ -79,64 +91,6 @@ def _pending_message(action_id: str, lead: str) -> str:
         f"OURO_API_KEY set, run `ouro action wait {action_id}` as a background "
         "command instead: it exits when the action finishes, so you are told "
         "without polling."
-    )
-
-
-def _parse_json_param(value: Any, name: str) -> Optional[dict]:
-    """Coerce ``body`` / ``query`` / ``params`` into a dict or fail loudly.
-
-    Returns ``None`` only when the caller explicitly omitted the parameter
-    (``None`` / empty string). Any other non-object value raises
-    :class:`ValueError`, which ``handle_ouro_errors`` surfaces as a
-    structured ``{"error": "invalid_arguments", ...}`` payload so the agent
-    can correct the call instead of silently running with missing input.
-    """
-    if value is None or value == "":
-        return None
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise ValueError(
-                f"{name} is not valid JSON: {exc}. Pass a JSON object like "
-                f'\'{{"key": "value"}}\' or omit the parameter.'
-            ) from exc
-        if not isinstance(parsed, dict):
-            raise ValueError(
-                f"{name} must be a JSON object (got {type(parsed).__name__}). "
-                f'Example: \'{{"key": "value"}}\'.'
-            )
-        return parsed
-    raise ValueError(
-        f"{name} must be a JSON object or JSON-encoded string "
-        f"(got {type(value).__name__})."
-    )
-
-
-def _parse_json_arg(value: Any, name: str) -> Optional[Any]:
-    """Coerce a JSON object/array param into a Python value or fail loudly.
-
-    Like :func:`_parse_json_param` but accepts both objects and arrays — used
-    for route fields such as ``parameters`` (array) and ``request_body`` /
-    ``input_assets`` (object). Returns ``None`` when omitted.
-    """
-    if value is None or value == "":
-        return None
-    if isinstance(value, (dict, list)):
-        return value
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise ValueError(
-                f"{name} is not valid JSON: {exc}. Pass a JSON object/array or "
-                "omit the parameter."
-            ) from exc
-    raise ValueError(
-        f"{name} must be a JSON object/array or JSON-encoded string "
-        f"(got {type(value).__name__})."
     )
 
 
@@ -290,7 +244,7 @@ def _format_action_cost(
     the caller. Always emits a human-readable `cost_summary` so agents that
     ignore the structured fields still see what the run cost (or earned).
     """
-    ur = _as_dict(usage_record)
+    ur = as_dict(usage_record)
     if ur:
         total_cents = ur.get("total_cents")
         status = ur.get("status")
@@ -310,7 +264,7 @@ def _format_action_cost(
     charges = btc_charges or []
     if not isinstance(charges, list):
         charges = [charges]
-    charges = [_as_dict(c) for c in charges if c is not None]
+    charges = [as_dict(c) for c in charges if c is not None]
     if not charges:
         return None
 
@@ -353,9 +307,9 @@ def _format_action_result(
 ) -> dict[str, Any]:
     """Build the tool response dict for a completed (or errored) Action.
 
-    ``include_response`` controls whether the full action ``response`` payload
-    is inlined under ``data`` / ``error``. Browse/poll paths (``get_action``)
-    default to false; ``execute_route`` keeps the payload since it just ran.
+    `include_response` controls whether the full action `response` payload
+    is inlined under `data` / `error`. Browse/poll paths (`get_action`)
+    default to false; `execute_route` keeps the payload since it just ran.
     """
     # `status` is always the action's own status; `finished` says whether
     # there is a final outcome to act on yet.
@@ -413,14 +367,6 @@ def _format_action_result(
     return result
 
 
-def _as_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")
-    return {}
-
-
 def _asset_location(asset: dict[str, Any]) -> dict[str, Any]:
     """Where an asset lives, named the way get_asset's summary names it."""
     team = asset.get("team") if isinstance(asset.get("team"), dict) else {}
@@ -436,7 +382,7 @@ def _asset_location(asset: dict[str, Any]) -> dict[str, Any]:
 
 
 def _compact_asset(asset: Any, *, location: bool = False) -> Optional[dict[str, Any]]:
-    asset = _as_dict(asset)
+    asset = as_dict(asset)
     if not asset:
         return None
     result = {
@@ -449,19 +395,13 @@ def _compact_asset(asset: Any, *, location: bool = False) -> Optional[dict[str, 
             {k: str(v) for k, v in _asset_location(asset).items() if v}
         )
     if asset.get("description"):
-        desc = asset.get("description")
-        if isinstance(desc, dict):
-            text = desc.get("text") or ""
-            if text:
-                result["description"] = str(text)[:200]
-        else:
-            result["description"] = str(desc)[:200]
+        result["description"] = short_description(asset.get("description"))
     return {k: v for k, v in result.items() if v not in (None, "")}
 
 
 def _team_org_id(ouro: Any, team_id: str) -> Optional[str]:
     """The organization a team belongs to, or None when it can't be read."""
-    team = _as_dict(ouro.teams.retrieve(team_id))
+    team = as_dict(ouro.teams.retrieve(team_id))
     org_id = team.get("org_id") or (team.get("organization") or {}).get("id")
     return str(org_id) if org_id else None
 
@@ -477,18 +417,18 @@ def _compact_action_assets(rows: Any) -> Optional[list[dict[str, Any]]]:
         {"name": str, "is_primary": bool, "asset_id": uuid,
          "asset_type": str, "asset": {full asset record}}
 
-    For the agent we only need the logical slot ``name``, the optional
-    ``is_primary`` marker, and a compact view of the resolved asset with
+    For the agent we only need the logical slot `name`, the optional
+    `is_primary` marker, and a compact view of the resolved asset with
     where it lives: Ouro places a route's outputs, so the agent learns the
     organization and team from the result rather than choosing them.
-    Returns ``None`` when the list is empty/missing so callers can omit the
+    Returns `None` when the list is empty/missing so callers can omit the
     key entirely.
     """
     if not isinstance(rows, list) or not rows:
         return None
     out: list[dict[str, Any]] = []
     for row in rows:
-        row = _as_dict(row)
+        row = as_dict(row)
         if not row:
             continue
         entry: dict[str, Any] = {}
@@ -547,7 +487,7 @@ def _format_action_summary(
     *,
     include_response: bool = False,
 ) -> dict[str, Any]:
-    action = _as_dict(action)
+    action = as_dict(action)
     route_id = str(
         action.get("route_id") or (action.get("route") or {}).get("id") or ""
     )
@@ -602,7 +542,7 @@ def _format_action_summary(
 
 
 def _action_asset_refs(rows: Any) -> Optional[str]:
-    """``name `id`, ...`` for an action's input or output assets."""
+    """`name `id`, ...` for an action's input or output assets."""
     refs = []
     for row in rows or []:
         asset = row.get("asset") or {}
@@ -633,7 +573,7 @@ def action_summary_line(summary: Any, *, show_route: bool = True) -> str:
     """Render one action summary dict as a markdown bullet.
 
     Inputs, outputs, run time and cost are on the line so an agent can tell
-    runs apart without a ``get_action`` per row. The response (when the
+    runs apart without a `get_action` per row. The response (when the
     caller asked for it) goes in the body.
     """
     if not isinstance(summary, dict):
@@ -658,13 +598,13 @@ def action_summary_line(summary: Any, *, show_route: bool = True) -> str:
         body.append(f"out: {outputs}")
     if "response" in summary:
         response = json.dumps(summary["response"], default=str)
-        body.append("response: " + (response[:600] + "…" if len(response) > 600 else response))
+        body.append("response: " + clip(response, 600))
     name = (route or {}).get("name") or "action"
     return markdown_bullet(str(name), *parts, body=" · ".join(body) or None)
 
 
 def _format_log_entry(log_entry: Any) -> dict[str, Any]:
-    log_entry = _as_dict(log_entry)
+    log_entry = as_dict(log_entry)
     result: dict[str, Any] = {
         "level": log_entry.get("level"),
         "event_type": log_entry.get("event_type"),
@@ -696,7 +636,7 @@ def _fetch_action_logs(
     offset: int = 0,
     sort_order: str = "asc",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Load action logs. Returns ``(log_rows, pagination)``."""
+    """Load action logs. Returns `(log_rows, pagination)`."""
     if limit <= 0 or limit > 500:
         raise ValueError("limit must be between 1 and 500.")
     if offset < 0:
@@ -1098,10 +1038,10 @@ def register(mcp: FastMCP) -> None:
                 name=name,
                 description=description,
                 visibility=visibility,
-                parameters=_parse_json_arg(parameters, "parameters"),
-                request_body=_parse_json_arg(request_body, "request_body"),
-                input_assets=_parse_json_arg(input_assets, "input_assets"),
-                output_assets=_parse_json_arg(output_assets, "output_assets"),
+                parameters=json_arg(parameters, "parameters"),
+                request_body=json_arg(request_body, "request_body"),
+                input_assets=json_arg(input_assets, "input_assets"),
+                output_assets=json_arg(output_assets, "output_assets"),
                 license_id=license_id,
                 attribution=attribution,
             ),
@@ -1190,10 +1130,10 @@ def register(mcp: FastMCP) -> None:
                 description=description,
                 visibility=visibility,
                 execution_mode=execution_mode,
-                parameters=_parse_json_arg(parameters, "parameters"),
-                request_body=_parse_json_arg(request_body, "request_body"),
-                input_assets=_parse_json_arg(input_assets, "input_assets"),
-                output_assets=_parse_json_arg(output_assets, "output_assets"),
+                parameters=json_arg(parameters, "parameters"),
+                request_body=json_arg(request_body, "request_body"),
+                input_assets=json_arg(input_assets, "input_assets"),
+                output_assets=json_arg(output_assets, "output_assets"),
                 license_id=license_id,
                 attribution=attribution,
             ),
@@ -1396,10 +1336,10 @@ def register(mcp: FastMCP) -> None:
             getattr(metrics, "avg_completion_ms", None) if metrics else None
         )
 
-        body_dict = _parse_json_param(body, "body")
-        query_dict = _parse_json_param(query, "query")
-        params_dict = _parse_json_param(params, "params")
-        input_assets_dict = _parse_json_param(input_assets, "input_assets")
+        body_dict = json_arg(body, "body", kind=dict)
+        query_dict = json_arg(query, "query", kind=dict)
+        params_dict = json_arg(params, "params", kind=dict)
+        input_assets_dict = json_arg(input_assets, "input_assets", kind=dict)
 
         if dry_run:
             dry_run_payload: dict[str, Any] = {

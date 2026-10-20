@@ -6,7 +6,12 @@ from uuid import NAMESPACE_URL, uuid5
 
 from ouro.models import Connection
 
-from ouro_mcp.utils import dump_json, slim_connection_graph
+from ouro_mcp.rendering import (
+    dump_json,
+)
+from ouro_mcp.summaries import (
+    slim_connection_graph,
+)
 
 
 def _id(name: str) -> str:
