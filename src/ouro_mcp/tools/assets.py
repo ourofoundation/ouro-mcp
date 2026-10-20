@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import shlex
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Callable, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from ouro.models import Action, Comment
@@ -52,7 +52,9 @@ from ouro_mcp.summaries import (
     user_summary,
 )
 from ouro_mcp.utils import (
+    asset_resource,
     asset_type_of,
+    run_parallel,
     optional_kwargs,
     present_kwargs,
 )
@@ -108,13 +110,19 @@ def register(mcp: FastMCP) -> None:
         Full detail also includes a small comments preview when comments exist.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        asset = ouro.assets.retrieve(id)
-        if detail == "full":
-            result = strip_heavy_fields(_format_asset_detail(asset, ouro))
-        else:
-            result = format_asset_summary(asset)
-        _enrich_counts(result, ouro, id)
-        _enrich_properties(result, ouro, id, full=detail == "full")
+        full = detail == "full"
+        resource = asset_resource(ouro, id)
+        # Reading the asset records a view, as ouro.assets.retrieve does; the
+        # view, the read, and the counts and properties don't wait on each other
+        asset, _, *parts = run_parallel(
+            lambda: resource.retrieve(id),
+            lambda: ouro.assets._mark_viewed(id),
+            lambda: _counts_part(ouro, id),
+            lambda: _properties_part(ouro, id, full=full),
+        )
+        result = strip_heavy_fields(_format_asset_detail(asset, ouro)) if full else format_asset_summary(asset)
+        for part in parts:
+            result.update(part)
         return dump_json(result)
 
     @mcp.tool(
@@ -548,8 +556,8 @@ def register(mcp: FastMCP) -> None:
         )
 
 
-def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
-    """Best-effort merge of engagement counts into an asset result dict.
+def _counts_part(ouro: Any, asset_id: str) -> dict[str, Any]:
+    """Engagement counts, best effort.
 
     Zero-valued counters are dropped — most assets have zero of at least one
     metric (brand-new assets often have zero of all four), and emitting a
@@ -560,15 +568,14 @@ def _enrich_counts(result: dict, ouro: Any, asset_id: str) -> None:
         counts = ouro.assets.counts(asset_id)
     except Exception:
         log.debug("Failed to fetch counts for asset %s", asset_id, exc_info=True)
-        return
+        return {}
 
     nonzero = {
         k: getattr(counts, k)
         for k in ("views", "comments", "reactions", "downloads")
         if getattr(counts, k)
     }
-    if nonzero:
-        result["counts"] = nonzero
+    return {"counts": nonzero} if nonzero else {}
 
 
 def _compact_column_statistics(stats: Any, *, full: bool) -> Any:
@@ -596,21 +603,20 @@ def _compact_column_statistics(stats: Any, *, full: bool) -> Any:
     return {k: v for k, v in compact.items() if v is not None}
 
 
-def _enrich_properties(result: dict, ouro: Any, asset_id: str, *, full: bool = False) -> None:
-    """Best-effort merge of the asset's properties (word count, column
-    statistics, calculated values such as a Curie temperature)."""
+def _properties_part(ouro: Any, asset_id: str, *, full: bool = False) -> dict[str, Any]:
+    """The asset's properties (word count, column statistics, calculated
+    values such as a Curie temperature), best effort."""
     try:
         properties = ouro.assets.properties(asset_id)
     except Exception:
         log.debug("Failed to fetch properties for asset %s", asset_id, exc_info=True)
-        return
+        return {}
     formatted = format_asset_properties(properties)
     if formatted and "column_statistics" in formatted:
         formatted["column_statistics"] = _compact_column_statistics(
             formatted["column_statistics"], full=full
         )
-    if formatted:
-        result["properties"] = formatted
+    return {"properties": formatted} if formatted else {}
 
 
 def _compact_creation_action(created_by: Action) -> dict[str, Any]:
@@ -651,56 +657,69 @@ def _derived_entry(item: Any) -> dict[str, Any]:
     return {key: value for key, value in entry.items() if value is not None}
 
 
-def _enrich_provenance(result: dict, ouro: Any, asset_id: str) -> None:
-    """Best-effort merge of provenance, connections, and tags into an asset result dict."""
+def _creation_action_part(ouro: Any, asset_id: str) -> dict[str, Any]:
     try:
         created_by = ouro.assets.actions(asset_id, role="output").created_by
         if created_by is not None:
-            result["creation_action"] = _compact_creation_action(created_by)
+            return {"creation_action": _compact_creation_action(created_by)}
     except Exception:
         log.debug("Failed to fetch creation action for %s", asset_id, exc_info=True)
+    return {}
 
+
+def _connections_part(ouro: Any, asset_id: str, *, asset_type: str, has_body: bool) -> dict[str, Any]:
     try:
-        connections = ouro.assets.connections(asset_id)
-        slimmed = slim_connection_graph(
-            connections,
-            current_asset_id=asset_id,
-            # Dataset→row-ref edges duplicate IDs already in the table and
-            # routinely number in the thousands; keep only incoming refs.
-            omit_outgoing_references=result.get("asset_type") == "dataset",
-            # Comment stubs duplicate the bounded `comments` preview (and
-            # `list_comments`); omit them so connections stay lineage-focused.
-            omit_comments=True,
-            # A post's own links and embeds are already in content_text
-            omit_outgoing_types=(
-                ("link", "reference") if result.get("content_text") else ()
-            ),
-        )
-        for edge_type, rows in slimmed.items():
-            if len(rows) > CONNECTIONS_PREVIEW_LIMIT:
-                slimmed[edge_type] = rows[:CONNECTIONS_PREVIEW_LIMIT]
-                result["connections_has_more"] = True
-        if slimmed:
-            result["connections"] = slimmed
+        slimmed = _slim_connections(ouro, asset_id, asset_type=asset_type, has_body=has_body)
     except Exception:
         log.debug("Failed to fetch connections for %s", asset_id, exc_info=True)
+        return {}
+    part: dict[str, Any] = {}
+    for edge_type, rows in slimmed.items():
+        if len(rows) > CONNECTIONS_PREVIEW_LIMIT:
+            slimmed[edge_type] = rows[:CONNECTIONS_PREVIEW_LIMIT]
+            part["connections_has_more"] = True
+    if slimmed:
+        part = {"connections": slimmed, **part}
+    return part
 
+
+def _slim_connections(ouro: Any, asset_id: str, *, asset_type: str, has_body: bool) -> dict[str, list]:
+    return slim_connection_graph(
+        ouro.assets.connections(asset_id),
+        current_asset_id=asset_id,
+        # Dataset→row-ref edges duplicate IDs already in the table and
+        # routinely number in the thousands; keep only incoming refs.
+        omit_outgoing_references=asset_type == "dataset",
+        # Comment stubs duplicate the bounded `comments` preview (and
+        # `list_comments`); omit them so connections stay lineage-focused.
+        omit_comments=True,
+        # A post's own links and embeds are already in content_text
+        omit_outgoing_types=("link", "reference") if has_body else (),
+    )
+
+
+def _derived_part(ouro: Any, asset_id: str) -> dict[str, Any]:
     try:
         lineage = ouro.assets.lineage(asset_id)
         derived = [_derived_entry(item) for item in lineage.derived[:DERIVED_PREVIEW_LIMIT]]
-        if derived:
-            result["derived"] = derived
-            if lineage.truncated or len(lineage.derived) > DERIVED_PREVIEW_LIMIT:
-                result["derived_has_more"] = True
     except Exception:
         log.debug("Failed to fetch lineage for %s", asset_id, exc_info=True)
+        return {}
+    if not derived:
+        return {}
+    part: dict[str, Any] = {"derived": derived}
+    if lineage.truncated or len(lineage.derived) > DERIVED_PREVIEW_LIMIT:
+        part["derived_has_more"] = True
+    return part
 
+
+def _tags_part(ouro: Any, asset_id: str) -> dict[str, Any]:
     try:
-        tags = slim_asset_tags(ouro.assets.tags(asset_id))
-        if tags:
-            result["tags"] = tags
+        tags = slim_asset_tags(ouro.assets.tags(asset_id) or [])
     except Exception:
         log.debug("Failed to fetch tags for %s", asset_id, exc_info=True)
+        return {}
+    return {"tags": tags} if tags else {}
 
 
 def _comment_text(comment: Comment, config: CommentPreviewConfig) -> str | None:
@@ -723,7 +742,7 @@ def _format_comment_preview(comment: Any, config: CommentPreviewConfig) -> dict[
     return entry
 
 
-def _enrich_comments_preview(result: dict, ouro: Any, asset_id: str) -> None:
+def _comments_part(ouro: Any, asset_id: str) -> dict[str, Any]:
     """Attach a small comment/reply preview to full asset details.
 
     This is intentionally bounded. It gives agents enough context to notice
@@ -732,25 +751,29 @@ def _enrich_comments_preview(result: dict, ouro: Any, asset_id: str) -> None:
     """
     comments_client = getattr(ouro, "comments", None)
     if not comments_client:
-        return
+        return {}
     config = get_comment_preview_config()
     if config.comment_limit <= 0:
-        return
+        return {}
 
     try:
         comments = list(comments_client.list_by_parent(asset_id) or [])
     except Exception:
         log.debug("Failed to fetch comments for %s", asset_id, exc_info=True)
-        return
+        return {}
 
     if not comments:
-        return
+        return {}
 
     preview: list[dict[str, Any]] = []
     for comment in comments[: config.comment_limit]:
         entry = _format_comment_preview(comment, config)
         comment_id = entry.get("id")
-        if comment_id and config.reply_limit > 0:
+        # Skip the lookup when the comment says it has no replies
+        known_replies = getattr(comment, "replies", None)
+        if isinstance(known_replies, list):
+            known_replies = len(known_replies)
+        if comment_id and config.reply_limit > 0 and known_replies != 0:
             try:
                 replies = list(comments_client.list_by_parent(comment_id) or [])
             except Exception:
@@ -765,38 +788,69 @@ def _enrich_comments_preview(result: dict, ouro: Any, asset_id: str) -> None:
                     entry["reply_has_more"] = True
         preview.append(entry)
 
-    result["comments"] = preview
+    part: dict[str, Any] = {"comments": preview}
     if len(comments) > config.comment_limit:
-        result["comments_has_more"] = True
+        part["comments_has_more"] = True
+    return part
 
 
 # A service can hold dozens of routes; get_asset on a route has the full text.
 SERVICE_ROUTE_DESCRIPTION_CHARS = 300
 
 
+def _dataset_schema_part(ouro: Any, asset_id: str) -> dict[str, Any]:
+    try:
+        return {"schema": slim_dataset_schema(ouro.datasets.schema(asset_id))}
+    except Exception:
+        log.debug("Failed to fetch schema for dataset %s", asset_id, exc_info=True)
+        return {"schema": None}
+
+
+def _dataset_stats_part(ouro: Any, asset_id: str) -> dict[str, Any]:
+    try:
+        stats = ouro.datasets.stats(asset_id)
+    except Exception:
+        log.debug("Failed to fetch stats for dataset %s", asset_id, exc_info=True)
+        return {"stats": None}
+    return {"stats": {"row_count": stats.count, "is_estimate": stats.is_estimate, "size_bytes": stats.size_bytes}}
+
+
+def _service_routes_part(ouro: Any, asset_id: str) -> dict[str, Any]:
+    try:
+        return {
+            "routes": [
+                {
+                    "id": str(r.id),
+                    "name": r.name,
+                    "description": collapse_whitespace(
+                        route_description_markdown(r.route.description) if r.route else None,
+                        max_length=SERVICE_ROUTE_DESCRIPTION_CHARS,
+                    )
+                    or None,
+                }
+                for r in ouro.services.read_routes(asset_id)
+            ]
+        }
+    except Exception:
+        log.debug("Failed to fetch routes for service %s", asset_id, exc_info=True)
+        return {"routes": []}
+
+
 def _format_asset_detail(asset: Any, ouro: Any) -> dict:
-    """Build a type-appropriate detail response for any asset."""
+    """Build a type-appropriate detail response for any asset.
+
+    What comes with the asset is formatted here; what needs another request
+    (schema, routes, provenance, tags, comments) is fetched in parallel and
+    merged in a fixed order.
+    """
     base = format_asset_summary(asset)
 
     asset_id = str(asset.id)
     asset_type = asset.asset_type
+    fetches: list[Callable[[], dict]] = []
 
     if asset_type == "dataset":
-        try:
-            base["schema"] = slim_dataset_schema(ouro.datasets.schema(asset_id))
-        except Exception:
-            log.debug("Failed to fetch schema for dataset %s", asset.id, exc_info=True)
-            base["schema"] = None
-        try:
-            stats = ouro.datasets.stats(asset_id)
-            base["stats"] = {
-                "row_count": stats.count,
-                "is_estimate": stats.is_estimate,
-                "size_bytes": stats.size_bytes,
-            }
-        except Exception:
-            log.debug("Failed to fetch stats for dataset %s", asset.id, exc_info=True)
-            base["stats"] = None
+        fetches += [lambda: _dataset_schema_part(ouro, asset_id), lambda: _dataset_stats_part(ouro, asset_id)]
         if asset.preview:
             base["preview"] = asset.preview[:5]
 
@@ -814,23 +868,7 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
                 base["mime_type"] = meta.type
 
     elif asset_type == "service":
-        try:
-            routes = ouro.services.read_routes(asset_id)
-            base["routes"] = [
-                {
-                    "id": str(r.id),
-                    "name": r.name,
-                    "description": collapse_whitespace(
-                        route_description_markdown(r.route.description) if r.route else None,
-                        max_length=SERVICE_ROUTE_DESCRIPTION_CHARS,
-                    )
-                    or None,
-                }
-                for r in routes
-            ]
-        except Exception:
-            log.debug("Failed to fetch routes for service %s", asset.id, exc_info=True)
-            base["routes"] = []
+        fetches.append(lambda: _service_routes_part(ouro, asset_id))
 
     elif asset_type == "route":
         if asset.route:
@@ -871,7 +909,14 @@ def _format_asset_detail(asset: Any, ouro: Any) -> dict:
                 "remaining": asset.progress.remaining,
             }
 
-    _enrich_provenance(base, ouro, asset_id)
-    _enrich_comments_preview(base, ouro, asset_id)
-
+    has_body = bool(base.get("content_text"))
+    fetches += [
+        lambda: _creation_action_part(ouro, asset_id),
+        lambda: _connections_part(ouro, asset_id, asset_type=asset_type, has_body=has_body),
+        lambda: _derived_part(ouro, asset_id),
+        lambda: _tags_part(ouro, asset_id),
+        lambda: _comments_part(ouro, asset_id),
+    ]
+    for part in run_parallel(*fetches):
+        base.update(part)
     return base

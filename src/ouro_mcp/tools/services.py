@@ -400,11 +400,24 @@ def _compact_asset(asset: Any, *, location: bool = False) -> Optional[dict[str, 
     return {k: v for k, v in result.items() if v not in (None, "")}
 
 
+# team id -> organization id. A team never moves to another organization, so
+# one read per team is enough; the run itself still checks access.
+_TEAM_ORGS: dict[str, str] = {}
+_TEAM_ORGS_MAX = 2048
+
+
 def _team_org_id(ouro: Any, team_id: str) -> Optional[str]:
     """The organization a team belongs to, or None when it can't be read."""
+    if team_id in _TEAM_ORGS:
+        return _TEAM_ORGS[team_id]
     team = as_dict(ouro.teams.retrieve(team_id))
     org_id = team.get("org_id") or (team.get("organization") or {}).get("id")
-    return str(org_id) if org_id else None
+    if not org_id:
+        return None
+    if len(_TEAM_ORGS) >= _TEAM_ORGS_MAX:
+        _TEAM_ORGS.clear()
+    _TEAM_ORGS[team_id] = str(org_id)
+    return str(org_id)
 
 
 def _compact_action_assets(rows: Any) -> Optional[list[dict[str, Any]]]:
@@ -1241,7 +1254,7 @@ def register(mcp: FastMCP) -> None:
         # timeout on slow routes, and the action id is lost with it while the
         # run carries on (and bills).
         action = ouro.routes.execute(
-            route_id,
+            route,
             body=body_dict,
             query=query_dict,
             params=params_dict,
@@ -1252,6 +1265,7 @@ def register(mcp: FastMCP) -> None:
             ),
         )
         timed_out = False
+        polled = False
         if wait and action.is_pending:
             try:
                 action = ouro.routes.poll_action(
@@ -1260,6 +1274,7 @@ def register(mcp: FastMCP) -> None:
                     timeout=float(timeout),
                     raise_on_error=False,
                 )
+                polled = True
             except TimeoutError:
                 timed_out = True
 
@@ -1288,14 +1303,16 @@ def register(mcp: FastMCP) -> None:
         # The execution envelope can contain a freshly synthesized action
         # before joined fields like `usage_record` are reloaded. Refresh once so
         # monetized route calls can include the same cost block as get_action().
-        try:
-            action = ouro.routes.retrieve_action(str(action.id))
-        except Exception:
-            log.debug(
-                "Failed to refresh action %s after route execution",
-                getattr(action, "id", None),
-                exc_info=True,
-            )
+        # A polled action was just read in full, so it needs no refresh.
+        if not polled:
+            try:
+                action = ouro.routes.retrieve_action(str(action.id))
+            except Exception:
+                log.debug(
+                    "Failed to refresh action %s after route execution",
+                    getattr(action, "id", None),
+                    exc_info=True,
+                )
 
         result = _format_action_result(
             action,
@@ -1446,12 +1463,8 @@ def register(mcp: FastMCP) -> None:
 
         ouro = ctx.request_context.lifespan_context.ouro
         route = ouro.routes.retrieve(route_id)
-        service_id = str(route.parent_id) if route.parent_id else None
-        if not service_id:
-            raise ValueError("Route has no parent service; cannot list actions.")
-
         page = ouro.routes.list_actions(
-            str(route.id),
+            route,
             include_other_users=include_other_users,
             limit=limit,
             offset=offset,

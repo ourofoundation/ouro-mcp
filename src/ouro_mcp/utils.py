@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
-from typing import Any, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Optional
 
 _ASSET_RESOURCES = {
     "post": "posts",
@@ -28,13 +30,20 @@ def asset_type_of(ouro: Any, id: str) -> Optional[str]:
     return data.get("asset_type")
 
 
-def retrieve_without_view(ouro: Any, id: str) -> Any:
-    """Retrieve any asset through its typed resource, without recording a view."""
+def asset_resource(ouro: Any, id: str) -> Any:
+    """The typed SDK resource (``ouro.posts``, ``ouro.datasets``, ...) for an asset id."""
     asset_type = asset_type_of(ouro, id)
-    resource = _ASSET_RESOURCES.get(asset_type or "")
+    if not asset_type:
+        raise ValueError(f"No asset with id {id}.")
+    resource = _ASSET_RESOURCES.get(asset_type)
     if resource is None:
         raise ValueError(f"Asset {id} has unsupported type {asset_type!r}.")
-    return getattr(ouro, resource).retrieve(id)
+    return getattr(ouro, resource)
+
+
+def retrieve_without_view(ouro: Any, id: str) -> Any:
+    """Retrieve any asset through its typed resource, without recording a view."""
+    return asset_resource(ouro, id).retrieve(id)
 
 
 def getv(obj: Any, key: str, default: Any = None) -> Any:
@@ -137,3 +146,21 @@ def json_arg(value: Any, name: str, *, kind: type | tuple[type, ...] = (dict, li
         expected = " or ".join(_JSON_KIND_NAMES.get(k, k.__name__) for k in kinds)
         raise ValueError(f"{name} must be {expected} (got {type(value).__name__}).")
     return value
+
+
+# Shared by every request, so a burst of reads can't spawn unbounded threads.
+# Calls submitted here must not wait on the pool themselves (no nesting).
+_FETCH_POOL = ThreadPoolExecutor(max_workers=32, thread_name_prefix="ouro-mcp-fetch")
+
+
+def run_parallel(*calls: Callable[[], Any]) -> list[Any]:
+    """Run independent calls at once; results come back in call order.
+
+    Each call runs in a copy of the caller's context, so the hosted server's
+    per-request API key and organization pin carry over. An exception from
+    a call is raised here.
+    """
+    if len(calls) < 2:
+        return [call() for call in calls]
+    futures = [_FETCH_POOL.submit(contextvars.copy_context().run, call) for call in calls]
+    return [future.result() for future in futures]

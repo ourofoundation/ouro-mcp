@@ -19,6 +19,9 @@ from ouro_mcp.rendering import (
     truncate_response,
 )
 
+# The backend marks at most this many per request
+READ_BATCH = 200
+
 # A notification's text leads its row; the rest is in the app.
 NOTIFICATION_TEXT_CHARS = 160
 
@@ -136,11 +139,11 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
         id_list = [ids] if isinstance(ids, str) else list(dict.fromkeys(ids))
-        read, failed = [], []
-        for nid in id_list:
-            try:
-                ouro.notifications.read(nid)
-                read.append(nid)
-            except Exception as exc:
-                failed.append({"id": nid, "error": str(exc)})
-        return dump_json({"read": len(read), "read_ids": read, "failed": failed})
+        read: list[str] = []
+        for start in range(0, len(id_list), READ_BATCH):
+            read += ouro.notifications.read_many(id_list[start : start + READ_BATCH])
+        missed = [nid for nid in id_list if nid not in set(read)]
+        payload = {"read": len(read), "read_ids": read}
+        if missed:
+            payload["not_found"] = missed
+        return dump_json(payload)

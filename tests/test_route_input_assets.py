@@ -438,7 +438,7 @@ def test_route_output_assets_summary_keeps_role() -> None:
 
 
 def test_full_asset_lists_what_came_from_it() -> None:
-    from ouro_mcp.tools.assets import _enrich_provenance
+    from ouro_mcp.tools.assets import _derived_part
 
     run = SimpleNamespace(action_id="act-1", route={"id": "r", "name": "Phonon dispersion"})
     derived = [
@@ -453,8 +453,7 @@ def test_full_asset_lists_what_came_from_it() -> None:
         tags=lambda *a, **k: [],
         lineage=lambda *a, **k: SimpleNamespace(derived=derived, truncated=False),
     )
-    result: dict = {"asset_type": "file"}
-    _enrich_provenance(result, SimpleNamespace(assets=assets), "a")
+    result = _derived_part(SimpleNamespace(assets=assets), "a")
 
     assert len(result["derived"]) == 20
     assert result["derived_has_more"] is True

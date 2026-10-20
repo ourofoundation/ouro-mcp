@@ -51,6 +51,7 @@ from ouro_mcp.uploads import (
 )
 from ouro_mcp.utils import (
     json_arg,
+    run_parallel,
     optional_kwargs,
     resolve_location,
 )
@@ -352,66 +353,75 @@ def _dataset_proof(
     declared_enum_columns: Optional[dict[str, Any]] = None,
     *,
     include_verification: bool = True,
+    created: bool = False,
 ) -> dict[str, Any]:
     """Collect verification data after create / structural update.
 
     `include_verification` should be true when the call creates a dataset or
     changes column structure (refs/enum promotion, edit_dataset_columns).
     Row-only updates skip schema, resolved-refs preview, and connections.
-    Empty `resolved_refs_preview` / `connections` are omitted.
+    A dataset that was just `created` has nothing pointing at it yet, so its
+    connections aren't read. Empty `resolved_refs_preview` / `connections`
+    are omitted. The reads run in parallel.
     """
     if not include_verification:
         return {}
 
+    def schema_part() -> dict[str, Any]:
+        try:
+            schema = ouro.datasets.schema(dataset_id)
+            return {
+                "schema": slim_dataset_schema(schema),
+                "refs": _merge_ref_hints(refs_from_schema(schema), declared_refs),
+                "enum_columns": _merge_enum_column_hints(enum_columns_from_schema(schema), declared_enum_columns),
+            }
+        except Exception:
+            return {
+                "schema": None,
+                "refs": _merge_ref_hints({}, declared_refs),
+                "enum_columns": _merge_enum_column_hints({}, declared_enum_columns),
+            }
+
+    def indexes_part() -> dict[str, Any]:
+        try:
+            return {
+                "indexes": [
+                    {"name": index.name, "columns": index.columns, "unique": index.is_unique}
+                    for index in ouro.datasets.list_indexes(dataset_id)
+                    if not index.is_primary
+                ]
+            }
+        except Exception:
+            return {}
+
+    def refs_preview_part() -> dict[str, Any]:
+        try:
+            rows = ouro.datasets.list_rows(dataset_id, limit=5, resolve_refs=True)
+            if rows.resolved_refs:
+                return {"resolved_refs_preview": _dump_resolved_refs(rows.resolved_refs)}
+        except Exception:
+            pass
+        return {}
+
+    def connections_part() -> dict[str, Any]:
+        try:
+            connections = slim_connection_graph(
+                ouro.assets.connections(dataset_id),
+                current_asset_id=dataset_id,
+                # Outgoing dataset refs duplicate column IDs; keep incoming.
+                omit_outgoing_references=True,
+                omit_comments=True,
+            )
+            return {"connections": connections} if connections else {}
+        except Exception:
+            return {}
+
+    parts = [schema_part, indexes_part, refs_preview_part]
+    if not created:
+        parts.append(connections_part)
     proof: dict[str, Any] = {}
-
-    try:
-        schema = ouro.datasets.schema(dataset_id)
-        proof["schema"] = slim_dataset_schema(schema)
-        proof["refs"] = _merge_ref_hints(
-            refs_from_schema(schema),
-            declared_refs,
-        )
-        proof["enum_columns"] = _merge_enum_column_hints(
-            enum_columns_from_schema(schema),
-            declared_enum_columns,
-        )
-    except Exception:
-        proof["schema"] = None
-        proof["refs"] = _merge_ref_hints({}, declared_refs)
-        proof["enum_columns"] = _merge_enum_column_hints(
-            {}, declared_enum_columns
-        )
-
-    try:
-        proof["indexes"] = [
-            {"name": index.name, "columns": index.columns, "unique": index.is_unique}
-            for index in ouro.datasets.list_indexes(dataset_id)
-            if not index.is_primary
-        ]
-    except Exception:
-        pass
-
-    try:
-        rows = ouro.datasets.list_rows(dataset_id, limit=5, resolve_refs=True)
-        if rows.resolved_refs:
-            proof["resolved_refs_preview"] = _dump_resolved_refs(rows.resolved_refs)
-    except Exception:
-        pass
-
-    try:
-        connections = slim_connection_graph(
-            ouro.assets.connections(dataset_id),
-            current_asset_id=dataset_id,
-            # Outgoing dataset refs duplicate column IDs; keep incoming.
-            omit_outgoing_references=True,
-            omit_comments=True,
-        )
-        if connections:
-            proof["connections"] = connections
-    except Exception:
-        pass
-
+    for part in run_parallel(*parts):
+        proof.update(part)
     return proof
 
 
@@ -758,6 +768,7 @@ def register(mcp: FastMCP) -> None:
                 str(dataset.id),
                 declared_refs,
                 declared_enum_columns,
+                created=True,
             )
         )
         result.update(_ingest_summary(dataset))
