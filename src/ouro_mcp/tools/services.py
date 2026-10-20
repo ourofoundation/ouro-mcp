@@ -500,6 +500,7 @@ def _format_action_summary(
         "created_at": action.get("created_at"),
         "started_at": action.get("started_at"),
         "finished_at": action.get("finished_at"),
+        "run_seconds": _run_seconds(action),
         "last_updated": action.get("last_updated"),
     }
 
@@ -552,13 +553,18 @@ def _action_asset_refs(rows: Any) -> Optional[str]:
     return ", ".join(refs) or None
 
 
-def _action_duration(summary: dict[str, Any]) -> Optional[str]:
+def _run_seconds(action: dict[str, Any]) -> Optional[int]:
     try:
-        started = datetime.fromisoformat(str(summary["started_at"]).replace("Z", "+00:00"))
-        finished = datetime.fromisoformat(str(summary["finished_at"]).replace("Z", "+00:00"))
+        started = datetime.fromisoformat(str(action["started_at"]).replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(str(action["finished_at"]).replace("Z", "+00:00"))
     except (KeyError, TypeError, ValueError):
         return None
-    seconds = max(0, round((finished - started).total_seconds()))
+    return max(0, round((finished - started).total_seconds()))
+
+
+def _run_time_label(seconds: Any) -> Optional[str]:
+    if not isinstance(seconds, int):
+        return None
     return f"ran {seconds // 60}m {seconds % 60}s" if seconds >= 60 else f"ran {seconds}s"
 
 
@@ -586,7 +592,7 @@ def action_summary_line(summary: Any, *, show_route: bool = True) -> str:
         f"status: {status_val}" if status_val else None,
         f"route_id: `{summary['route_id']}`" if show_route and summary.get("route_id") else None,
         summary.get("created_at"),
-        _action_duration(summary),
+        _run_time_label(summary.get("run_seconds")),
         (cost or {}).get("cost_summary"),
     ]
     body = []
@@ -1726,10 +1732,6 @@ def register(mcp: FastMCP) -> None:
                 offset=offset,
                 noun="log lines",
                 empty_text="No logs.",
-                extras=[
-                    f"action_id: `{action_id}`",
-                    f"sort_order: {sort_order}",
-                ],
             )
         )
 

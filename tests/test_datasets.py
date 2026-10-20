@@ -411,7 +411,7 @@ def test_query_dataset_returns_markdown_table_with_pagination_and_nulls() -> Non
         }
     ]
     assert result.startswith(
-        "Found 1 rows (offset=2; limit=1; more available — call again with offset=3)"
+        "Found 1 row (offset=2; limit=1; more available — call again with offset=3)"
     )
     assert "| name | value | missing | seen_at |" in result
     assert "| alpha | 1.5 |  | 2026-05-02T12:00:00+00:00 |" in result
@@ -434,7 +434,7 @@ def test_query_dataset_response_format_json() -> None:
         "rows": [{"name": "alpha", "value": 1}],
         "offset": 0,
         "limit": 10,
-        "hasMore": False,
+        "has_more": False,
     }
 
 
@@ -476,7 +476,7 @@ def test_query_dataset_runs_optional_sql_query() -> None:
             "sql": "SELECT category, count(*) AS count FROM {{table}} GROUP BY category",
         }
     ]
-    assert result.startswith("Found 1 rows")
+    assert result.startswith("Found 1 row")
     assert "SQL: `SELECT category, count(*) AS count FROM {{table}} GROUP BY category`" in result
     assert "| category | count | missing |" in result
     assert "| alpha | 2 |  |" in result
@@ -499,7 +499,7 @@ def test_query_dataset_sql_response_format_json() -> None:
         "rows": SQL_ROWS["data"],
         "offset": 0,
         "limit": 100,
-        "hasMore": False,
+        "has_more": False,
         "total": 1,
         "sql": SQL_ROWS["sql"],
     }

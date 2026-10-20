@@ -531,7 +531,7 @@ def register(mcp: FastMCP) -> None:
             total=total,
             noun="quest items",
             empty_text="No quest items.",
-            extras=[f"quest_id: `{quest_id}`", f"progress: {done}/{total}"],
+            extras=[f"progress: {done}/{total} resolved"],
         )
 
     @mcp.tool(annotations={"idempotentHint": False})
@@ -953,7 +953,6 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             noun="quest entries",
             empty_text="No quest entries.",
-            extras=[f"quest_id: `{quest_id}`"],
         )
 
     @mcp.tool(annotations={"readOnlyHint": True})
@@ -999,7 +998,7 @@ def register(mcp: FastMCP) -> None:
                 parts.append(f"action_id: `{row.eval_action_id}`")
             return markdown_bullet(f"placement {row.placement}", *parts)
 
-        extras = [f"quest_id: `{quest_id}`", f"item_id: `{item_id}`"]
+        extras: list[str] = []
         if page.item and page.item.leaderboard_order:
             extras.append(f"order: {page.item.leaderboard_order}")
 

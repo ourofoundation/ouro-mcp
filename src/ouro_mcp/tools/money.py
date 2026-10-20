@@ -20,6 +20,30 @@ from ouro_mcp.rendering import (
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 
 
+def _signed_amount(tx: BitcoinTransaction | UsdTransaction) -> str:
+    """``+$0.82`` / ``−$5.00`` or ``+1,200 sats``: the API signs amounts (negative = paid)."""
+    if isinstance(tx, BitcoinTransaction):
+        return f"{'−' if tx.value < 0 else '+'}{abs(tx.value):,} sats"
+    cents = tx.amount_cents
+    return f"{'−' if cents < 0 else '+'}${abs(cents) / 100:,.2f}"
+
+
+def _tx_label(tx: BitcoinTransaction | UsdTransaction) -> str:
+    """The transaction type in words, as the wallet page names it."""
+    amount = tx.value if isinstance(tx, BitcoinTransaction) else tx.amount_cents
+    if tx.type == "route_usage":
+        return "Route usage" if amount < 0 else "Route earnings"
+    return _TX_LABELS.get(tx.type) or tx.type.replace("_", " ").capitalize()
+
+
+_TX_LABELS = {
+    "topup": "Added funds",
+    "invoice_payout": "Usage payout",
+    "invoice_payout_reversal": "Usage payout reversed",
+    "balance_migrated": "Balance moved to the USD ledger",
+}
+
+
 def register(mcp: FastMCP) -> None:
     # ------------------------------------------------------------------
     # Shared tools (currency-routed)
@@ -68,7 +92,8 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """List wallet transactions in reverse-chronological order.
 
-        Returns compact markdown. Amounts are in sats (BTC) or cents (USD).
+        Returns compact markdown. Amounts are signed: + is money in, − is
+        money out (USD in dollars, BTC in sats).
 
         Pagination model:
         - USD supports offset-based paging via `limit` + `offset` and
@@ -91,9 +116,19 @@ def register(mcp: FastMCP) -> None:
             pagination = page_pagination(transactions)
 
         def _tx_line(tx: BitcoinTransaction | UsdTransaction) -> str:
-            amount = tx.value if isinstance(tx, BitcoinTransaction) else tx.amount_cents
-            parts = [markdown_id(tx.id), f"amount: {amount}", tx.status, tx.created_at]
-            return markdown_bullet(tx.type, *parts)
+            metadata = tx.metadata or {}
+            parts = [
+                _signed_amount(tx),
+                markdown_id(tx.id),
+                None if tx.status == "completed" else tx.status,
+                tx.created_at,
+            ]
+            asset_id = tx.asset_id or metadata.get("asset_id")
+            body = None
+            if asset_id:
+                name = metadata.get("asset_name")
+                body = f"{name} `{asset_id}`" if name else f"asset `{asset_id}`"
+            return markdown_bullet(_tx_label(tx), *parts, body=body)
 
         return render_markdown_list(
             list(transactions),
@@ -102,7 +137,6 @@ def register(mcp: FastMCP) -> None:
             offset=offset or 0,
             noun="transactions",
             empty_text="No transactions.",
-            extras=[f"currency: {currency}"],
         )
 
     @mcp.tool(

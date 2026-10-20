@@ -413,7 +413,6 @@ def test_list_quest_entries_returns_markdown() -> None:
         offset=20,
     )
 
-    assert "quest_id: `quest-1`" in result
     assert f"id: `{ENTRY_ID}`" in result
     assert "status: accepted" in result
     assert "asset-1" in result
@@ -708,4 +707,3 @@ def test_list_quest_leaderboard_renders_ranked_rows() -> None:
     assert "score: 0.91" in result
     assert "accuracy=0.95" in result
     assert "@ada" in result
-    assert f"item_id: `{ITEM_ID}`" in result

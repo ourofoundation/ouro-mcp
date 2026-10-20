@@ -404,7 +404,6 @@ def register(mcp: FastMCP) -> None:
             render_markdown_sections(
                 connections,
                 line_fn=_connection_line,
-                preamble=f"Connections for asset `{id}`",
                 empty_text="No connections.",
             )
         )
@@ -506,19 +505,15 @@ def register(mcp: FastMCP) -> None:
                 for action in as_input
             ]
 
-        extras: list[str] = [f"asset_id: `{asset_id}`", f"role: {role}", ACTION_LINK_HINT]
-        if role in {"input", "both"}:
-            extras.append(f"as_input showing {len(as_input)} (offset={offset}, limit={limit})")
-            if bundle.has_more:
-                extras.append(
-                    f"more as_input available — call again with offset={offset + len(as_input)}"
-                )
+        extras: list[str] = [ACTION_LINK_HINT] if any(sections.values()) else []
+        if role in {"input", "both"} and bundle.has_more:
+            extras.append(f"More as_input runs: call again with offset={offset + len(as_input)}.")
 
         return truncate_response(
             render_markdown_sections(
                 sections,
                 line_fn=action_summary_line,
-                preamble=" · ".join(extras),
+                preamble="\n".join(extras),
                 empty_text="No linked actions.",
             )
         )
@@ -594,10 +589,6 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             noun="compatible routes",
             empty_text="No compatible routes.",
-            extras=[
-                f"asset_id: `{id}`",
-                f"query: {query}" if query else f"sort: {sort}",
-            ],
         )
 
 

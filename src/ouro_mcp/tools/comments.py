@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -29,6 +30,8 @@ from ouro_mcp.utils import (
     retrieve_without_view,
 )
 
+log = logging.getLogger(__name__)
+
 # Comment text in list rows; longer comments end in "…".
 COMMENT_TEXT_CHARS = 500
 
@@ -51,28 +54,29 @@ def register(mcp: FastMCP) -> None:
 
         page = ouro.comments.list(parent_id, limit=limit, offset=offset)
 
+        # The parent is context for the comments, so skip it when there are none
         parent_context = None
-        try:
-            parent = retrieve_without_view(ouro, parent_id) if offset == 0 else None
-            if parent:
+        if offset == 0 and len(page):
+            try:
+                parent = retrieve_without_view(ouro, parent_id)
                 parent_context = {
                     "id": str(parent.id),
                     "asset_type": parent.asset_type,
                     "name": parent.name,
-                    "username": parent.user.username,
+                    "username": parent.user.username if parent.user else None,
                 }
                 if isinstance(parent, Comment):
                     text = description_to_markdown(parent.content or parent.text, embedded_assets=parent.assets)
                     if text:
                         parent_context["text"] = clip(text, COMMENT_TEXT_CHARS)
-        except Exception:
-            pass
+            except Exception:
+                log.debug("Could not read comment parent %s", parent_id, exc_info=True)
 
         results = []
         for c in page:
             entry = {
                 "id": str(c.id),
-                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "created_at": c.created_at,
             }
 
             if c.user:
@@ -102,26 +106,23 @@ def register(mcp: FastMCP) -> None:
                 body=row.get("text"),
             )
 
-        parts: list[str] = [f"Comments on parent_id: `{parent_id}`"]
+        parts: list[str] = []
         if parent_context:
-            parent_parts = [markdown_id(parent_context.get("id"))]
-            if parent_context.get("name") and parent_context.get("username"):
-                parent_parts.insert(0, parent_context["name"])
-            primary = (
-                f"@{parent_context['username']}"
-                if parent_context.get("username")
-                else (parent_context.get("name") or "parent")
-            )
-            parts.append("## Parent")
+            by = f"@{parent_context['username']}" if parent_context.get("username") else None
+            if parent_context.get("asset_type") == "comment":
+                lead = f"Replies to {by or 'a comment'}"
+            else:
+                lead = f"Comments on {parent_context.get('name') or 'this asset'}"
             parts.append(
                 markdown_bullet(
-                    str(primary),
-                    *parent_parts,
-                    kind=parent_context.get("asset_type"),
+                    lead,
+                    markdown_id(parent_context.get("id")),
+                    None if parent_context.get("asset_type") == "comment" else by and f"by {by}",
+                    kind=None if parent_context.get("asset_type") == "comment" else parent_context.get("asset_type"),
                     body=parent_context.get("text"),
-                )
+                )[2:]
             )
-            parts.append("## Comments")
+            parts.append("")
 
         parts.append(
             render_markdown_list(

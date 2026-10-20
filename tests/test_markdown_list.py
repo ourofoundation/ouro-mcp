@@ -50,7 +50,7 @@ def test_search_hit_line_format():
     assert line.startswith(
         "- **Energy gate notes** (post) — id: "
         "`aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee` — by @apollo — "
-        "2026-07-01T12:00:00+00:00"
+        "2026-07-01 12:00 UTC"
     )
     assert "\n  A short summary · [body] matching passage" in line
     assert "\n" in line  # body on second line
@@ -107,7 +107,7 @@ def test_render_markdown_list_json_format(monkeypatch):
     assert payload == {
         "results": hits,
         "total": 24,
-        "hasMore": True,
+        "has_more": True,
         "limit": 2,
         "scope": "public",
     }
@@ -184,7 +184,7 @@ def test_render_markdown_table_and_format_table_response():
         )
     )
     assert payload["rows"] == rows
-    assert payload["hasMore"] is False
+    assert payload["has_more"] is False
 
 
 def test_truncate_response_disabled_by_default(monkeypatch):
@@ -233,3 +233,13 @@ def test_truncate_response_markdown_table_drops_rows(monkeypatch):
     assert "| --- |" in out
     assert out.count("| value-") < 2000
     assert len(out) <= MAX_RESPONSE_SIZE + 80
+
+
+def test_table_floats_drop_noise_but_keep_precision() -> None:
+    from ouro_mcp.rendering import render_markdown_table
+
+    table = render_markdown_table(
+        [{"tc": 783.571428571429, "e": -63661.2842, "x": 0.1 + 0.2, "n": 4.0, "tiny": 1.2e-7}]
+    )
+
+    assert "| 783.5714286 | -63661.2842 | 0.3 | 4 | 1.2e-07 |" in table

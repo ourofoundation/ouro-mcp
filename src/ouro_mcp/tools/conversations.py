@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -9,6 +10,7 @@ from ouro.models import Conversation, Message
 from ouro.resources.conversations import Messages
 from pydantic import Field
 
+from ouro_mcp.constants import GLOBAL_ORG_ID
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.markdown_input import (
     content_from_markdown,
@@ -24,6 +26,8 @@ from ouro_mcp.rendering import (
 from ouro_mcp.utils import (
     resolve_location,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _conversation_summary(conversation: Conversation) -> dict:
@@ -52,6 +56,26 @@ def _message_summary(message: Message) -> dict:
     }
 
 
+# Member names are looked up one user at a time; past this many, rows give a count.
+MAX_MEMBER_LOOKUPS = 12
+
+
+def _member_usernames(ouro: Any, user_ids: set[str]) -> dict[str, str]:
+    """``user_id -> username`` for conversation members, best effort."""
+    if len(user_ids) > MAX_MEMBER_LOOKUPS:
+        return {}
+    names: dict[str, str] = {}
+    for user_id in user_ids:
+        try:
+            user = ouro.users.get(user_id)
+        except Exception:
+            log.debug("Could not look up conversation member %s", user_id, exc_info=True)
+            continue
+        if getattr(user, "username", None):
+            names[user_id] = user.username
+    return names
+
+
 def _list_conversations(
     ouro: Any,
     *,
@@ -61,20 +85,28 @@ def _list_conversations(
 ) -> str:
     page = ouro.conversations.list(org_id=org_id, limit=limit, offset=offset)
     results = [_conversation_summary(conversation) for conversation in page]
+    me_id = str(getattr(getattr(ouro, "user", None), "id", ""))
+    usernames = _member_usernames(
+        ouro, {m for row in results for m in row["member_user_ids"] if m != me_id}
+    )
 
     def _conversation_line(row: dict) -> str:
-        parts = [markdown_id(row.get("id"))]
-        if row.get("org_id"):
+        others = [m for m in row.get("member_user_ids") or [] if m != me_id]
+        names = [f"@{usernames[m]}" for m in others if m in usernames]
+        with_whom = (
+            "with " + ", ".join(names)
+            if names and len(names) == len(others)
+            else f"{len(others) + 1} members"
+        )
+        parts = [markdown_id(row.get("id")), with_whom]
+        if row.get("org_id") and row["org_id"] != GLOBAL_ORG_ID:
             parts.append(f"org_id: `{row['org_id']}`")
-        if row.get("team_id"):
+        if row.get("team_id") and row["team_id"] != GLOBAL_ORG_ID:
             parts.append(f"team_id: `{row['team_id']}`")
-        member_ids = row.get("member_user_ids") or []
-        if member_ids:
-            parts.append(f"members: {len(member_ids)}")
         if row.get("last_updated"):
-            parts.append(row["last_updated"])
+            parts.append(f"updated {row['last_updated']}")
         return markdown_bullet(
-            str(row.get("name") or "(unnamed conversation)"),
+            str(row.get("name") or "Conversation"),
             *parts,
             body=row.get("summary"),
         )
@@ -249,7 +281,6 @@ def register(mcp: FastMCP) -> None:
                 pagination=page_pagination(page),
                 noun="messages",
                 empty_text="No messages.",
-                extras=[f"conversation_id: `{conversation_id}`"],
                 next_page=f"before=`{cursor}`" if cursor else None,
             )
         )

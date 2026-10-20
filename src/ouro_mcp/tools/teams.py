@@ -277,7 +277,7 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
 
-        extras: list[str] = [f"team_id: `{id}`"]
+        extras: list[str] = []
         if unread_only:
             page = ouro.teams.unread_preview(
                 id=id, offset=max(offset, 0), limit=max(1, min(limit, 50))

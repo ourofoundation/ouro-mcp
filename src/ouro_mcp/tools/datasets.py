@@ -563,7 +563,7 @@ def register(mcp: FastMCP) -> None:
 
         Default response is a markdown table (much smaller than JSON for wide
         tables). Set `response_format="json"` or `OURO_MCP_RESPONSE_FORMAT=json`
-        for the `{rows, offset, limit, hasMore}` envelope.
+        for the `{rows, offset, limit, has_more}` envelope.
         """
         if sql is not None and prompt is not None:
             raise ValueError("Pass sql or prompt, not both.")
@@ -1014,7 +1014,6 @@ def register(mcp: FastMCP) -> None:
             line_fn=_view_line,
             noun="dataset views",
             empty_text="No dataset views.",
-            extras=[f"dataset_id: `{dataset_id}`"],
             extra={"dataset_id": dataset_id},
         )
 

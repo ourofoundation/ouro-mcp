@@ -9,12 +9,17 @@ from pydantic import Field
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.rendering import (
+    clip,
+    collapse_whitespace,
     dump_json,
     markdown_bullet,
     markdown_id,
     render_markdown_list,
     truncate_response,
 )
+
+# A notification's text leads its row; the rest is in the app.
+NOTIFICATION_TEXT_CHARS = 160
 
 
 def register(mcp: FastMCP) -> None:
@@ -50,6 +55,7 @@ def register(mcp: FastMCP) -> None:
             category=category,
         )
 
+        me_id = str(getattr(getattr(ouro, "user", None), "id", ""))
         results = []
         for n in page:
             entry = {
@@ -59,7 +65,8 @@ def register(mcp: FastMCP) -> None:
                 "created_at": n.created_at,
             }
 
-            if n.source_user:
+            # Your own runs notify you; "from @you" says nothing
+            if n.source_user and str(getattr(n.source_user, "user_id", "")) != me_id:
                 entry["from"] = n.source_user.username or n.source_user.name
 
             text = (n.content or {}).get("text")
@@ -80,26 +87,27 @@ def register(mcp: FastMCP) -> None:
             results.append(entry)
 
         def _notification_line(row: dict) -> str:
+            text = collapse_whitespace(row.get("text"))
+            sender = row.get("from")
             parts = [
                 markdown_id(row.get("id")),
                 "unread" if row.get("viewed") is False else None,
-                f"from @{row['from']}" if row.get("from") else None,
+                f"from @{sender}" if sender else None,
                 row.get("created_at"),
             ]
             asset = row.get("asset") if isinstance(row.get("asset"), dict) else None
             body_bits = []
-            if row.get("text"):
-                body_bits.append(str(row["text"]))
-            if asset:
-                body_bits.append(
-                    f"asset: {asset.get('name')} ({asset.get('asset_type')}) "
-                    f"id: `{asset.get('id')}`"
-                )
+            if asset and asset.get("id"):
+                # The text usually names the asset already; then the id is enough
+                name = asset.get("name")
+                label = asset.get("asset_type") if name and name in text else f"{name} ({asset.get('asset_type')})"
+                body_bits.append(f"{label} `{asset['id']}`")
             if row.get("action_id"):
                 body_bits.append(f"action_id: `{row['action_id']}`")
             return markdown_bullet(
-                str(row.get("type") or "notification"),
+                clip(text, NOTIFICATION_TEXT_CHARS) or str(row.get("type") or "notification"),
                 *parts,
+                kind=row.get("type") if text else None,
                 body=" · ".join(body_bits) if body_bits else None,
             )
 

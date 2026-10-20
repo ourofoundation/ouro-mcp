@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from datetime import datetime, timezone
@@ -167,12 +168,12 @@ def _parse_timestamp_value(value: Any) -> datetime | None:
     return dt
 
 
-def _localize_timestamp(value: Any, tz_name: str) -> str | None:
-    """Render a UTC timestamp as a compact local ISO string (offset preserved).
+def _localize_timestamp(value: Any, tz_name: str, *, compact: bool = False) -> str | None:
+    """Render a UTC timestamp in the configured zone.
 
-    Microseconds are dropped — Ouro timestamps don't carry meaningful
-    sub-second precision for agents, and stripping them shaves ~7 chars
-    off every timestamp in tool responses.
+    JSON gets a local ISO string with its offset (``2026-04-06T21:02:19-05:00``).
+    ``compact`` is for markdown rows, where a reader scans many at once:
+    ``2026-04-06 21:02 CDT``. Microseconds are dropped either way.
     """
     dt = _parse_timestamp_value(value)
     if dt is None:
@@ -183,10 +184,12 @@ def _localize_timestamp(value: Any, tz_name: str) -> str | None:
     except Exception:
         return None
 
+    if compact:
+        return f"{local_dt:%Y-%m-%d %H:%M} {local_dt.tzname() or tz_name}"
     return local_dt.replace(microsecond=0).isoformat()
 
 
-def enrich_timestamps(data: Any, tz_name: str | None = None) -> Any:
+def enrich_timestamps(data: Any, tz_name: str | None = None, *, compact: bool = False) -> Any:
     """Recursively rewrite common UTC timestamp fields as compact local ISO.
 
     Every recognized timestamp key is replaced *in place* with a single
@@ -196,10 +199,11 @@ def enrich_timestamps(data: Any, tz_name: str | None = None) -> Any:
     ``_local_label`` siblings keeps tool responses small enough for agents
     listing many assets at once. Existing ``_local`` / ``_local_label``
     fields on the input are dropped so older callers don't double up.
+    ``compact`` uses the markdown-row style (see ``_localize_timestamp``).
     """
     active_tz = tz_name or _configured_timezone_name()
     if isinstance(data, list):
-        return [enrich_timestamps(item, active_tz) for item in data]
+        return [enrich_timestamps(item, active_tz, compact=compact) for item in data]
 
     if not isinstance(data, dict):
         return data
@@ -211,10 +215,10 @@ def enrich_timestamps(data: Any, tz_name: str | None = None) -> Any:
             if base in _TIMESTAMP_KEYS:
                 continue
         if key in _TIMESTAMP_KEYS and value is not None:
-            localized = _localize_timestamp(value, active_tz)
+            localized = _localize_timestamp(value, active_tz, compact=compact)
             enriched[key] = localized if localized is not None else value
             continue
-        enriched[key] = enrich_timestamps(value, active_tz)
+        enriched[key] = enrich_timestamps(value, active_tz, compact=compact)
 
     return enriched
 
@@ -248,8 +252,9 @@ def list_response(
 ) -> dict:
     """Build the canonical list-response envelope used across all MCP tools.
 
-    Shape: ``{"results": [...], "total": int | None, "hasMore": bool,
-    "nextCursor": Any | None, **extra}``.
+    Shape: ``{"results": [...], "total": int | None, "has_more": bool,
+    "next_cursor": Any | None, **extra}``. The input ``pagination`` keeps the
+    backend's camelCase (``hasMore``, ``nextCursor``).
 
     Precedence for ``hasMore`` / ``total`` / ``nextCursor``:
       1. Explicit ``has_more`` / ``total`` kwargs (caller already resolved them).
@@ -271,10 +276,10 @@ def list_response(
     payload: dict[str, Any] = {
         "results": results,
         "total": resolved_total,
-        "hasMore": resolved_has_more,
+        "has_more": resolved_has_more,
     }
     if resolved_next_cursor is not None:
-        payload["nextCursor"] = resolved_next_cursor
+        payload["next_cursor"] = resolved_next_cursor
     if limit is not None:
         payload["limit"] = limit
     if extra:
@@ -342,7 +347,7 @@ def _assert_no_parallel_header(text: str) -> None:
 def _format_timestamp_for_md(value: Any) -> str | None:
     if value is None:
         return None
-    localized = _localize_timestamp(value, _configured_timezone_name())
+    localized = _localize_timestamp(value, _configured_timezone_name(), compact=True)
     if localized is not None:
         return localized
     text = str(value).strip()
@@ -431,6 +436,17 @@ def _jsonable_list_item(item: Any) -> Any:
     return item
 
 
+def counted(noun: str, count: int | None) -> str:
+    """A plural noun ("rows", "leaderboard entries") made singular for a count of 1."""
+    if count != 1:
+        return noun
+    if noun.endswith("ies"):
+        return noun[:-3] + "y"
+    if noun.endswith("s") and not noun.endswith("ss"):
+        return noun[:-1]
+    return noun
+
+
 def format_markdown_list_header(
     *,
     shown: int,
@@ -452,14 +468,14 @@ def format_markdown_list_header(
     if shown == 0 and not has_more and (total is None or total == 0):
         header = empty_text
     elif total is not None:
-        header = f"Found {total} {noun}"
+        header = f"Found {total} {counted(noun, total)}"
         if shown != total or has_more:
             header += f" (showing {shown}"
             if has_more:
                 header += f"; more available — call again with {next_hint}"
             header += ")"
     else:
-        header = f"Found {shown} {noun}"
+        header = f"Found {shown} {counted(noun, shown)}"
         if has_more:
             header += f" (more available — call again with {next_hint})"
     lines = [header]
@@ -518,7 +534,7 @@ def render_markdown_list(
             )
         )
 
-    lines = [line for line in (line_fn(enrich_timestamps(item)) for item in items) if line]
+    lines = [line for line in (line_fn(enrich_timestamps(item, compact=True)) for item in items) if line]
 
     header = format_markdown_list_header(
         shown=len(lines),
@@ -538,9 +554,25 @@ def render_markdown_list(
     return result
 
 
+# Enough digits for energy differences; drops float noise like 0.30000000000000004
+TABLE_FLOAT_DIGITS = 10
+
+
+def _format_table_float(value: float) -> str:
+    if not math.isfinite(value):
+        return str(value)
+    if value.is_integer() and abs(value) < 1e15:
+        return str(int(value))
+    text = f"{value:.{TABLE_FLOAT_DIGITS}g}"
+    # %g switches to exponents past its digits; large values read better whole
+    return f"{value:.0f}" if "e+" in text else text
+
+
 def _escape_md_table_cell(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, float):
+        return _format_table_float(value)
     text = str(value).replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace("\n", " ").replace("|", "\\|")
     return collapse_whitespace(text)
@@ -638,7 +670,7 @@ def format_table_response(
     if limit is not None:
         payload["limit"] = limit
     if has_more is not None:
-        payload["hasMore"] = bool(has_more)
+        payload["has_more"] = bool(has_more)
     if total is not None:
         payload["total"] = total
     if sql:
@@ -654,12 +686,12 @@ def format_table_response(
     if shown == 0 and not has_more:
         header = empty_text
     elif row_count is not None and offset is None:
-        header = f"Found {row_count} rows"
+        header = f"Found {row_count} {counted('rows', row_count)}"
     else:
         header = (
             f"Found {shown} of {total} rows"
             if total is not None and total != shown
-            else f"Found {shown} rows"
+            else f"Found {shown} {counted('rows', shown)}"
         )
         bits: list[str] = []
         if offset is not None:
@@ -699,7 +731,7 @@ def render_markdown_sections(
     """Render grouped payloads (connections, asset actions) as ``##`` sections."""
     parts: list[str] = []
     if preamble:
-        parts.append(collapse_whitespace(preamble) or preamble.strip())
+        parts.extend(text for text in (collapse_whitespace(line) for line in preamble.splitlines()) if text)
 
     any_items = False
     for title, items in sections.items():
@@ -708,7 +740,7 @@ def render_markdown_sections(
         any_items = True
         parts.append(f"## {collapse_whitespace(title) or title}")
         for item in items:
-            line = line_fn(enrich_timestamps(item))
+            line = line_fn(enrich_timestamps(item, compact=True))
             if line:
                 parts.append(line)
 

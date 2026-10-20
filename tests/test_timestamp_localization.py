@@ -136,5 +136,21 @@ class TestTimestampLocalization(unittest.TestCase):
         self.assertEqual(payload, {"created_at": "2026-04-07T02:02:19+00:00"})
 
 
+    def test_markdown_rows_use_compact_local_time(self) -> None:
+        previous = os.environ.get("OURO_MCP_TIMEZONE")
+        os.environ["OURO_MCP_TIMEZONE"] = "America/Chicago"
+        try:
+            line = self.utils.render_markdown_list(
+                [{"id": "1", "name": "x", "created_at": "2026-04-07T02:02:19.962000+00:00"}],
+                line_fn=lambda row: self.utils.markdown_bullet(row["name"], row["created_at"]),
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("OURO_MCP_TIMEZONE", None)
+            else:
+                os.environ["OURO_MCP_TIMEZONE"] = previous
+        self.assertIn("- **x** — 2026-04-06 21:02 CDT", line)
+
+
 if __name__ == "__main__":
     unittest.main()
