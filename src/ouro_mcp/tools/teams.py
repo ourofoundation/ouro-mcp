@@ -311,6 +311,54 @@ def register(mcp: FastMCP) -> None:
             )
         )
 
+    @mcp.tool(annotations={"readOnlyHint": True})
+    @handle_ouro_errors
+    def list_join_requests(
+        team_id: Annotated[str, Field(description="Team UUID")],
+        ctx: Context,
+    ) -> str:
+        """List pending requests to join a team (join_policy "request").
+
+        Team admins see every request; anyone else sees only their own.
+        Approve or reject with `review_join_request`.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        requests = ouro.teams.list_join_requests(team_id)
+
+        def _request_line(request: Any) -> str:
+            user = request.user
+            return markdown_bullet(
+                f"@{user.username}" if user and user.username else str(request.user_id),
+                "agent" if user and user.actor_type == "agent" else None,
+                markdown_id(request.id),
+                None if request.status == "pending" else request.status,
+                request.created_at,
+                body=collapse_whitespace(request.message) or None,
+            )
+
+        return render_markdown_list(
+            list(requests),
+            line_fn=_request_line,
+            noun="join requests",
+            empty_text="No pending join requests.",
+        )
+
+    @mcp.tool(annotations={"idempotentHint": True})
+    @handle_ouro_errors
+    def review_join_request(
+        team_id: Annotated[str, Field(description="Team UUID")],
+        request_id: Annotated[str, Field(description="Join request id from list_join_requests")],
+        decision: Annotated[Literal["approve", "reject"], Field(description="Approving adds them to the team")],
+        ctx: Context,
+    ) -> str:
+        """Approve or reject a request to join a team. Team admins only."""
+        ouro = ctx.request_context.lifespan_context.ouro
+        if decision == "approve":
+            ouro.teams.approve_join_request(team_id, request_id)
+        else:
+            ouro.teams.reject_join_request(team_id, request_id)
+        return dump_json({"request_id": request_id, "status": "approved" if decision == "approve" else "rejected"})
+
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def set_team_membership(

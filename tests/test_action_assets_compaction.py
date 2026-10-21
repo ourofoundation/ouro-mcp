@@ -377,3 +377,13 @@ class TestFormatActionResultIncludeResponse(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_action_rows_say_what_the_run_was_asked() -> None:
+    from ouro_mcp.tools.services import action_summary_line, format_action_summary
+
+    listed = format_action_summary({"id": "a1", "status": "success", "request": {"material_id": "mp-13", "relax": True}})
+    full = format_action_summary({"id": "a2", "status": "success", "metadata": {"body": {"material_id": "mp-20"}}})
+
+    assert "with: material_id=mp-13, relax=true" in action_summary_line(listed)
+    assert "with: material_id=mp-20" in action_summary_line(full)

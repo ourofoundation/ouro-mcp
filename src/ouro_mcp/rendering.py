@@ -28,6 +28,7 @@ _TIMESTAMP_KEYS = {
     # Notifications / quest reviews
     "read_at",
     "reviewed_at",
+    "last_active",
 }
 
 

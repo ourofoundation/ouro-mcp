@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import os
 from typing import Any, Iterable
 
@@ -34,7 +36,14 @@ def short_description(value: Any, *, max_length: int = DESCRIPTION_CHARS) -> str
     """An asset description (any shape) as one line, cut with "…"."""
     from ouro.utils.content import description_to_markdown
 
-    return collapse_whitespace(description_to_markdown(value), max_length=max_length) or None
+    text = description_to_markdown(value)
+    # Some descriptions were saved as a JSON-encoded RichText inside the text
+    if text.startswith('{"'):
+        try:
+            text = description_to_markdown(json.loads(text, strict=False)) or text
+        except ValueError:
+            pass
+    return collapse_whitespace(text, max_length=max_length) or None
 
 
 def strip_heavy_fields(value: Any) -> Any:
@@ -187,6 +196,8 @@ def slim_connection_graph(
         if edge.type == "action" and edge.action_id is not None:
             row["action_id"] = str(edge.action_id)
 
+        # "out": this asset points at it (links, embeds, uses); "in": it points here
+        row["direction"] = "out" if is_outgoing else "in"
         grouped.setdefault(edge.type, []).append(row)
     return grouped
 

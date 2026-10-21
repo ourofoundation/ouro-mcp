@@ -15,11 +15,13 @@ from ouro_mcp.config import CommentPreviewConfig, get_comment_preview_config
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.params import (
     ActionStatuses,
+    ConnectionTypes,
     AssetType,
     JsonObject,
     TeamRole,
     Visibility,
 )
+from ouro_mcp.pricing import format_monetization_block
 from ouro_mcp.rendering import (
     collapse_whitespace,
     dump_json,
@@ -364,22 +366,28 @@ def register(mcp: FastMCP) -> None:
     def get_asset_connections(
         asset_id: Annotated[str, Field(description="Asset UUID")],
         ctx: Context,
+        type: Annotated[
+            Optional[ConnectionTypes],
+            Field(description='Only these connection types, e.g. ["reference", "link"]'),
+        ] = None,
+        direction: Annotated[
+            Optional[Literal["outgoing", "incoming"]],
+            Field(description='"outgoing": what this asset points at; "incoming": what points at it'),
+        ] = None,
+        limit: Annotated[int, Field(ge=1, le=500, description="Max connections to return")] = 100,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
-        """Get the connection graph for an asset.
+        """Get the connection graph for an asset, grouped by type.
 
-        Returns relationships like references, components, derivatives,
-        and action inputs/outputs as compact markdown sections. Useful for
-        understanding how assets relate to each other and navigating lineage.
-        Each item is the connected asset summary with id, name, asset_type,
-        and asset created_at when available. For action edges, action_id is
-        included when the backend provides it so you can follow up with
-        get_action or list_asset_actions.
+        Covers references, links, components, mentions and action
+        inputs/outputs. Each row is the connected asset (id, name, type) and
+        whether the connection is outgoing (this asset points at it) or
+        incoming (it points at this asset). Action edges carry action_id for
+        get_action.
 
-        Comment edges are omitted — use `list_comments` (or the comments
-        preview on `get_asset(detail=\"full\")`). For datasets, outgoing
-        `reference` edges (row-level file/action IDs) are also omitted —
-        use the dataset schema / `query_dataset` instead. Incoming
-        references and other connection types are still returned.
+        Comment edges are left out (use `list_comments`), and so are a
+        dataset's outgoing references (the ids in its rows; use
+        `query_dataset`).
         """
         ouro = ctx.request_context.lifespan_context.ouro
         omit_outgoing_refs = False
@@ -387,26 +395,37 @@ def register(mcp: FastMCP) -> None:
             omit_outgoing_refs = asset_type_of(ouro, asset_id) == "dataset"
         except Exception:
             log.debug("Failed to resolve asset type for connections on %s", asset_id, exc_info=True)
+        page = ouro.assets.connections(
+            asset_id,
+            limit=limit,
+            offset=offset,
+            **optional_kwargs(
+                type=list(type) if type else None,
+                direction={"outgoing": "source", "incoming": "target"}.get(direction or ""),
+            ),
+        )
         connections = slim_connection_graph(
-            ouro.assets.connections(asset_id),
+            page,
             current_asset_id=asset_id,
             omit_outgoing_references=omit_outgoing_refs,
             omit_comments=True,
         )
 
         def _connection_line(row: dict[str, Any]) -> str:
-            parts = [markdown_id(row["id"])]
-            if row.get("action_id"):
-                parts.append(f"action_id: `{row['action_id']}`")
-            parts.append(row.get("created_at"))
-            return markdown_bullet(
-                str(row.get("name") or "(unnamed)"), *parts, kind=row["asset_type"]
-            )
+            parts = [
+                row.get("direction") == "out" and "outgoing" or "incoming",
+                markdown_id(row["id"]),
+                f"action_id: `{row['action_id']}`" if row.get("action_id") else None,
+                row.get("created_at"),
+            ]
+            return markdown_bullet(str(row.get("name") or "(unnamed)"), *parts, kind=row["asset_type"])
 
+        more = f"More connections: call again with offset={offset + len(page)}." if page.has_more else None
         return truncate_response(
             render_markdown_sections(
                 connections,
                 line_fn=_connection_line,
+                preamble=more,
                 empty_text="No connections.",
             )
         )
@@ -528,20 +547,15 @@ def register(mcp: FastMCP) -> None:
             offset=offset,
             sort=sort,
         )
-        results = [
-            optional_kwargs(
-                id=str(route.id),
-                name=route.name,
-                asset_type=route.asset_type,
-                description=short_description(route.description),
-            )
-            for route in page
-        ]
+        results = [_compatible_route_row(route) for route in page]
 
         def _route_line(row: dict[str, Any]) -> str:
             return markdown_bullet(
                 str(row.get("name") or "(untitled)"),
                 markdown_id(row["id"]),
+                row.get("price") or "free",
+                f"{row['runs']:,} runs" if row.get("runs") else None,
+                f"by @{row['username']}" if row.get("username") else None,
                 kind=row["asset_type"],
                 body=row.get("description"),
             )
@@ -554,6 +568,30 @@ def register(mcp: FastMCP) -> None:
             noun="compatible routes",
             empty_text="No compatible routes.",
         )
+
+
+def _compatible_route_row(route: Any) -> dict[str, Any]:
+    """One compatible route: enough to choose it without a get_asset per row."""
+    data = route.route if getattr(route, "route", None) else None
+    # Route descriptions are often RichText stored as a JSON string
+    raw = route.description or getattr(data, "description", None)
+    description = short_description(route_description_markdown(raw) if isinstance(raw, str) else raw)
+    # Some routes are "pay-per-use" at a price of zero
+    charged = any(getattr(route, key, None) for key in ("unit_cost", "unit_cost_usd", "unit_cost_sats", "price"))
+    price = format_monetization_block(route).get("cost_summary") if charged else None
+    if price:
+        # The row keeps the rate; get_asset has the hold and currency details
+        price = price.split(" (")[0]
+    user = user_summary(route) or {}
+    return optional_kwargs(
+        id=str(route.id),
+        name=route.name,
+        asset_type=route.asset_type,
+        price=price,
+        runs=getattr(route, "total_uses", None),
+        username=user.get("username"),
+        description=description,
+    )
 
 
 def _counts_part(ouro: Any, asset_id: str) -> dict[str, Any]:

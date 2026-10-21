@@ -540,6 +540,12 @@ def format_action_summary(
     if output_assets:
         result["output_assets"] = output_assets
 
+    # The request body: list endpoints return it as `request`, full reads in metadata
+    request = action.get("request")
+    if request is None and isinstance(action.get("metadata"), dict):
+        request = action["metadata"].get("body")
+    if request:
+        result["request"] = request
     if action.get("metadata"):
         result["metadata"] = action.get("metadata")
     if include_response and action.get("response") is not None:
@@ -565,6 +571,21 @@ def _action_asset_refs(rows: Any) -> Optional[str]:
             label = collapse_whitespace(asset.get("name") or asset.get("asset_type") or "asset")
             refs.append(f"{label} `{asset['id']}`")
     return ", ".join(refs) or None
+
+
+# Enough of a run's request to tell runs of one route apart
+REQUEST_SUMMARY_CHARS = 160
+
+
+def _request_summary(request: Any) -> Optional[str]:
+    """``key=value, ...`` for a run's request body, cut to one short line."""
+    if not isinstance(request, dict) or not request:
+        return None
+    pairs = []
+    for key, value in request.items():
+        text = value if isinstance(value, str) else json.dumps(value, default=str, separators=(",", ":"))
+        pairs.append(f"{key}={text}")
+    return clip(collapse_whitespace(", ".join(pairs)), REQUEST_SUMMARY_CHARS)
 
 
 def _run_seconds(action: dict[str, Any]) -> Optional[int]:
@@ -610,6 +631,9 @@ def action_summary_line(summary: Any, *, show_route: bool = True) -> str:
         (cost or {}).get("cost_summary"),
     ]
     body = []
+    request = _request_summary(summary.get("request"))
+    if request:
+        body.append(f"with: {request}")
     inputs = _action_asset_refs(summary.get("input_assets"))
     if inputs:
         body.append(f"in: {inputs}")

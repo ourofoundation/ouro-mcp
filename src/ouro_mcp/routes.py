@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -240,6 +241,10 @@ def route_caller_parameters(parameters: Any) -> Any:
     ] or None
 
 
+# The leading "text" value, closed or (when the cut fell inside it) not
+_RICH_TEXT_LEAD = re.compile(r'\{"text":"((?:[^"\\]|\\.)*)')
+
+
 def route_description_markdown(description: str | None) -> str | None:
     """Render ``RouteData.description``, which stores RichText as a JSON string."""
     from ouro.utils.content import description_to_markdown
@@ -247,12 +252,15 @@ def route_description_markdown(description: str | None) -> str | None:
     if not description:
         return None
     try:
-        parsed = json.loads(description)
+        parsed = json.loads(description, strict=False)  # stored text can hold raw newlines
     except ValueError:
-        return description
+        # Some stored RichText was cut off mid-document; its plain text comes first
+        lead = _RICH_TEXT_LEAD.match(description)
+        return json.loads(f'"{lead.group(1).rstrip(chr(92))}"', strict=False) if lead else description
     if not isinstance(parsed, dict):
         return description
-    return description_to_markdown(parsed) or None
+    # An empty rich document can sit beside a plain "text" that has the words
+    return description_to_markdown(parsed) or parsed.get("text") or None
 
 
 def route_request_body_without_input_assets(route: Any) -> Any:

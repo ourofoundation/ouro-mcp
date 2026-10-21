@@ -25,6 +25,7 @@ from ouro_mcp.rendering import (
     truncate_response,
 )
 from ouro_mcp.utils import (
+    optional_kwargs,
     resolve_location,
 )
 
@@ -182,6 +183,32 @@ def register(mcp: FastMCP) -> None:
             attribution=attribution,
         )
         return dump_json(_conversation_summary(conversation))
+
+    @mcp.tool(annotations={"idempotentHint": True})
+    @handle_ouro_errors
+    def update_conversation(
+        id: Annotated[str, Field(description="Conversation UUID")],
+        ctx: Context,
+        name: Annotated[Optional[str], Field(description="New name")] = None,
+        summary: Annotated[Optional[str], Field(description="New summary")] = None,
+    ) -> str:
+        """Rename a conversation or change its summary."""
+        if name is None and summary is None:
+            raise ValueError("Pass name and/or summary.")
+        ouro = ctx.request_context.lifespan_context.ouro
+        conversation = ouro.conversations.update(id, **optional_kwargs(name=name, summary=summary))
+        return dump_json(_conversation_summary(conversation))
+
+    @mcp.tool(annotations={"destructiveHint": True, "idempotentHint": True})
+    @handle_ouro_errors
+    def leave_conversation(
+        id: Annotated[str, Field(description="Conversation UUID")],
+        ctx: Context,
+    ) -> str:
+        """Leave a conversation. If you are its last member, it is deleted with its messages."""
+        ouro = ctx.request_context.lifespan_context.ouro
+        ouro.conversations.delete(id)
+        return dump_json({"left": True, "id": id})
 
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors

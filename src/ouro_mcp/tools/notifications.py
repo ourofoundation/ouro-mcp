@@ -9,6 +9,7 @@ from pydantic import Field
 
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.params import NotificationCategories
+from ouro_mcp.utils import run_parallel
 from ouro_mcp.rendering import (
     clip,
     collapse_whitespace,
@@ -46,12 +47,21 @@ def register(mcp: FastMCP) -> None:
         """List notifications for the authenticated user, newest first."""
         ouro = ctx.request_context.lifespan_context.ouro
 
-        page = ouro.notifications.list(
-            offset=offset,
-            limit=limit,
-            org_id=org_id,
-            unread_only=unread_only,
-            category=",".join(category) if category else None,
+        def unread_count() -> int | None:
+            try:
+                return ouro.notifications.unreads(org_id=org_id)
+            except Exception:
+                return None
+
+        page, unread = run_parallel(
+            lambda: ouro.notifications.list(
+                offset=offset,
+                limit=limit,
+                org_id=org_id,
+                unread_only=unread_only,
+                category=",".join(category) if category else None,
+            ),
+            unread_count,
         )
 
         me_id = str(getattr(getattr(ouro, "user", None), "id", ""))
@@ -118,6 +128,7 @@ def register(mcp: FastMCP) -> None:
                 offset=offset,
                 noun="notifications",
                 empty_text="No notifications.",
+                extras=[f"{unread} unread"] if isinstance(unread, int) else None,
             )
         )
 

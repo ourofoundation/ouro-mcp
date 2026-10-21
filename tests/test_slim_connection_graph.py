@@ -49,6 +49,7 @@ def test_strips_bloated_source_target() -> None:
                 "name": "Src",
                 "asset_type": "file",
                 "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                "direction": "in",
             }
         ]
     }
@@ -64,8 +65,8 @@ def test_empty_or_missing_name_is_dropped_but_asset_type_is_kept() -> None:
     out = slim_connection_graph(conns, current_asset_id=_id("p1"))
 
     assert out["reference"] == [
-        {"id": _id("c1"), "asset_type": "comment"},
-        {"id": _id("c2"), "asset_type": None},
+        {"id": _id("c1"), "asset_type": "comment", "direction": "in"},
+        {"id": _id("c2"), "asset_type": None, "direction": "in"},
     ]
 
 
@@ -78,7 +79,7 @@ def test_outgoing_connection_uses_other_endpoint() -> None:
 
     out = slim_connection_graph([conn], current_asset_id=_id("current"))
 
-    assert out["link"] == [{"id": _id("other"), "name": "Other", "asset_type": "route"}]
+    assert out["link"] == [{"id": _id("other"), "name": "Other", "asset_type": "route", "direction": "out"}]
 
 
 def test_endpoint_falls_back_to_edge_columns_without_join() -> None:
@@ -94,7 +95,7 @@ def test_endpoint_falls_back_to_edge_columns_without_join() -> None:
 
     out = slim_connection_graph([conn], current_asset_id=_id("b"))
 
-    assert out["link"] == [{"id": _id("a"), "asset_type": "file"}]
+    assert out["link"] == [{"id": _id("a"), "asset_type": "file", "direction": "in"}]
 
 
 def test_action_edges_preserve_action_id() -> None:
@@ -108,7 +109,13 @@ def test_action_edges_preserve_action_id() -> None:
     out = slim_connection_graph([conn], current_asset_id=_id("cif"))
 
     assert out["action"] == [
-        {"id": _id("relaxed"), "name": "Relaxed", "asset_type": "file", "action_id": _id("act-1")}
+        {
+            "id": _id("relaxed"),
+            "name": "Relaxed",
+            "asset_type": "file",
+            "action_id": _id("act-1"),
+            "direction": "out",
+        }
     ]
 
 
@@ -125,8 +132,8 @@ def test_omit_outgoing_references_keeps_incoming() -> None:
     )
 
     assert out == {
-        "reference": [{"id": _id("other"), "name": "Shortlist", "asset_type": "dataset"}],
-        "link": [{"id": _id("post"), "name": "Writeup", "asset_type": "post"}],
+        "reference": [{"id": _id("other"), "name": "Shortlist", "asset_type": "dataset", "direction": "in"}],
+        "link": [{"id": _id("post"), "name": "Writeup", "asset_type": "post", "direction": "out"}],
     }
 
 
@@ -141,7 +148,7 @@ def test_omit_comments_drops_only_comment_edges() -> None:
     omitted = slim_connection_graph(conns, current_asset_id=_id("post-1"), omit_comments=True)
 
     assert set(kept) == {"comment", "link"}
-    assert omitted == {"link": [{"id": _id("file-1"), "name": "CIF", "asset_type": "file"}]}
+    assert omitted == {"link": [{"id": _id("file-1"), "name": "CIF", "asset_type": "file", "direction": "out"}]}
 
 
 def test_empty_graph() -> None:

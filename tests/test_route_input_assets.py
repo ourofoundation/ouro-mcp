@@ -465,3 +465,43 @@ def test_full_asset_lists_what_came_from_it() -> None:
         "action_id": "act-1",
         "route_name": "Phonon dispersion",
     }
+
+
+def test_route_description_survives_truncated_rich_text() -> None:
+    from ouro_mcp.routes import route_description_markdown
+
+    cut_off = '{"text":"Predict the Curie temperature (K).\nInput: CIF.","json":{"type":"doc","content":[{"type":"parag'
+    assert route_description_markdown(cut_off) == "Predict the Curie temperature (K).\nInput: CIF."
+
+
+def test_route_description_cut_inside_its_text() -> None:
+    from ouro_mcp.routes import route_description_markdown
+
+    assert route_description_markdown('{"text":"Infer moments.\\n\\n**Outputs**\\n- Site mom') == (
+        "Infer moments.\n\n**Outputs**\n- Site mom"
+    )
+
+
+def test_compatible_route_row_reads_free_and_stored_json_descriptions() -> None:
+    from ouro_mcp.tools.assets import _compatible_route_row
+
+    route = SimpleNamespace(
+        id="r1",
+        name="Predict Tc",
+        asset_type="route",
+        description=None,
+        route=SimpleNamespace(description='{"text":"Predict the Curie temperature.","json":{"type":"doc"}}'),
+        monetization="pay-per-use",
+        unit_cost=0,
+        unit_cost_usd=None,
+        unit_cost_sats=None,
+        price=0,
+        total_uses=6661,
+        user={"username": "hermes"},
+    )
+
+    row = _compatible_route_row(route)
+
+    assert "price" not in row  # pay-per-use at zero reads as free
+    assert row["description"] == "Predict the Curie temperature."
+    assert row["runs"] == 6661

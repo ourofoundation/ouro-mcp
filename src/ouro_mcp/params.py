@@ -56,6 +56,10 @@ def _split_commas(value: Any) -> Any:
 JsonObject = Annotated[dict[str, Any], BeforeValidator(_decode_json)]
 JsonArray = Annotated[list[Any], BeforeValidator(_decode_json)]
 ActionStatuses = Annotated[list[ActionStatus], BeforeValidator(_split_commas)]
+ConnectionType = Literal[
+    "reference", "link", "component", "mention", "action", "replicator", "completion", "evaluation", "comment"
+]
+ConnectionTypes = Annotated[list[ConnectionType], BeforeValidator(_split_commas)]
 NotificationCategory = Literal["mentions", "comments", "references", "shares", "money", "actions"]
 QuestItemStatuses = Annotated[list[Literal[QuestItemStatus, "all"]], BeforeValidator(_split_commas)]
 NotificationCategories = Annotated[list[NotificationCategory], BeforeValidator(_split_commas)]
