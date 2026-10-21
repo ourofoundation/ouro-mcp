@@ -27,6 +27,7 @@ from ouro_mcp.rendering import (
     dump_json,
     markdown_bullet,
     markdown_id,
+    markdown_timestamp,
     page_pagination,
     render_markdown_list,
     render_markdown_sections,
@@ -526,7 +527,13 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = None,
         sort: Annotated[
-            Literal["popular", "recent", "updated"], Field(description='"popular": most used first')
+            Literal["popular", "recent", "updated", "used"],
+            Field(
+                description=(
+                    '"popular": most used first. "used": only routes you have run, '
+                    "your latest run first."
+                )
+            ),
         ] = "popular",
         limit: Annotated[int, Field(ge=1, le=200, description="Max routes to return")] = 10,
         offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
@@ -536,7 +543,8 @@ def register(mcp: FastMCP) -> None:
         Returns routes whose input type is compatible with the given asset,
         answering the question "what can I do with this asset?". Defaults to
         popularity order so the most-used routes appear first. Pass `query` to
-        search those routes by intent instead of paging through the list.
+        search those routes by intent instead of paging through the list, or
+        sort="used" to see the ones you have run before.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         query = (query or "").strip() or None
@@ -556,6 +564,7 @@ def register(mcp: FastMCP) -> None:
                 row.get("price") or "free",
                 f"{row['runs']:,} runs" if row.get("runs") else None,
                 f"by @{row['username']}" if row.get("username") else None,
+                f"you last ran it {markdown_timestamp(row['last_run'])}" if row.get("last_run") else None,
                 kind=row["asset_type"],
                 body=row.get("description"),
             )
@@ -590,6 +599,7 @@ def _compatible_route_row(route: Any) -> dict[str, Any]:
         price=price,
         runs=getattr(route, "total_uses", None),
         username=user.get("username"),
+        last_run=getattr(route, "last_used_at", None),
         description=description,
     )
 

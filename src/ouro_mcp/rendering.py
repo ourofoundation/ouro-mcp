@@ -355,6 +355,11 @@ def _format_timestamp_for_md(value: Any) -> str | None:
     return text or None
 
 
+def markdown_timestamp(value: Any) -> str | None:
+    """A timestamp the way markdown rows show it (``2026-04-06 21:02 CDT``)."""
+    return _format_timestamp_for_md(value)
+
+
 def markdown_id(value: Any) -> str | None:
     """Render an id as ``id: `uuid``` for verbatim agent copying."""
     if value is None:

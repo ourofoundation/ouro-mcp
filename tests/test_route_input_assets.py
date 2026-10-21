@@ -505,3 +505,24 @@ def test_compatible_route_row_reads_free_and_stored_json_descriptions() -> None:
     assert "price" not in row  # pay-per-use at zero reads as free
     assert row["description"] == "Predict the Curie temperature."
     assert row["runs"] == 6661
+
+
+def test_compatible_route_row_keeps_your_last_run() -> None:
+    from ouro_mcp.tools.assets import _compatible_route_row
+
+    route = SimpleNamespace(
+        id="r1",
+        name="Predict Tc",
+        asset_type="route",
+        description="Predict the Curie temperature.",
+        route=None,
+        price=None,
+        total_uses=3,
+        user={"username": "hermes"},
+        last_used_at="2026-10-21T13:58:40.552229+00:00",
+    )
+
+    row = _compatible_route_row(route)
+
+    assert row["last_run"] == "2026-10-21T13:58:40.552229+00:00"
+    assert "last_run" not in _compatible_route_row(SimpleNamespace(**{**vars(route), "last_used_at": None}))
