@@ -497,9 +497,11 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Optional read-only SQL query. Use `{{table}}` as a placeholder "
-                    "for the dataset table. Column names are lowercase snake_case — "
-                    "use them unquoted. limit/offset page through the query's "
-                    "result."
+                    "for the dataset table, and join other datasets as "
+                    "`{{dataset:<uuid>}}` or `{{@owner/slug}}` (the owner and slug "
+                    "from the dataset's URL). Column names are lowercase "
+                    "snake_case — use them unquoted. limit/offset page through "
+                    "the query's result."
                 )
             ),
         ] = None,
@@ -562,6 +564,13 @@ def register(mcp: FastMCP) -> None:
         the SQL. Either way the result is paged server-side with its total
         count, and the response shows the SQL that ran. Writes are rejected
         and queries time out after 10 seconds.
+
+        To join other datasets, reference them in `sql` or `prompt` as
+        `{{dataset:<uuid>}}` or `{{@owner/slug}}`, e.g.
+        `select s.formula, c.e_above_hull from {{table}} s join
+        {{dataset:<uuid>}} c on c.structure_id = s.id`. Each one needs read
+        access (paid datasets must be unlocked); the SQL shown back uses the
+        id form.
 
         Inspect the schema first (`ouro://datasets/{id}/schema`): columns with
         `semantic_type: "reference"` hold Ouro object ids (`ref_kind` is
@@ -1028,8 +1037,9 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Read-only PostgreSQL query using {{table}} as the dataset "
-                    "table name. Column names are lowercase snake_case — use "
-                    "them unquoted."
+                    "table name; other datasets join as {{dataset:<uuid>}} or "
+                    "{{@owner/slug}} (saved in the id form). Column names are "
+                    "lowercase snake_case — use them unquoted."
                 )
             ),
         ] = None,
