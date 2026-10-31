@@ -220,3 +220,81 @@ def test_execute_route_pinned_leaves_the_organization_to_the_client() -> None:
 
     assert "org_id" not in routes.execute_calls[0]
     assert routes.execute_calls[0]["team_id"] == TEAM_ID
+
+
+class _CancelRoutes(_FakeRoutes):
+    def __init__(self, outcome=None, error=None, **kwargs):
+        super().__init__(**kwargs)
+        self.outcome = outcome
+        self.error = error
+        self.cancel_calls: list[str] = []
+
+    def cancel_action(self, action_id: str):
+        self.cancel_calls.append(action_id)
+        if self.error is not None:
+            raise self.error
+        return self.outcome
+
+
+def _conflict(code: str):
+    import httpx
+    from ouro import ConflictError
+
+    request = httpx.Request("POST", f"https://api.example.test/actions/{ACTION_ID}/cancel")
+    response = httpx.Response(409, request=request)
+    return ConflictError(
+        "refused", response=response, body={"error": {"message": "refused", "code": code}}
+    )
+
+
+def test_cancel_action_reports_cancelling() -> None:
+    from ouro.models import ActionCancel
+
+    routes = _CancelRoutes(
+        outcome=ActionCancel(
+            action_id=ACTION_ID,
+            status="cancelling",
+            signal_delivered=True,
+            cancel_requested_at="2026-10-31T12:00:00+00:00",
+        )
+    )
+
+    result = json.loads(_call("cancel_action", routes, action_id=ACTION_ID))
+
+    assert routes.cancel_calls == [ACTION_ID]
+    assert result["status"] == "cancelling"
+    assert result["signal_delivered"] is True
+    assert result["cancel_requested_at"].startswith("2026-10-31T12:00:00")
+    assert "get_action" in result["note"]
+
+
+def test_cancel_action_explains_unsupported_routes() -> None:
+    routes = _CancelRoutes(error=_conflict("cancel_unsupported"))
+
+    result = json.loads(_call("cancel_action", routes, action_id=ACTION_ID))
+
+    assert result["error"] == "cancel_unsupported"
+    assert "can't cancel" in result["message"]
+    assert result["retryable"] is False
+
+
+def test_get_action_marks_cancelled_as_finished() -> None:
+    routes = _FakeRoutes(polled=_action("cancelled"))
+
+    result = json.loads(_call("get_action", routes, id=ACTION_ID))
+
+    assert result["status"] == "cancelled"
+    assert result["finished"] is True
+    assert "cancelled on request" in result["note"]
+
+
+def test_get_action_shows_a_run_being_cancelled() -> None:
+    routes = _FakeRoutes(
+        polled=_action("in-progress", cancel_requested_at="2026-10-31T12:00:00+00:00")
+    )
+
+    result = json.loads(_call("get_action", routes, id=ACTION_ID))
+
+    assert result["finished"] is False
+    assert result["cancelling"] is True
+    assert result["cancel_requested_at"].startswith("2026-10-31T12:00:00")

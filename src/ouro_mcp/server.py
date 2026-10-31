@@ -149,7 +149,8 @@ redistribution before publishing third-party work.
   validate) → get_action for status and outputs. A run that outlasts the wait comes back
   with `finished: false` and keeps going: a wait running out is not an outcome. Don't assume
   it succeeded or failed and don't execute it again; check get_action, and use
-  list_my_actions to find runs whose action_id you no longer have.
+  list_my_actions to find runs whose action_id you no longer have. cancel_action stops a
+  run on a route that supports it; it ends as "cancelled", which is final but not a failure.
 - Quests: inspect with list_quest_items and use each item's exact contributor_keys in
   submit_quest_entry. Draft quests accept no entries until update_quest(status="open").
 """.strip()

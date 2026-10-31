@@ -11,6 +11,8 @@ from typing import Annotated, Any, Literal, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
+from ouro import ConflictError
+
 from ouro_mcp.errors import handle_ouro_errors
 from ouro_mcp.params import (
     ATTRIBUTION_DESC,
@@ -71,7 +73,7 @@ DEFAULT_WAIT_S = 45
 # Each wait holds a server thread, and clients give up at 60 s anyway
 MAX_WAIT_S = 55
 
-FINAL_ACTION_STATUSES = {"success", "error", "timed-out"}
+FINAL_ACTION_STATUSES = {"success", "error", "timed-out", "cancelled"}
 
 
 # Shown on `timed-out` actions: agents read the word as "probably done".
@@ -81,6 +83,34 @@ TIMED_OUT_NOTE = (
     "was released. A late result will not be accepted; execute the route "
     "again if you still need it."
 )
+
+
+CANCELLED_NOTE = (
+    "The run was cancelled on request. It is final but not a failure; outputs "
+    "it had not reported are not recorded. A runtime-priced run is billed for "
+    "the seconds up to the cancel; anything else is free."
+)
+
+CANCELLING_NOTE = (
+    "A cancel was requested (`cancel_requested_at`) and the service is "
+    "stopping the run; it will end as \"cancelled\". Don't cancel again."
+)
+
+# What each refused cancel means, in the agent's terms
+CANCEL_REFUSALS = {
+    "cancel_unsupported": (
+        "This route can't cancel a run: it declares no cancel path, so the run "
+        "continues until it finishes. Nothing was changed."
+    ),
+    "action_not_started": (
+        "The run is still queued and hasn't reached its service yet. Try "
+        "again in a few seconds."
+    ),
+    "action_finished": (
+        "The run already finished, so there is nothing to cancel. Read its "
+        "outcome with get_action."
+    ),
+}
 
 
 def _pending_message(action_id: str, lead: str) -> str:
@@ -319,8 +349,16 @@ def _format_action_result(
         "finished": action.status in FINAL_ACTION_STATUSES,
         "action_id": str(action.id),
     }
+    cancel_requested_at = getattr(action, "cancel_requested_at", None)
+    if cancel_requested_at:
+        result["cancel_requested_at"] = _iso(cancel_requested_at)
     if action.status == "timed-out":
         result["note"] = TIMED_OUT_NOTE
+    elif action.status == "cancelled":
+        result["note"] = CANCELLED_NOTE
+    elif cancel_requested_at and action.status not in FINAL_ACTION_STATUSES:
+        result["cancelling"] = True
+        result["note"] = CANCELLING_NOTE
     if route_id:
         result["route_id"] = route_id
         _attach_action_markdown(result, route_id, str(action.id))
@@ -514,6 +552,7 @@ def format_action_summary(
         "created_at": action.get("created_at"),
         "started_at": action.get("started_at"),
         "finished_at": action.get("finished_at"),
+        "cancel_requested_at": action.get("cancel_requested_at"),
         "run_seconds": _run_seconds(action),
         "last_updated": action.get("last_updated"),
     }
@@ -620,6 +659,8 @@ def action_summary_line(summary: Any, *, show_route: bool = True) -> str:
     if not isinstance(summary, dict):
         summary = format_action_summary(summary)
     status_val = summary.get("action_status") or summary.get("status")
+    if status_val in ("queued", "in-progress") and summary.get("cancel_requested_at"):
+        status_val = f"{status_val} (cancelling)"
     route = summary.get("route") if isinstance(summary.get("route"), dict) else None
     cost = summary.get("cost") if isinstance(summary.get("cost"), dict) else None
     parts = [
@@ -1190,7 +1231,8 @@ def register(mcp: FastMCP) -> None:
         call `get_action(id=<action_id>)` later rather than assuming an outcome or
         executing again (`list_my_actions` finds it if you lose the id).
         `status: "timed-out"` is different: a final failure where Ouro gave
-        up on a run that went silent. Embed the route with
+        up on a run that went silent. `status: "cancelled"` is final too, and
+        not a failure: the run was stopped with `cancel_action`. Embed the route with
         `displayConfig.actionId` to render the action inline in Ouro
         markdown.
 
@@ -1314,6 +1356,9 @@ def register(mcp: FastMCP) -> None:
                 "route_name": route.name,
                 "execution_mode": execution_mode,
                 "p95_completion_ms": p95_completion_ms,
+                "cancellable": bool(
+                    route.route and getattr(route.route, "cancel_path", None)
+                ),
                 "message": _pending_message(
                     str(action.id),
                     f"Stopped waiting after {timeout}s."
@@ -1402,9 +1447,11 @@ def register(mcp: FastMCP) -> None:
 
         `finished` tells you whether there is an outcome yet. While it is
         false (`status` "queued" or "in-progress") the run is still going,
-        even if a wait just ran out: call again later. `status` is final at
-        "success", "error", or "timed-out" (Ouro gave up on a silent run;
-        nothing was recorded or charged).
+        even if a wait just ran out: call again later. An in-progress run
+        with `cancel_requested_at` (`cancelling: true`) is being stopped.
+        `status` is final at "success", "error", "timed-out" (Ouro gave up on
+        a silent run; nothing was recorded or charged), or "cancelled"
+        (stopped on request; not a failure).
 
         By default returns status, route/action ids, compact input/output
         assets, embed_markdown, link_markdown, and cost — not the full response
@@ -1449,6 +1496,57 @@ def register(mcp: FastMCP) -> None:
             logs, _ = _fetch_action_logs(ouro, action_id, limit=log_limit)
             result["logs"] = logs
         return dump_json(result)
+
+    @mcp.tool(annotations={"destructiveHint": True, "idempotentHint": True})
+    @handle_ouro_errors
+    def cancel_action(
+        action_id: Annotated[str, Field(description="Action UUID of a run you started")],
+        ctx: Context,
+    ) -> str:
+        """Cancel a route run you started that is still in progress.
+
+        Works only on routes that support it (`cancellable: true` from
+        execute_route, `cancel_path` on the route). Returns `status`
+        "cancelling" while the service stops the run, or "cancelled" when it
+        ended on the spot; follow it with `get_action(id=<action_id>,
+        wait=true)` until `status` is "cancelled". A runtime-priced run is
+        billed for the seconds it ran up to the cancel; anything else is free.
+        A refusal comes back with `error` "cancel_unsupported",
+        "action_not_started" (still queued; retry shortly) or
+        "action_finished".
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        try:
+            outcome = ouro.routes.cancel_action(action_id)
+        except ConflictError as e:
+            reason = CANCEL_REFUSALS.get(e.code or "")
+            if not reason:
+                raise
+            return dump_json(
+                {
+                    "error": e.code,
+                    "message": reason,
+                    "action_id": action_id,
+                    "retryable": e.code == "action_not_started",
+                }
+            )
+        result: dict[str, Any] = {
+            "action_id": str(outcome.action_id),
+            "status": outcome.status,
+            "cancel_requested_at": _iso(outcome.cancel_requested_at),
+        }
+        if outcome.status == "cancelled":
+            result["note"] = CANCELLED_NOTE
+        else:
+            result["signal_delivered"] = outcome.signal_delivered
+            result["note"] = (
+                "The service is stopping the run. Call get_action(id=<action_id>, "
+                "wait=true) until status is \"cancelled\"."
+                if outcome.signal_delivered
+                else "The service didn't confirm the signal; Ouro will finish "
+                "the run as cancelled itself within a few minutes."
+            )
+        return dump_json({k: v for k, v in result.items() if v is not None})
 
     @mcp.tool(
         annotations={"readOnlyHint": True},
@@ -1602,6 +1700,10 @@ def register(mcp: FastMCP) -> None:
                 empty_text="No logs.",
             )
         )
+
+
+def _iso(value: Any) -> Any:
+    return value.isoformat() if isinstance(value, datetime) else value
 
 
 def _serialize_result(result: Any) -> Any:

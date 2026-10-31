@@ -26,7 +26,9 @@ ServiceVisibility = Literal["public", "private", "organization"]
 # "inherit" follows the route's service
 RouteVisibility = Literal["public", "private", "organization", "monetized", "inherit"]
 ServiceAuthentication = Literal["None", "Ouro", "Personal Access Token", "OAuth 2.0"]
-ActionStatus = Literal["queued", "in-progress", "success", "error", "timed-out"]
+# "cancelled" is final, not a failure. A run being cancelled stays
+# "in-progress" with `cancel_requested_at` set until the service stops.
+ActionStatus = Literal["queued", "in-progress", "success", "error", "timed-out", "cancelled"]
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 ExecutionMode = Literal["sync", "async"]
 QuestType = Literal["closable", "continuous"]
