@@ -79,7 +79,16 @@ def register(mcp: FastMCP) -> None:
     )
     @handle_ouro_errors
     def get_asset(
-        id: Annotated[str, Field(description="UUID of any asset type")],
+        id: Annotated[
+            str,
+            Field(
+                description=(
+                    'Asset UUID, "entity/name" (the username or organization name and slug '
+                    'from the asset\'s URL, e.g. "mmoderwell/check-whether-a-crystal-structure-is-already-known"), '
+                    'or the asset\'s URL'
+                )
+            ),
+        ],
         ctx: Context,
         detail: Annotated[
             Literal["summary", "full"],
@@ -105,8 +114,10 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = "summary",
     ) -> str:
-        """Get any asset by ID.
+        """Get any asset by ID or name.
 
+        A name that more than one asset type shares fails with the candidate ids;
+        pass one of them, or the typed form "routes/entity/name".
         Use detail="summary" (default) when you only need to identify an asset.
         Use detail="full" to read its content (e.g. post body, dataset schema).
         Both levels include engagement counts (views, comments, reactions, downloads).
@@ -114,6 +125,7 @@ def register(mcp: FastMCP) -> None:
         """
         ouro = ctx.request_context.lifespan_context.ouro
         full = detail == "full"
+        id = ouro.assets.resolve_id(id)
         resource = asset_resource(ouro, id)
         # Reading the asset records a view, as ouro.assets.retrieve does; the
         # view, the read, and the counts and properties don't wait on each other

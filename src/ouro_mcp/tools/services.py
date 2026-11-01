@@ -1034,7 +1034,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": True})
     @handle_ouro_errors
     def update_route(
-        id: Annotated[str, Field(description='Route UUID or "entity_name/route_name"')],
+        id: Annotated[str, Field(description='Route UUID, "entity/name" or the route\'s URL')],
         ctx: Context,
         method: Annotated[Optional[HttpMethod], Field(description="New HTTP method")] = None,
         path: Annotated[Optional[str], Field(description="New route path")] = None,
@@ -1118,7 +1118,7 @@ def register(mcp: FastMCP) -> None:
     def execute_route(
         route_id: Annotated[
             str,
-            Field(description='Route UUID or "entity_name/route_name"'),
+            Field(description='Route UUID, "entity/name" or the route\'s URL'),
         ],
         ctx: Context,
         body: Annotated[Optional[JsonObject], Field(description='Request body, e.g. {"key": "value"}')] = None,
