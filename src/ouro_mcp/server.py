@@ -153,6 +153,10 @@ redistribution before publishing third-party work.
   run on a route that supports it; it ends as "cancelled", which is final but not a failure.
 - Quests: inspect with list_quest_items and use each item's exact contributor_keys in
   submit_quest_entry. Draft quests accept no entries until update_quest(status="open").
+
+**Skills**: Ouro's field notes for agents are resources named `ouro://skills/{name}` (a SKILL.md
+whose links point to its reference files). Read the one that fits before starting that kind of
+work, e.g. `ouro://skills/magnets` before searching for or checking a permanent magnet.
 """.strip()
 
 _mcp_log_level = resolve_fastmcp_log_level()

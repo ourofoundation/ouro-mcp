@@ -55,3 +55,9 @@ DEFAULT_OURO_MCP_AUTH_ISSUER = "https://database.ouro.foundation/auth/v1"
 # requesting `openid` fails token exchange while the project signs with HS256
 # ("HS256 is not supported for ID token signing"). `email` is its default.
 OURO_MCP_OAUTH_SCOPE = "email"
+
+# Public agent skills (one folder per skill, each with a SKILL.md), served as
+# ouro://skills/{name} resources. The GitHub repo is the only copy.
+SKILLS_REPO = "ourofoundation/skills"
+SKILLS_REF = "main"
+SKILLS_CACHE_SECONDS = 600

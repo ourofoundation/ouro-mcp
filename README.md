@@ -20,6 +20,13 @@ The server also exposes read-only MCP resources for common lookups and guided pr
 structured workflows. Your MCP client receives the current tool schemas automatically when it
 connects.
 
+Ouro's [agent skills](https://github.com/ourofoundation/skills) are resources too:
+`ouro://skills/{name}` returns a skill's `SKILL.md` (for example `ouro://skills/magnets`), and its
+links point to the reference files at `ouro://skills/{name}/{file}`. Each skill is listed by name,
+so you can attach it (`@ouro:ouro://skills/magnets` in Claude Code) or let the agent read it. The
+server reads them from the skills repo on GitHub and caches each file for 10 minutes, so a pushed
+change shows up without a release.
+
 ## Setup
 
 ### 1. Create an API key
