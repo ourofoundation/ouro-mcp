@@ -152,6 +152,11 @@ def _attach_action_markdown(
     return result
 
 
+# A service's error text can carry log paths and a convergence table; the
+# compact result keeps the start, the full text stays under include_response.
+ERROR_MESSAGE_MAX_CHARS = 400
+
+
 def _action_error_context(response: Any) -> dict[str, Any]:
     if not isinstance(response, dict):
         return {}
@@ -166,7 +171,22 @@ def _action_error_context(response: Any) -> dict[str, Any]:
         status = int(status) if status is not None else None
     except (TypeError, ValueError):
         status = None
-    code = error.get("code")
+    # Services also report `{"error": "<text>", "error_code": "<slug>"}` (the
+    # DFT routes do): without these fallbacks a failed run's compact result
+    # said only "route_execution_failed" and the reason needed the full body.
+    code = error.get("code") or error.get("error_code")
+    message = error.get("message")
+    if not isinstance(message, str) or not message.strip():
+        message = next(
+            (
+                error.get(key)
+                for key in ("error", "detail")
+                if isinstance(error.get(key), str) and error.get(key).strip()
+            ),
+            None,
+        )
+    if isinstance(message, str) and len(message) > ERROR_MESSAGE_MAX_CHARS:
+        message = message[: ERROR_MESSAGE_MAX_CHARS - 1].rstrip() + "…"
     retryable = error.get("retryable")
     if retryable is None and status is not None:
         retryable = status in {408, 429, 500, 502, 503, 504}
@@ -176,7 +196,7 @@ def _action_error_context(response: Any) -> dict[str, Any]:
     )
     result: dict[str, Any] = {
         "error_type": "external_service_error" if is_external else "route_execution_failed",
-        "message": error.get("message"),
+        "message": message,
         "retryable": retryable,
         "status_code": status,
         "code": code,
@@ -200,6 +220,11 @@ def _error_details(response: Any) -> Any:
         )
     else:
         covered = set(response) <= _SUMMARIZED_ERROR_KEYS
+    # A message the compact context had to shorten is not covered by it.
+    source = error if isinstance(error, dict) else response
+    message = source.get("message")
+    if isinstance(message, str) and len(message) > ERROR_MESSAGE_MAX_CHARS:
+        covered = False
     return None if covered else response
 
 
