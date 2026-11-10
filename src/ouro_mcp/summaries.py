@@ -423,9 +423,9 @@ def format_search_hit(item: Any) -> dict[str, Any]:
 def format_asset_summary(asset: Any) -> dict:
     """Compact agent-facing summary for get_asset / create / update returns.
 
-    Flat location fields (username, org_id, team_id) instead of nested objects;
-    no web ``url`` (typed download / get_asset full cover that). Description
-    capped at 200 chars to match ``format_search_hit``.
+    Flat location fields (username, org_id, team_id) instead of nested objects,
+    plus the web ``url`` so agents can link the user to what they made.
+    Description capped at 200 chars to match ``format_search_hit``.
     """
 
     summary: dict[str, Any] = {
@@ -435,6 +435,9 @@ def format_asset_summary(asset: Any) -> dict:
         "visibility": asset.visibility,
         "created_at": asset.created_at.isoformat() if asset.created_at else None,
     }
+    url = asset_web_url(asset)
+    if url:
+        summary["url"] = url
     # `state` / `source` are nullable per asset type and emit as `null` for most
     # rows (posts, files, comments, etc.). Skip them when absent to keep summary
     # rows compact in list/search responses.

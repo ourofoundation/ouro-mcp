@@ -132,7 +132,7 @@ class TestTeamWebUrl(unittest.TestCase):
 
 
 class TestFormatAssetSummarySlim(unittest.TestCase):
-    def test_omits_url_and_uses_flat_location_fields(self) -> None:
+    def test_includes_url_and_uses_flat_location_fields(self) -> None:
         from ouro_mcp.summaries import (
             format_asset_summary,
         )
@@ -162,7 +162,7 @@ class TestFormatAssetSummarySlim(unittest.TestCase):
             monetization=None,
         )
         summary = format_asset_summary(asset)
-        self.assertNotIn("url", summary)
+        self.assertEqual(summary["url"], asset.url)
         self.assertNotIn("user", summary)
         self.assertNotIn("organization", summary)
         self.assertNotIn("team", summary)

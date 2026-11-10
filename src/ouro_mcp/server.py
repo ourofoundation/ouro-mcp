@@ -112,6 +112,7 @@ update_*(team_id=...); whether that is allowed is the organization's choice.
 bullet per item with its id in backticks after `id:`. Copy ids verbatim into follow-up calls. When
 the header says more are available, page with `offset` (list_messages pages with `before`).
 Single-entity tools (get_asset, create_*, update_*, get_action, ...) and errors return JSON.
+Assets and teams include a `url`; share it with the user when you make or change something.
 Naming: list_* tools return lists and get_* one thing. A tool's `id` parameter is the thing it is
 named for (get_asset(id), update_post(id)); other ids say what they are (asset_id, team_id).
 
