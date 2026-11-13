@@ -114,6 +114,16 @@ def register(mcp: FastMCP) -> None:
             Field(description="Filename with extension, e.g. 'plot.png'; sets the content type"),
         ],
         ctx: Context,
+        purpose: Annotated[
+            Literal["asset", "input"],
+            Field(
+                description=(
+                    '"asset" (default): becomes an asset or content via a tool below. '
+                    '"input": a file for execute_route that never becomes an asset; '
+                    "private, reusable across runs, deleted after 7 days"
+                )
+            ),
+        ] = "asset",
     ) -> str:
         """Get a signed URL to upload a local file to, then use it by its upload_id.
 
@@ -123,17 +133,23 @@ def register(mcp: FastMCP) -> None:
         - a post's markdown: create_post / update_post
         - dataset rows (.csv, .json, .jsonl, .parquet): create_dataset / update_dataset
         - an OpenAPI spec: create_service / update_service (`spec_upload_id`)
+        - with `purpose="input"`, a route input that should not become an
+          asset (a screening campaign's structures): pass
+          `{"upload_id": ...}` in execute_route's `input_assets`
 
         1. Call this tool with the file's name.
         2. Run the returned `command` in a shell, from the file's directory
            (or change the path after `@`). It prints nothing on success.
-        3. Pass `upload_id` to one of the tools above. Each upload is used once.
+        3. Pass `upload_id` to one of the tools above. Each upload is used
+           once, except an input, which any number of runs can take.
 
         The URL works for `expires_in` seconds and needs no other credentials,
         so treat it as a secret.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        upload = ouro.files.create_upload_url(file_name)
+        upload = ouro.files.create_upload_url(
+            file_name, purpose=purpose if purpose == "input" else None
+        )
         return dump_json(
             {
                 "upload_id": upload["upload_id"],

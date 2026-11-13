@@ -298,3 +298,39 @@ def test_get_action_shows_a_run_being_cancelled() -> None:
     assert result["finished"] is False
     assert result["cancelling"] is True
     assert result["cancel_requested_at"].startswith("2026-10-31T12:00:00")
+
+
+def test_execute_route_uploads_local_file_inputs(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("WORKSPACE_ROOT", raising=False)
+    cif = tmp_path / "Fe2P.cif"
+    cif.write_text("data_Fe2P\n")
+    routes = _FakeRoutes(polled=_action("success", response={"ok": True}))
+    uploaded: list[tuple] = []
+    files = SimpleNamespace(
+        upload_input=lambda path, file_name=None: uploaded.append((path, file_name))
+        or {"upload_id": "files/u/scratch/a.cif", "file_name": file_name}
+    )
+    mcp = _CaptureMCP()
+    register(mcp)
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(
+            lifespan_context=SimpleNamespace(
+                ouro=SimpleNamespace(routes=routes, files=files)
+            )
+        )
+    )
+
+    mcp.tools["execute_route"](
+        ctx=ctx,
+        route_id=ROUTE_ID,
+        input_assets={
+            "structure": {"file_path": str(cif)},
+            "reference": {"upload_id": "files/u/scratch/b.cif"},
+        },
+    )
+
+    assert uploaded == [(cif, "Fe2P.cif")]
+    assert routes.execute_calls[0]["input_assets"] == {
+        "structure": {"upload_id": "files/u/scratch/a.cif", "file_name": "Fe2P.cif"},
+        "reference": {"upload_id": "files/u/scratch/b.cif"},
+    }

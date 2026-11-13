@@ -55,6 +55,7 @@ from ouro_mcp.routes import (
     route_properties_for_body,
     route_request_body_without_input_assets,
 )
+from ouro_mcp.uploads import resolve_local_path
 from ouro_mcp.summaries import (
     format_asset_summary,
     short_description,
@@ -783,6 +784,22 @@ _OUTPUT_ASSETS_DESC = (
 )
 
 
+def _upload_local_file_inputs(ouro: Any, input_assets: Any) -> Any:
+    """Upload `{"file_path": ...}` inputs as scratch uploads for this run."""
+    if not isinstance(input_assets, dict):
+        return input_assets
+    resolved: dict[str, Any] = {}
+    for name, value in input_assets.items():
+        if isinstance(value, dict) and value.get("file_path"):
+            path = resolve_local_path(str(value["file_path"]))
+            resolved[name] = ouro.files.upload_input(
+                path, file_name=value.get("file_name") or path.name
+            )
+        else:
+            resolved[name] = value
+    return resolved
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"idempotentHint": False})
     @handle_ouro_errors
@@ -1151,7 +1168,12 @@ def register(mcp: FastMCP) -> None:
         params: Annotated[Optional[JsonObject], Field(description='Path parameters, e.g. {"id": "abc"}')] = None,
         input_assets: Annotated[
             Optional[JsonObject],
-            Field(description='Keyed Ouro asset inputs: asset ids, e.g. {"structure": "<file id>"}'),
+            Field(
+                description=(
+                    'Keyed route inputs. Each is an asset id, e.g. {"structure": "<file id>"}, '
+                    "or a file that should not become an asset (see below)"
+                )
+            ),
         ] = None,
         currency: Annotated[
             Optional[Literal["usd", "btc"]],
@@ -1278,6 +1300,14 @@ def register(mcp: FastMCP) -> None:
         name. Do not construct file/dataset/post body objects by hand; Ouro resolves
         those IDs into the service-facing request body.
 
+        File inputs without assets: for screening runs and other inputs that
+        would only be noise on Ouro, pass `{"upload_id": "<id>"}` from
+        `create_upload_url(purpose="input")`.
+        Or pass `{"file_path": "<path>"}` and the local file is uploaded for you.
+        The file reaches the route like a file asset but never becomes one;
+        scratch uploads are deleted after 7 days. Routes priced by their
+        input, and inputs that take an asset id string, still need an asset.
+
         Where it runs: a route runs in one organization, or in the user's
         personal context. That context pays and keeps the outputs, so personal
         and organization work never mix. Pass `org_id` when the user is working
@@ -1338,6 +1368,7 @@ def register(mcp: FastMCP) -> None:
                 dry_run_payload["cost_preview"] = cost_preview
             return dump_json(dry_run_payload)
 
+        input_assets_dict = _upload_local_file_inputs(ouro, input_assets_dict)
         start = time.time()
 
         # Always take the action handle first, then wait on it from here. A

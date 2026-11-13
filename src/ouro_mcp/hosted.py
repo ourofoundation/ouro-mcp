@@ -70,6 +70,13 @@ _DESCRIPTION_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
             "Pass content_markdown or upload_id to replace the body.",
         ),
     ),
+    # Keeps every parameter; only a nested `file_path` input form goes away
+    "execute_route": (
+        (
+            'Or pass `{"file_path": "<path>"}` and the local file is uploaded for you.\n',
+            "",
+        ),
+    ),
 }
 
 
@@ -77,10 +84,11 @@ def apply_hosted_tool_surface(server: FastMCP) -> None:
     """Remove local-path parameters from the tools registered on `server`."""
     tools = server._tool_manager._tools
     for name, param in LOCAL_PATH_PARAMS.items():
-        tool = tools[name]
         # The argument model still accepts the parameter; a caller that sends
         # it anyway reaches resolve_local_path and gets workspace_path_denied.
-        del tool.parameters["properties"][param]
+        del tools[name].parameters["properties"][param]
+    for name in _DESCRIPTION_EDITS:
+        tool = tools[name]
         description = tool.description
         for old, new in _DESCRIPTION_EDITS[name]:
             if old not in description:
