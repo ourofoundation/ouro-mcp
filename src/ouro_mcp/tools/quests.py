@@ -17,6 +17,7 @@ from ouro_mcp.markdown_input import (
 from ouro_mcp.params import (
     ATTRIBUTION_DESC,
     Attribution,
+    JsonObject,
     QuestItemStatus,
     QuestItemStatuses,
     QuestStatus,
@@ -43,8 +44,35 @@ from ouro_mcp.utils import (
 )
 
 AssetType = Literal["file", "dataset", "post"]
-# Contributors may also submit a route; the item's eval route runs it.
+# Contributors may also submit a route; the item's evaluator runs it.
 SubmissionAssetType = Literal["file", "dataset", "post", "route"]
+
+EVALUATOR_DESC = (
+    "How entries are scored automatically: existing routes run as steps, then "
+    "formulas over their JSON responses. Example: "
+    '{"steps": {"hull": {"route_id": "<route uuid>", "inputs": {"structure": '
+    '"inputs.structure"}, "body": {"relax": true}}, "mae": {"route_id": '
+    '"<route uuid>", "inputs": {"structure": "hull.relaxed"}, "after": '
+    '["stable"]}}, "gates": {"stable": "hull.e_above_hull <= 0.075"}, '
+    '"categories": {"anisotropy": "min(mae.k1, 1)"}, "score": '
+    '"100 * anisotropy", "pass": {"min": 50}}. '
+    "Only steps and score are required. Inspect each route with get_asset: "
+    "every asset input it declares needs a reference under inputs, one of "
+    '"inputs.<key>" (an asset the entry submits; these keys become the '
+    'item\'s contributor keys), "<step>.<field>" (an asset an earlier step '
+    'returned) or {"asset_id": "<uuid>", "asset_type": "file"} (a fixed '
+    "asset). body holds other fixed request parameters. gates are pass/fail "
+    "formulas over step responses: a step waits for the gates named in its "
+    "after, and a failed gate skips every step not yet started. categories "
+    "are named sub-scores. Formulas read step responses by path "
+    "(hull.e_above_hull), and score may also read gate and category names; "
+    "they take + - * / % ^, comparisons, and/or/not, a ? b : c, and min, max, "
+    "clamp, abs, round, floor, ceil, sqrt, exp, log, log10, pow, coalesce, if. "
+    "A missing value is null and carries through. pass is the inclusive score "
+    "band: an entry passes when every gate passes and its score is in the "
+    "band. Step, gate and category names are lowercase identifiers. A "
+    "definition the server refuses comes back with every problem listed."
+)
 
 
 class SubmissionAssetDeclaration(BaseModel):
@@ -55,8 +83,8 @@ class SubmissionAssetDeclaration(BaseModel):
     asset_type: SubmissionAssetType = Field(
         description=(
             "Asset type accepted for this contributor input. 'route': the "
-            "contributor submits a route (e.g. a model) and the item's eval "
-            "route runs it; pair with eval_trigger='owner'."
+            "contributor submits a route (e.g. a model) and the item's "
+            "evaluator runs it; pair with eval_trigger='owner'."
         )
     )
     required: bool = Field(
@@ -109,11 +137,15 @@ class QuestItemInput(BaseModel):
     reward_currency: Optional[Literal["btc", "usd"]] = None
     reward_amount: Optional[int] = Field(default=None, ge=0)
     child_quest_id: Optional[str] = None
+    evaluator: Optional[JsonObject] = Field(default=None, description=EVALUATOR_DESC)
     eval_route_id: Optional[str] = Field(
         default=None,
         description=(
-            "Route UUID used for auto-evaluation. When set, contributor input keys "
-            "are derived from the route minus eval_static_inputs by the server."
+            "Short form of evaluator for one route call: the route UUID, with "
+            "eval_score_path, eval_categories_path, eval_pass_min/max and "
+            "eval_static_inputs. Contributor input keys are derived from the "
+            "route minus eval_static_inputs by the server. Ignored when "
+            "evaluator is set."
         ),
     )
     eval_score_path: Optional[str] = None
@@ -125,7 +157,7 @@ class QuestItemInput(BaseModel):
     eval_trigger: Optional[Literal["submit", "owner"]] = Field(
         default=None,
         description=(
-            "When the eval route runs: 'submit' (default) on every entry, or "
+            "When the evaluator runs: 'submit' (default) on every entry, or "
             "'owner': entries wait until the quest's owner starts each "
             "evaluation with evaluate_quest_entry (for evals that cost the owner "
             "compute, such as running submitted routes)."
@@ -137,9 +169,10 @@ class QuestItemInput(BaseModel):
             "Keyed record of contributor input names to declaration objects. Each "
             "declaration requires asset_type and may set required, primary, "
             "input_filter, file_extensions, contains_file_extensions, or label. "
-            "Use this for non-eval items. With eval_route_id, you may overlay "
-            "label on the derived keys (same names); do not change keys or "
-            "constraints — the server owns those from the route."
+            "Use this for non-eval items. With an evaluator or eval_route_id, "
+            "you may overlay label on the derived keys (same names); do not "
+            "change keys or constraints — the server owns those from the "
+            "routes."
         ),
     )
     eval_static_inputs: Optional[Dict[str, EvalStaticInput]] = Field(
@@ -205,6 +238,56 @@ def _dump_model_record(value: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
     }
 
 
+def _plain(value: Any) -> Any:
+    return value.model_dump(mode="json") if isinstance(value, BaseModel) else value
+
+
+def _multi_step_evaluator(item: Any) -> Optional[Dict[str, Any]]:
+    """The item's evaluator when it is more than one plain route call.
+
+    A one-route evaluator comes back in the flat eval_* fields instead.
+    """
+    evaluator = _plain(_item_field(item, "evaluator"))
+    if not isinstance(evaluator, dict) or _item_field(item, "eval_route_id"):
+        return None
+    return evaluator
+
+
+def _evaluator_text(item: Any) -> Optional[str]:
+    """A multi-step evaluator in full, as it would be sent back to change it."""
+    evaluator = _multi_step_evaluator(item)
+    if not evaluator:
+        return None
+    return f"evaluator: {json.dumps(evaluator, default=str)}"
+
+
+def _run_text(run: Any) -> Optional[str]:
+    """One line for an evaluation run: status, each step's route run, failed gates, error."""
+    run = _plain(run)
+    if not isinstance(run, dict):
+        return None
+    bits = [f"eval run `{run.get('id')}`: {run.get('status')}"]
+    steps = []
+    for name, step in (run.get("steps") or {}).items():
+        step = step if isinstance(step, dict) else {}
+        detail = [
+            f"action_id: `{step['action_id']}`" if step.get("action_id") else None,
+            step.get("reason"),
+        ]
+        detail = [part for part in detail if part]
+        steps.append(
+            f"{name} {step.get('status')}" + (f" ({', '.join(detail)})" if detail else "")
+        )
+    if steps:
+        bits.append("steps: " + ", ".join(steps))
+    failed = [name for name, ok in (run.get("gates") or {}).items() if ok is False]
+    if failed:
+        bits.append("failed gates: " + ", ".join(failed))
+    if run.get("error"):
+        bits.append(f"error: {run['error']}")
+    return " · ".join(bits)
+
+
 def _item_summary(item: Any) -> Dict[str, Any]:
     return {
         "id": str(_item_field(item, "id")),
@@ -222,6 +305,8 @@ def _item_summary(item: Any) -> Dict[str, Any]:
         "reward_currency": _item_field(item, "reward_currency"),
         "reward_amount": _item_field(item, "reward_amount"),
         "expected_asset_type": _item_field(item, "expected_asset_type"),
+        # Set for an evaluator with several steps; one route call shows in eval_*
+        "evaluator": _multi_step_evaluator(item),
         "eval_route_id": (
             str(_item_field(item, "eval_route_id"))
             if _item_field(item, "eval_route_id")
@@ -295,10 +380,11 @@ def register(mcp: FastMCP) -> None:
                     "Each string (or object.description) is extended markdown and "
                     "becomes an item with status 'pending'. "
                     "Objects may also include assignee_id, reward_amount, "
-                    "eval_route_id, or submission_assets. submission_assets is "
+                    "evaluator (or eval_route_id for one route), or "
+                    "submission_assets. submission_assets is "
                     "a keyed record whose values are declaration objects with "
                     "asset_type and optional required/file constraints and label. "
-                    "When eval_route_id is set, you may overlay label on derived "
+                    "When an evaluator is set, you may overlay label on derived "
                     "keys; do not change keys or constraints."
                 )
             ),
@@ -443,6 +529,9 @@ def register(mcp: FastMCP) -> None:
                 value = getattr(item, key)
                 if value:
                     body_bits.append(f"{key}: {json.dumps(value, default=str)}")
+            evaluator = _evaluator_text(item)
+            if evaluator:
+                body_bits.append(evaluator)
             contributor_keys = _contributor_keys(item)
             if contributor_keys:
                 body_bits.append(
@@ -506,6 +595,9 @@ def register(mcp: FastMCP) -> None:
                     "eval_static_inputs: "
                     + json.dumps(i.eval_static_inputs, default=str)
                 )
+            evaluator = _evaluator_text(i)
+            if evaluator:
+                body_bits.append(evaluator)
             contributor_keys = _contributor_keys(i)
             if contributor_keys:
                 body_bits.append(
@@ -538,15 +630,16 @@ def register(mcp: FastMCP) -> None:
                     "assignee_id, "
                     "expected_asset_type, reward_currency ('btc'|'usd'), "
                     "reward_amount (sats for btc, cents for usd), "
-                    "eval_route_id, eval_score_path, eval_categories_path, "
-                    "eval_pass_min, "
-                    "eval_pass_max, leaderboard_enabled, leaderboard_order "
+                    "evaluator (routes run as steps, then score formulas), or "
+                    "its one-route short form eval_route_id, eval_score_path, "
+                    "eval_categories_path, eval_pass_min, eval_pass_max, "
+                    "eval_static_inputs; leaderboard_enabled, leaderboard_order "
                     "('desc' higher wins, 'asc' lower wins), "
-                    "submission_assets, eval_static_inputs. submission_assets "
+                    "submission_assets. submission_assets "
                     "must be a keyed record of declaration objects, each with "
                     "asset_type and optional required, primary, input_filter, "
                     "file_extensions, contains_file_extensions, or label. For an "
-                    "item with eval_route_id, you may overlay label on derived "
+                    "item with an evaluator, you may overlay label on derived "
                     "keys; do not change keys or constraints."
                 )
             ),
@@ -556,9 +649,13 @@ def register(mcp: FastMCP) -> None:
         """Batch-add items to an existing quest.
 
         For non-eval items, `submission_assets` declares a keyed record of
-        contributor inputs. For eval items, set `eval_route_id` and optional
-        `eval_static_inputs`; the server derives contributor keys from the
-        route. You may overlay `label` on those derived keys.
+        contributor inputs. To score entries automatically, give the item an
+        `evaluator`: one or more routes run as steps (each with `route_id` and
+        `inputs` wiring), optional `gates` and `categories`, a `score` formula
+        and a `pass` band. For one route call, `eval_route_id` with optional
+        `eval_static_inputs` is the short form. Either way the server derives
+        contributor keys from the routes; you may overlay `label` on them.
+        Try an evaluator before opening the quest with evaluate_quest_item.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         created = ouro.quests.create_items(
@@ -622,9 +719,23 @@ def register(mcp: FastMCP) -> None:
             Optional[int],
             Field(description="1-indexed display order for the item in quest lists"),
         ] = None,
+        evaluator: Annotated[
+            Optional[JsonObject],
+            Field(
+                description=(
+                    "Replaces the item's evaluator with this whole definition; "
+                    "pass {} to remove it. " + EVALUATOR_DESC
+                )
+            ),
+        ] = None,
         eval_route_id: Annotated[
             Optional[str],
-            Field(description="Route UUID used to auto-evaluate entries"),
+            Field(
+                description=(
+                    "Short form of evaluator for one route call: the route UUID "
+                    "used to auto-evaluate entries. Ignored when evaluator is set."
+                )
+            ),
         ] = None,
         eval_score_path: Annotated[
             Optional[str],
@@ -663,7 +774,7 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "When true, show a public ranked list of scored submissions "
-                    "for this item. Requires an eval route when enabling."
+                    "for this item. Requires an evaluator when enabling."
                 )
             ),
         ] = None,
@@ -688,8 +799,9 @@ def register(mcp: FastMCP) -> None:
                     "input name to a declaration object. Each value requires "
                     "asset_type and may include required, primary, input_filter, "
                     "file_extensions, contains_file_extensions, or label. With "
-                    "eval_route_id, you may overlay label on the derived keys; "
-                    "the server still owns keys and constraints from the route."
+                    "an evaluator or eval_route_id, you may overlay label on the "
+                    "derived keys; the server still owns keys and constraints "
+                    "from the routes."
                 )
             ),
         ] = None,
@@ -720,19 +832,20 @@ def register(mcp: FastMCP) -> None:
             bool,
             Field(
                 description=(
-                    "Re-run the item's eval route on its existing entries after "
-                    "this update, e.g. when the eval route changed. Runs as you and "
-                    "only updates scores; it never accepts, rejects or pays."
+                    "Re-run the item's evaluator on its existing entries after "
+                    "this update, e.g. when the evaluator changed. Runs as you and "
+                    "only updates scores; it never accepts, rejects or pays. The "
+                    "result lists each started run_id."
                 )
             ),
         ] = False,
     ) -> str:
-        """Update an item's metadata, status, reward, or auto-eval config.
+        """Update an item's metadata, status, reward, or evaluator.
 
         `submission_assets` is for explicit non-eval declarations. With an
-        `eval_route_id`, the server owns contributor keys and derives them
-        from route inputs minus `eval_static_inputs`. For completions with
-        provenance, use complete_quest_item instead.
+        `evaluator` (or its one-route short form, `eval_route_id`), the server
+        owns contributor keys and derives them from the assets the routes
+        take. For completions with provenance, use complete_quest_item instead.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         description_content = (
@@ -740,9 +853,14 @@ def register(mcp: FastMCP) -> None:
             if description is not None
             else None
         )
+        changes: Dict[str, Any] = {}
+        if evaluator is not None:
+            # {} removes the evaluator: the API takes null for that
+            changes["evaluator"] = evaluator or None
         updated = ouro.quests.update_item(
             quest_id,
             item_id,
+            **changes,
             **optional_kwargs(
                 status=status,
                 description=description_content,
@@ -848,8 +966,8 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     'Asset submissions: {"<contributor_key>": "<asset_uuid>"}. '
-                    "First inspect list_quest_items (and the eval route when "
-                    "present), then use the exact contributor_keys returned "
+                    "First inspect list_quest_items (and the evaluator's routes "
+                    "when present), then use the exact contributor_keys returned "
                     "for that item."
                 )
             ),
@@ -861,9 +979,10 @@ def register(mcp: FastMCP) -> None:
         the owner publishes them.
 
         Pass `item_id` and `assets` with one UUID per exact contributor key.
-        Inspect `list_quest_items` first; for eval items, also inspect the route.
-        The server derives these keys from unpinned route inputs, so do not guess
-        a generic file or artifact key.
+        Inspect `list_quest_items` first; for eval items, also inspect the
+        evaluator's routes. The server derives these keys from the assets those
+        routes take, so do not guess a generic file or artifact key. To see how
+        a candidate scores before entering it, use evaluate_quest_item.
 
         Provide `description_markdown` with the contributor's explanation. For
         paid items, the quest author reviews that description and deterministic
@@ -897,7 +1016,12 @@ def register(mcp: FastMCP) -> None:
         limit: Annotated[int, Field(ge=1, le=200, description="Page size")] = 50,
         offset: Annotated[int, Field(ge=0, description="Pagination offset")] = 0,
     ) -> str:
-        """List contributor entries for a quest."""
+        """List contributor entries for a quest.
+
+        A scored entry shows its evaluation run: each step's status and the
+        action_id of its route run (open one with get_action), any failed
+        gates, and the run's error.
+        """
         ouro = ctx.request_context.lifespan_context.ouro
         page = ouro.quests.list_entries(
             quest_id,
@@ -919,12 +1043,14 @@ def register(mcp: FastMCP) -> None:
                 parts.append(categories)
             if entry.eval_status:
                 parts.append(f"eval: {entry.eval_status}")
-            if entry.eval_action_id:
-                parts.append(f"action_id: `{entry.eval_action_id}`")
+            body_bits = [
+                f"assets: {entry.assets}" if entry.assets else None,
+                _run_text(_item_field(entry, "eval_run")),
+            ]
             return markdown_bullet(
                 _item_description_text(entry) or entry.status,
                 *parts,
-                body=f"assets: {entry.assets}" if entry.assets else None,
+                body=" · ".join(bit for bit in body_bits if bit) or None,
             )
 
         return render_markdown_list(
@@ -950,7 +1076,8 @@ def register(mcp: FastMCP) -> None:
         Each row is one scored entry (not rolled up per user). Rejected entries
         are omitted. Ranking uses the item's leaderboard_order (desc = higher
         wins, asc = lower wins), then earliest submission. Subcategory scores
-        from the eval route appear on each row when present.
+        from the evaluator appear on each row when present. run_id is the
+        row's evaluation run; list_quest_entries shows its steps.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         page = ouro.quests.list_leaderboard(
@@ -975,8 +1102,9 @@ def register(mcp: FastMCP) -> None:
                 parts.append(f"user_id: `{row.user.user_id}`")
             if row.eval_status:
                 parts.append(f"eval: {row.eval_status}")
-            if row.eval_action_id:
-                parts.append(f"action_id: `{row.eval_action_id}`")
+            run_id = _item_field(row, "eval_run_id")
+            if run_id:
+                parts.append(f"run_id: `{run_id}`")
             return markdown_bullet(f"placement {row.placement}", *parts)
 
         extras: list[str] = []
@@ -1027,13 +1155,60 @@ def register(mcp: FastMCP) -> None:
         entry_id: Annotated[str, Field(description="Quest entry UUID")],
         ctx: Context,
     ) -> str:
-        """Run the item's eval route on an entry, as the quest's owner (who pays).
+        """Run the item's evaluator on an entry, as the quest's owner (who pays).
 
         For items with eval_trigger="owner", whose entries wait as
         eval_status "pending", and to re-score an evaluated entry. An accepted
-        entry's score is updated without paying it again. Async eval routes
-        leave the entry "running"; check it later with list_quest_entries.
+        entry's score is updated without paying it again. The entry's eval_run
+        lists each step with the action_id of its route run. Steps that take
+        longer leave the entry "running"; check it later with
+        list_quest_entries.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         entry = ouro.quests.evaluate_entry(quest_id, entry_id)
         return dump_json(entry.model_dump(mode="json"))
+
+    @mcp.tool(annotations={"idempotentHint": False})
+    @handle_ouro_errors
+    def evaluate_quest_item(
+        quest_id: Annotated[str, Field(description="Quest UUID")],
+        item_id: Annotated[str, Field(description="Quest item UUID")],
+        ctx: Context,
+        assets: Annotated[
+            Optional[Dict[str, str]],
+            Field(
+                description=(
+                    "Assets to evaluate, keyed like an entry's: "
+                    '{"<contributor_key>": "<asset_uuid>"}. Starts a new trial run.'
+                )
+            ),
+        ] = None,
+        run_id: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Read this evaluation run again instead of starting one: a "
+                    "trial's, or a run_id from the leaderboard or a re-score."
+                )
+            ),
+        ] = None,
+    ) -> str:
+        """Try an item's evaluator on assets without submitting an entry.
+
+        A trial run: for a quest's author to check an evaluator, and for a
+        contributor to see how a candidate scores first. It runs as you and you
+        pay for the step runs; nothing is entered, accepted or paid out.
+
+        Returns the run: its status, each step's status and action_id (open a
+        step's route run with get_action), gates, categories, score, passed and
+        error. Steps that answer inline are done when this returns; while the
+        run is "running", call again with run_id (and no assets) to read it.
+        """
+        ouro = ctx.request_context.lifespan_context.ouro
+        if (assets is None) == (run_id is None):
+            raise ValueError("Pass assets to start a trial run, or run_id to read one.")
+        if run_id is not None:
+            run = ouro.quests.get_evaluation(quest_id, run_id)
+        else:
+            run = ouro.quests.evaluate_item(quest_id, item_id, assets)
+        return dump_json(_plain(run))

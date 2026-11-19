@@ -149,6 +149,33 @@ def test_bad_request_column_missing_is_actionable_and_non_retryable() -> None:
     assert "snake_case" in payload["hint"]
 
 
+def test_invalid_evaluator_lists_every_problem() -> None:
+    problems = [
+        'Step "mae" waits on "stable", which is not a gate',
+        'score reads "anisotropy", which is not a step, gate or category',
+    ]
+    body = {
+        "data": None,
+        "error": {
+            "message": ". ".join(problems),
+            "status": 400,
+            "code": "invalid_evaluator",
+            "details": {"problems": problems},
+        },
+    }
+    error = BadRequestError(
+        ". ".join(problems), response=_response(400, body), body=body
+    )
+
+    payload = json.loads(_format_ouro_error(error))
+
+    assert payload["error"] == "bad_request"
+    assert payload["code"] == "invalid_evaluator"
+    assert payload["retryable"] is False
+    assert payload["details"] == {"problems": problems}
+    assert problems[0] in payload["message"]
+
+
 def test_unprocessable_entity_is_actionable_and_preserves_nested_context() -> None:
     body = {
         "error": {

@@ -790,7 +790,7 @@ wheels = [
 
 [[package]]
 name = "ouro-mcp"
-version = "0.35.0"
+version = "0.36.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
@@ -804,7 +804,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", specifier = ">=2.0.0" },
-    { name = "ouro-py", specifier = ">=2.23.0" },
+    { name = "ouro-py", specifier = ">=2.25.0" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "python-dotenv" },
@@ -812,7 +812,7 @@ requires-dist = [
 
 [[package]]
 name = "ouro-py"
-version = "2.23.0"
+version = "2.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -825,9 +825,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-socketio", extra = ["client"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/da/e1e78a0969a25f1793a7b193968c1f1c0a22f000de5474f982f14f2e50a9/ouro_py-2.23.0.tar.gz", hash = "sha256:335eed694f2c3fd839c02552f80936609c3488b6a63f7b273c5ee65a8971ed19", size = 110906, upload-time = "2026-11-13T16:03:13.961Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/0a/0845e98c5661ec5a667403e464dd30500d42a694485b2e67a269c4a12cb7/ouro_py-2.25.0.tar.gz", hash = "sha256:dc81230fdebf9d224061357227555c176a381fd76875af6c442ce3e1bdf0c033", size = 112831, upload-time = "2026-11-19T02:49:38.72Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/23/f7474f498ed469f0b83398509bff18181edd62be76ab0c375288c24ba151/ouro_py-2.23.0-py3-none-any.whl", hash = "sha256:e0cbcd8e4de5fcb4a388f749f1f507feaa39eb19012912260f74ed85f6887c74", size = 136908, upload-time = "2026-11-13T16:03:12.484Z" },
+    { url = "https://files.pythonhosted.org/packages/09/4d/3bb288e577055c87475e69c41e40cc644c342ee9f26a1ecb02c095cc8756/ouro_py-2.25.0-py3-none-any.whl", hash = "sha256:32e72e94182da1af37835e5780f28e9215290a7b5575a1ab60197541cfa37ff0", size = 138771, upload-time = "2026-11-19T02:49:37.044Z" },
 ]
 
 [[package]]

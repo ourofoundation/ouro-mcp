@@ -18,6 +18,57 @@ ITEM_ID = "019df875-7957-7888-888f-f8140ff62901"
 ENTRY_ID = "019df875-7957-7888-888f-f8140ff62902"
 ACTION_ID = "019df875-7957-7888-888f-f8140ff62903"
 ADA_ID = "019df875-7957-7888-888f-f8140ff62904"
+RUN_ID = "019df875-7957-7888-888f-f8140ff62905"
+HULL_ROUTE_ID = "019df875-7957-7888-888f-f8140ff62906"
+MAE_ROUTE_ID = "019df875-7957-7888-888f-f8140ff62907"
+
+EVALUATOR = {
+    "steps": {
+        "hull": {
+            "route_id": HULL_ROUTE_ID,
+            "inputs": {"structure": "inputs.structure"},
+        },
+        "mae": {
+            "route_id": MAE_ROUTE_ID,
+            "inputs": {"structure": "hull.relaxed"},
+            "after": ["stable"],
+        },
+    },
+    "gates": {"stable": "hull.e_above_hull <= 0.075"},
+    "categories": {"anisotropy": "min(mae.k1, 1)"},
+    "score": "100 * anisotropy",
+    "pass": {"min": 50},
+}
+
+
+def _run(**overrides) -> dict:
+    """An evaluation run as the API returns it: the hull step done, the gate failed."""
+    return {
+        "id": RUN_ID,
+        "quest_id": QUEST_ID,
+        "item_id": ITEM_ID,
+        "entry_id": None,
+        "purpose": "test",
+        "status": "completed",
+        "steps": {
+            "hull": {
+                "status": "success",
+                "route_id": HULL_ROUTE_ID,
+                "action_id": ACTION_ID,
+            },
+            "mae": {
+                "status": "skipped",
+                "route_id": MAE_ROUTE_ID,
+                "reason": 'Gate "stable" did not pass',
+            },
+        },
+        "score": None,
+        "passed": False,
+        "gates": {"stable": False},
+        "categories": None,
+        "error": None,
+        **overrides,
+    }
 
 
 class _CaptureMCP:
@@ -80,6 +131,9 @@ class _FakeQuests:
                     0
                     if isinstance(item, str)
                     else int(item.get("reward_amount", 0))
+                ),
+                evaluator=(
+                    None if isinstance(item, str) else item.get("evaluator")
                 ),
                 eval_route_id=(
                     None if isinstance(item, str) else item.get("eval_route_id")
@@ -202,13 +256,31 @@ class _FakeQuests:
             reward_amount=kwargs.get("reward_amount", 0),
             leaderboard_enabled=kwargs.get("leaderboard_enabled"),
             leaderboard_order=kwargs.get("leaderboard_order"),
+            evaluator=kwargs.get("evaluator"),
         )
 
     def rescore_item(self, quest_id: str, item_id: str):
         self.calls.append(
             {"method": "rescore_item", "quest_id": quest_id, "item_id": item_id}
         )
-        return {"started": [{"entry_id": "e1", "action_id": "a1"}], "skipped": []}
+        return {"started": [{"entry_id": "e1", "run_id": RUN_ID}], "skipped": []}
+
+    def evaluate_item(self, quest_id: str, item_id: str, assets):
+        self.calls.append(
+            {
+                "method": "evaluate_item",
+                "quest_id": quest_id,
+                "item_id": item_id,
+                "assets": assets,
+            }
+        )
+        return _run(status="running", passed=None, gates={"stable": None})
+
+    def get_evaluation(self, quest_id: str, run_id: str):
+        self.calls.append(
+            {"method": "get_evaluation", "quest_id": quest_id, "run_id": run_id}
+        )
+        return _run()
 
     def create_entry(self, quest_id: str, **kwargs):
         self.calls.append({"method": "create_entry", "quest_id": quest_id, **kwargs})
@@ -224,7 +296,21 @@ class _FakeQuests:
                         "status": "accepted",
                         "eval_score": 0.91,
                         "eval_status": "passed",
-                        "eval_action_id": ACTION_ID,
+                        "eval_run_id": RUN_ID,
+                        "eval_run": _run(
+                            purpose="entry",
+                            entry_id=ENTRY_ID,
+                            steps={
+                                "hull": {
+                                    "status": "success",
+                                    "route_id": HULL_ROUTE_ID,
+                                    "action_id": ACTION_ID,
+                                }
+                            },
+                            score=0.91,
+                            passed=True,
+                            gates={"stable": True},
+                        ),
                     }
                 ],
                 "hasMore": False,
@@ -250,14 +336,18 @@ class _FakeQuests:
                         "score": 0.91,
                         "status": "accepted",
                         "eval_status": "passed",
-                        "eval_action_id": ACTION_ID,
+                        "eval_run_id": RUN_ID,
                         "category_scores": {"accuracy": 0.95, "completeness": 0.8},
                         "user": {"user_id": ADA_ID, "username": "ada"},
                     }
                 ],
                 "hasMore": False,
                 "limit": kwargs["limit"],
-                "item": {"id": item_id, "leaderboard_order": "desc"},
+                "item": {
+                    "id": item_id,
+                    "leaderboard_order": "desc",
+                    "evaluator": EVALUATOR,
+                },
             }
         )
 
@@ -588,7 +678,7 @@ def test_update_quest_item_rescores_after_the_update() -> None:
     )
 
     assert [call["method"] for call in quests.calls] == ["update_item", "rescore_item"]
-    assert result["rescore"]["started"][0]["entry_id"] == "e1"
+    assert result["rescore"]["started"] == [{"entry_id": "e1", "run_id": RUN_ID}]
 
 
 def test_update_quest_item_serializes_typed_submission_config() -> None:
@@ -707,3 +797,244 @@ def test_list_quest_leaderboard_renders_ranked_rows() -> None:
     assert "score: 0.91" in result
     assert "accuracy=0.95" in result
     assert "@ada" in result
+    assert f"run_id: `{RUN_ID}`" in result
+    assert "action_id" not in result
+
+
+def test_create_quest_items_passes_evaluator_and_returns_it() -> None:
+    quests = _FakeQuests()
+    result = json.loads(
+        _quest_tools()["create_quest_items"](
+            "quest-1",
+            [{"description": "Find a stable magnet", "evaluator": EVALUATOR}],
+            _ctx(quests),
+        )
+    )
+
+    assert quests.calls[0]["items"][0]["evaluator"] == EVALUATOR
+    assert result[0]["evaluator"] == EVALUATOR
+    assert result[0]["eval_route_id"] is None
+
+
+def test_item_summary_keeps_one_route_evaluator_in_flat_fields() -> None:
+    quests = _FakeQuests()
+    one_route = {
+        "steps": {"eval": {"route_id": "route-1", "inputs": {"file": "inputs.file"}}},
+        "score": "eval.score",
+    }
+
+    def create_items(quest_id: str, items):
+        return [
+            _FakeModel(
+                id="item-0",
+                description="Scored by one route",
+                status="pending",
+                evaluator=one_route,
+                eval_route_id="route-1",
+                eval_score_path="$.score",
+            )
+        ]
+
+    quests.create_items = create_items
+    result = json.loads(
+        _quest_tools()["create_quest_items"](
+            "quest-1",
+            [{"description": "Scored by one route", "eval_route_id": "route-1"}],
+            _ctx(quests),
+        )
+    )
+
+    assert result[0]["eval_route_id"] == "route-1"
+    assert result[0]["eval_score_path"] == "$.score"
+    assert result[0]["evaluator"] is None
+
+
+def test_update_quest_item_passes_evaluator() -> None:
+    quests = _FakeQuests()
+    result = json.loads(
+        _quest_tools()["update_quest_item"](
+            "quest-1", "item-1", _ctx(quests), evaluator=EVALUATOR
+        )
+    )
+
+    assert quests.calls == [
+        {
+            "method": "update_item",
+            "quest_id": "quest-1",
+            "item_id": "item-1",
+            "evaluator": EVALUATOR,
+        }
+    ]
+    assert result["evaluator"]["score"] == "100 * anisotropy"
+
+
+def test_update_quest_item_removes_evaluator_with_empty_object() -> None:
+    quests = _FakeQuests()
+    _quest_tools()["update_quest_item"]("quest-1", "item-1", _ctx(quests), evaluator={})
+
+    assert quests.calls == [
+        {
+            "method": "update_item",
+            "quest_id": "quest-1",
+            "item_id": "item-1",
+            "evaluator": None,
+        }
+    ]
+
+
+def test_list_quest_items_lists_a_multi_step_evaluator() -> None:
+    quests = _FakeQuests()
+
+    def list_items(quest_id: str):
+        return [
+            _FakeModel(
+                id="item-1",
+                description="Find a stable magnet",
+                status="pending",
+                sort_order=1,
+                reward_currency="btc",
+                reward_amount=0,
+                notes=None,
+                evaluator=EVALUATOR,
+                eval_route_id=None,
+                submission_assets={"structure": {"asset_type": "post"}},
+            )
+        ]
+
+    quests.list_items = list_items
+    result = _quest_tools()["list_quest_items"]("quest-1", _ctx(quests))
+
+    # The whole definition, so it can be read and sent back changed
+    assert f"evaluator: {json.dumps(EVALUATOR)}" in result
+
+
+def test_list_quest_items_leaves_one_route_evaluator_to_flat_fields() -> None:
+    quests = _FakeQuests()
+    result = _quest_tools()["list_quest_items"]("quest-1", _ctx(quests))
+
+    assert "evaluator: " not in result
+    assert "eval_static_inputs" in result
+
+
+def test_list_quest_entries_shows_the_evaluation_run() -> None:
+    quests = _FakeQuests()
+    result = _quest_tools()["list_quest_entries"]("quest-1", _ctx(quests))
+
+    assert f"eval run `{RUN_ID}`: completed" in result
+    assert f"steps: hull success (action_id: `{ACTION_ID}`)" in result
+    assert "failed gates" not in result
+    assert "error:" not in result
+
+
+def test_list_quest_entries_shows_failed_gates_skips_and_errors() -> None:
+    quests = _FakeQuests()
+
+    def list_entries(quest_id: str, **kwargs) -> Page[Entry]:
+        return Page[Entry].model_validate(
+            {
+                "data": [
+                    {
+                        "id": ENTRY_ID,
+                        "status": "submitted",
+                        "eval_status": "failed",
+                        "eval_run_id": RUN_ID,
+                        "eval_run": _run(
+                            purpose="entry",
+                            entry_id=ENTRY_ID,
+                            error="The hull route timed out",
+                        ),
+                    }
+                ],
+                "hasMore": False,
+            }
+        )
+
+    quests.list_entries = list_entries
+    result = _quest_tools()["list_quest_entries"]("quest-1", _ctx(quests))
+
+    assert f"hull success (action_id: `{ACTION_ID}`)" in result
+    assert 'mae skipped (Gate "stable" did not pass)' in result
+    assert "failed gates: stable" in result
+    assert "error: The hull route timed out" in result
+
+
+def test_evaluate_quest_item_starts_a_trial_run() -> None:
+    quests = _FakeQuests()
+    result = json.loads(
+        _quest_tools()["evaluate_quest_item"](
+            "quest-1", ITEM_ID, _ctx(quests), assets={"structure": "asset-1"}
+        )
+    )
+
+    assert quests.calls == [
+        {
+            "method": "evaluate_item",
+            "quest_id": "quest-1",
+            "item_id": ITEM_ID,
+            "assets": {"structure": "asset-1"},
+        }
+    ]
+    assert result["id"] == RUN_ID
+    assert result["status"] == "running"
+    assert result["purpose"] == "test"
+    assert result["steps"]["hull"]["action_id"] == ACTION_ID
+
+
+def test_evaluate_quest_item_reads_a_run_back() -> None:
+    quests = _FakeQuests()
+    result = json.loads(
+        _quest_tools()["evaluate_quest_item"](
+            "quest-1", ITEM_ID, _ctx(quests), run_id=RUN_ID
+        )
+    )
+
+    assert quests.calls == [
+        {"method": "get_evaluation", "quest_id": "quest-1", "run_id": RUN_ID}
+    ]
+    assert result["status"] == "completed"
+    assert result["gates"] == {"stable": False}
+    assert result["steps"]["mae"]["reason"] == 'Gate "stable" did not pass'
+
+
+def test_evaluate_quest_item_needs_assets_or_run_id_not_both() -> None:
+    quests = _FakeQuests()
+    tool = _quest_tools()["evaluate_quest_item"]
+
+    neither = json.loads(tool("quest-1", ITEM_ID, _ctx(quests)))
+    both = json.loads(
+        tool("quest-1", ITEM_ID, _ctx(quests), assets={"structure": "a"}, run_id=RUN_ID)
+    )
+
+    assert neither["error"] == "invalid_arguments"
+    assert both["error"] == "invalid_arguments"
+    assert quests.calls == []
+
+
+def test_quest_write_tools_describe_the_evaluator() -> None:
+    mcp = FastMCP("quest-evaluator-schema-test")
+    register(mcp)
+    tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+
+    descriptions = [
+        tools["update_quest_item"].input_schema["properties"]["evaluator"]["description"]
+    ]
+    for tool_name in ("create_quest", "create_quest_items"):
+        item_model = tools[tool_name].input_schema["$defs"]["QuestItemInput"]
+        descriptions.append(item_model["properties"]["evaluator"]["description"])
+
+    for description in descriptions:
+        for term in (
+            "route_id",
+            '"inputs.<key>"',
+            '"<step>.<field>"',
+            '"asset_id"',
+            "gates",
+            "categories",
+            "score",
+            "pass",
+            "after",
+            "skips every step not yet started",
+        ):
+            assert term in description
+    assert "{} to remove" in descriptions[0]
+    assert "evaluate_quest_item" in tools

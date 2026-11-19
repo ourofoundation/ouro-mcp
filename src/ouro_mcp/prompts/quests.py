@@ -124,29 +124,58 @@ such as `required`, `primary`, `input_filter`, `file_extensions`,
 `contains_file_extensions`, and `label` (the title shown on the contributor
 form). Declare it directly for non-eval items.
 
-For scored contests, attach an eval route (`eval_route_id`, `eval_score_path`,
-pass bounds) and set `leaderboard_enabled: true`. Choose `leaderboard_order`
-`"desc"` (higher wins) or `"asc"` (lower wins). If the route also returns a
-map of subcategory scores (default path `$.categories`, or set
-`eval_categories_path`), those show on the leaderboard; ranking still uses the
-main score. The leaderboard is a view over stored entry scores — it does not
-run a second ranking route. Continuous quests are the natural fit when the
-same contributor may submit many scored entries.
+For scored contests, give the item an `evaluator` and set
+`leaderboard_enabled: true`. An evaluator runs one or more existing routes as
+steps and turns their JSON responses into a score:
 
-Benchmarks of routes (models, services): declare a contributor input with
-`asset_type: "route"` on the eval route, and set `eval_trigger: "owner"` so
-entries wait as `pending` until the quest's owner runs each evaluation with
-`evaluate_quest_entry` (the owner's eval route calls the submitted route and
-pays for it). `evaluate_quest_entry` also re-scores an evaluated entry. A
-route can be entered once per item, so one model can enter every track.
+```json
+{{
+  "steps": {{
+    "hull": {{"route_id": "<route uuid>", "inputs": {{"structure": "inputs.structure"}}}},
+    "mae": {{"route_id": "<route uuid>", "inputs": {{"structure": "hull.relaxed"}}, "after": ["stable"]}}
+  }},
+  "gates": {{"stable": "hull.e_above_hull <= 0.075"}},
+  "categories": {{"anisotropy": "min(mae.k1, 1)"}},
+  "score": "100 * anisotropy",
+  "pass": {{"min": 50}}
+}}
+```
 
-For an item with `eval_route_id`, do not invent competing
-`submission_assets` keys. The server derives contributor keys from the eval
-route's input declarations after removing keys pinned in `eval_static_inputs`.
-You may overlay `label` on those derived keys so the contributor form shows a
-human title. Inspect the route before authoring pins, then inspect the created
-item with `list_quest_items` to see its effective `submission_assets` and
-`contributor_keys`.
+Each step input is wired to `"inputs.<key>"` (an asset the entry submits),
+`"<step>.<field>"` (an asset an earlier step returned) or a fixed
+`{{"asset_id": ..., "asset_type": ...}}`. `gates` are pass/fail conditions: a
+step waits for the gates in its `after`, and a failed gate skips every step not
+yet started, so put cheap checks before expensive routes. `categories` are
+named sub-scores shown on the leaderboard; ranking uses `score`. `pass` is the
+inclusive score band an entry must land in. Formulas read step responses by
+path (`hull.e_above_hull`). When one route already returns the score,
+`eval_route_id` (with `eval_score_path`, `eval_categories_path`, pass bounds
+and `eval_static_inputs`) is the short form.
+
+Choose `leaderboard_order` `"desc"` (higher wins) or `"asc"` (lower wins). The
+leaderboard is a view over stored entry scores — it does not run a second
+ranking route. Continuous quests are the natural fit when the same contributor
+may submit many scored entries.
+
+Before opening the quest, try the evaluator with `evaluate_quest_item` on a
+known asset: it runs the steps as you, without creating an entry, and returns
+each step's status and route run, the gates and the score.
+
+Benchmarks of routes (models, services): have a step take the submitted route
+as an input (`asset_type: "route"` on the step route's input), and set
+`eval_trigger: "owner"` so entries wait as `pending` until the quest's owner
+runs each evaluation with `evaluate_quest_entry` (the owner's step routes call
+the submitted route and the owner pays for it). `evaluate_quest_entry` also
+re-scores an evaluated entry. A route can be entered once per item, so one
+model can enter every track.
+
+For an item with an evaluator, do not invent competing `submission_assets`
+keys. The server derives contributor keys from the `inputs.<key>` assets the
+steps read (for `eval_route_id`, the route's inputs minus those pinned in
+`eval_static_inputs`). You may overlay `label` on those derived keys so the
+contributor form shows a human title. Inspect each route before wiring it,
+then inspect the created item with `list_quest_items` to see its effective
+`submission_assets` and `contributor_keys`.
 
 ## Before calling create_quest
 
@@ -180,7 +209,9 @@ contents, attach the private asset reference, and remind them that the author
 judges from the description + signals until accept.
 
 Before submitting any item, call `list_quest_items` and key `assets` with the
-exact contributor keys shown there. For eval items, inspect the eval route as
-well. Never assume a generic `file` or `artifact` key: eval contributor keys are
-derived and owned by the server from unpinned route inputs.
+exact contributor keys shown there. For eval items, inspect the evaluator's
+routes as well. Never assume a generic `file` or `artifact` key: eval
+contributor keys are derived and owned by the server from the assets those
+routes take. `evaluate_quest_item` shows how a candidate scores before it is
+entered.
 """.strip()

@@ -43,3 +43,7 @@ def test_quest_authoring_guide_includes_context_and_guidance() -> None:
     assert "server derives contributor keys" in prompt
     assert "list_quest_items" in prompt
     assert "Never assume a generic `file` or `artifact` key" in prompt
+    assert "give the item an `evaluator`" in prompt
+    assert '"inputs": {"structure": "hull.relaxed"}' in prompt
+    assert "a failed gate skips every step not" in prompt
+    assert "evaluate_quest_item" in prompt
