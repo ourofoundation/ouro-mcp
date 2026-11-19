@@ -169,6 +169,12 @@ the submitted route and the owner pays for it). `evaluate_quest_entry` also
 re-scores an evaluated entry. A route can be entered once per item, so one
 model can enter every track.
 
+After changing a gate or the score formula, or when a later step failed,
+evaluate again with `reuse_steps: true`: steps that are unchanged and already
+succeeded are taken from the entry's last run, so only what is new runs, and a
+change to formulas alone re-scores without running any route. Leave it off
+when a step's route, or a route the entry submitted, has itself changed.
+
 For an item with an evaluator, do not invent competing `submission_assets`
 keys. The server derives contributor keys from the `inputs.<key>` assets the
 steps read (for `eval_route_id`, the route's inputs minus those pinned in

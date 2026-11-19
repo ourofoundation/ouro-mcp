@@ -259,9 +259,14 @@ class _FakeQuests:
             evaluator=kwargs.get("evaluator"),
         )
 
-    def rescore_item(self, quest_id: str, item_id: str):
+    def rescore_item(self, quest_id: str, item_id: str, reuse_steps: bool = False):
         self.calls.append(
-            {"method": "rescore_item", "quest_id": quest_id, "item_id": item_id}
+            {
+                "method": "rescore_item",
+                "quest_id": quest_id,
+                "item_id": item_id,
+                "reuse_steps": reuse_steps,
+            }
         )
         return {"started": [{"entry_id": "e1", "run_id": RUN_ID}], "skipped": []}
 
@@ -1038,3 +1043,61 @@ def test_quest_write_tools_describe_the_evaluator() -> None:
             assert term in description
     assert "{} to remove" in descriptions[0]
     assert "evaluate_quest_item" in tools
+
+
+def test_evaluate_quest_entry_reuses_steps_only_when_asked() -> None:
+    quests = _FakeQuests()
+    calls = []
+
+    def evaluate_entry(quest_id, entry_id, reuse_steps=False):
+        calls.append(reuse_steps)
+        return Entry.model_validate(
+            {
+                "id": "00000000-0000-4000-8000-0000000000e1",
+                "quest_id": "00000000-0000-4000-8000-0000000000a1",
+                "user_id": "00000000-0000-4000-8000-0000000000b1",
+                "status": "submitted",
+                "eval_status": "running",
+                "created_at": "2026-11-19T00:00:00Z",
+                "updated_at": "2026-11-19T00:00:00Z",
+            }
+        )
+
+    quests.evaluate_entry = evaluate_entry
+    tool = _quest_tools()["evaluate_quest_entry"]
+    tool("quest-1", "entry-1", _ctx(quests))
+    tool("quest-1", "entry-1", _ctx(quests), reuse_steps=True)
+
+    assert calls == [False, True]
+
+
+def test_update_quest_item_rescore_can_reuse_steps() -> None:
+    quests = _FakeQuests()
+    _quest_tools()["update_quest_item"](
+        "quest-1", "item-1", _ctx(quests), rescore_entries=True, reuse_steps=True
+    )
+
+    rescore = [call for call in quests.calls if call["method"] == "rescore_item"]
+    assert rescore and rescore[0]["reuse_steps"] is True
+
+
+def test_list_quest_entries_marks_reused_steps() -> None:
+    from ouro_mcp.tools.quests import _run_text
+
+    text = _run_text(
+        {
+            "id": RUN_ID,
+            "status": "completed",
+            "steps": {
+                "hull": {
+                    "status": "success",
+                    "action_id": "a1",
+                    "reused_from": "earlier-run",
+                },
+                "mae": {"status": "success", "action_id": "a2"},
+            },
+        }
+    )
+
+    assert "hull success (action_id: `a1`, reused from an earlier run)" in text
+    assert "mae success (action_id: `a2`)" in text

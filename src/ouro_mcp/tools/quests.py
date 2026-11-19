@@ -47,6 +47,15 @@ AssetType = Literal["file", "dataset", "post"]
 # Contributors may also submit a route; the item's evaluator runs it.
 SubmissionAssetType = Literal["file", "dataset", "post", "route"]
 
+REUSE_STEPS_DESC = (
+    "Take over the steps of the entry's last run that are unchanged (same "
+    "route, inputs and parameters, and succeeded), so only what is new runs. "
+    "Use it after changing a gate or the score formula, or after a later step "
+    "failed: a change to formulas alone then re-scores without running any "
+    "route. Leave it false when a step's route, or a route the entry "
+    "submitted, has itself changed."
+)
+
 EVALUATOR_DESC = (
     "How entries are scored automatically: existing routes run as steps, then "
     "formulas over their JSON responses. Example: "
@@ -272,6 +281,7 @@ def _run_text(run: Any) -> Optional[str]:
         step = step if isinstance(step, dict) else {}
         detail = [
             f"action_id: `{step['action_id']}`" if step.get("action_id") else None,
+            "reused from an earlier run" if step.get("reused_from") else None,
             step.get("reason"),
         ]
         detail = [part for part in detail if part]
@@ -839,6 +849,15 @@ def register(mcp: FastMCP) -> None:
                 )
             ),
         ] = False,
+        reuse_steps: Annotated[
+            bool,
+            Field(
+                description=(
+                    "With rescore_entries: " + REUSE_STEPS_DESC[0].lower()
+                    + REUSE_STEPS_DESC[1:]
+                )
+            ),
+        ] = False,
     ) -> str:
         """Update an item's metadata, status, reward, or evaluator.
 
@@ -886,7 +905,9 @@ def register(mcp: FastMCP) -> None:
         )
         summary = _item_summary(updated)
         if rescore_entries:
-            summary["rescore"] = ouro.quests.rescore_item(quest_id, item_id)
+            summary["rescore"] = ouro.quests.rescore_item(
+                quest_id, item_id, reuse_steps=reuse_steps
+            )
         return dump_json(summary)
 
     @mcp.tool(annotations={"idempotentHint": False})
@@ -1154,6 +1175,7 @@ def register(mcp: FastMCP) -> None:
         quest_id: Annotated[str, Field(description="Quest UUID")],
         entry_id: Annotated[str, Field(description="Quest entry UUID")],
         ctx: Context,
+        reuse_steps: Annotated[bool, Field(description=REUSE_STEPS_DESC)] = False,
     ) -> str:
         """Run the item's evaluator on an entry, as the quest's owner (who pays).
 
@@ -1165,7 +1187,9 @@ def register(mcp: FastMCP) -> None:
         list_quest_entries.
         """
         ouro = ctx.request_context.lifespan_context.ouro
-        entry = ouro.quests.evaluate_entry(quest_id, entry_id)
+        entry = ouro.quests.evaluate_entry(
+            quest_id, entry_id, reuse_steps=reuse_steps
+        )
         return dump_json(entry.model_dump(mode="json"))
 
     @mcp.tool(annotations={"idempotentHint": False})
