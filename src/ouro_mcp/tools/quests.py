@@ -281,7 +281,8 @@ def _run_text(run: Any) -> Optional[str]:
         step = step if isinstance(step, dict) else {}
         detail = [
             f"action_id: `{step['action_id']}`" if step.get("action_id") else None,
-            "reused from an earlier run" if step.get("reused_from") else None,
+            "took over an earlier route run" if step.get("reused_action")
+            else "reused from an earlier run" if step.get("reused_from") else None,
             step.get("reason"),
         ]
         detail = [part for part in detail if part]
