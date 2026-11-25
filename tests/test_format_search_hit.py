@@ -25,6 +25,7 @@ def test_format_search_hit_keeps_slim_fields():
             "unit_cost": 0.01,
             "snippet": "...matching passage...",
             "match_source": "body",
+            "url": "https://ouro.foundation/posts/apollo/energy-gate-notes",
         }
     )
 
@@ -33,6 +34,7 @@ def test_format_search_hit_keeps_slim_fields():
         "name": "Energy gate notes",
         "asset_type": "post",
         "created_at": "2026-07-01T12:00:00+00:00",
+        "url": "https://ouro.foundation/posts/apollo/energy-gate-notes",
         "description": "A short summary of the gate.",
         "username": "apollo",
         "snippet": "...matching passage...",

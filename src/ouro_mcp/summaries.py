@@ -387,9 +387,10 @@ def _novel_snippet(snippet: str, name: str | None, description: str | None) -> s
 def format_search_hit(item: Any) -> dict[str, Any]:
     """Slim discovery row for ``search_assets``.
 
-    Keep only what an agent needs to pick a hit and call ``get_asset``:
-    id, type, name, short description, username, created_at, plus chunk
-    ``snippet`` / ``match_source`` when the backend returned them.
+    Keep only what an agent needs to pick a hit, link it, and call
+    ``get_asset``: id, type, name, web url, short description, username,
+    created_at, plus chunk ``snippet`` / ``match_source`` when the backend
+    returned them.
     """
 
     row: dict[str, Any] = {
@@ -398,6 +399,9 @@ def format_search_hit(item: Any) -> dict[str, Any]:
         "asset_type": getv(item, "asset_type"),
         "created_at": getv(item, "created_at"),
     }
+    url = asset_web_url(item)
+    if url:
+        row["url"] = url
 
     description = short_description(getv(item, "description"))
     if description:

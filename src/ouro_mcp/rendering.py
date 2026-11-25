@@ -407,7 +407,7 @@ def markdown_bullet(
 def search_hit_line(hit: dict[str, Any]) -> str:
     """Render one ``format_search_hit`` row as a markdown bullet."""
     name = hit.get("name") or "(untitled)"
-    parts: list[Any] = [markdown_id(hit.get("id"))]
+    parts: list[Any] = [markdown_id(hit.get("id")), hit.get("url")]
     username = hit.get("username")
     if username:
         parts.append(f"by @{username}")
