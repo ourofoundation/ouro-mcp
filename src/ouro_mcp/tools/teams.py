@@ -207,7 +207,8 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """List the teams you belong to, or public teams you could join (discover=True).
 
-        `get_team(id)` has one team's policies and members.
+        Each row has the team's web url, for linking to it. `get_team(id)` has
+        one team's policies and members.
         """
         ouro = ctx.request_context.lifespan_context.ouro
         if discover:
@@ -239,7 +240,7 @@ def register(mcp: FastMCP) -> None:
             extras = [f"org: {first.get('organization_name') or '?'} — org_id: `{first.get('org_id')}`"]
 
         def _team_line(row: dict[str, Any]) -> str:
-            parts = [markdown_id(row.get("id"))]
+            parts = [markdown_id(row.get("id")), row.get("url")]
             if not one_org:
                 parts.append(f"org_id: `{row['org_id']}`" if row.get("org_id") else None)
                 if row.get("organization_name"):

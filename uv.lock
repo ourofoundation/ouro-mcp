@@ -790,7 +790,7 @@ wheels = [
 
 [[package]]
 name = "ouro-mcp"
-version = "0.37.2"
+version = "0.37.3"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },

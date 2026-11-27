@@ -110,3 +110,19 @@ def test_get_team_includes_members_when_requested():
         {"user_id": ALICE, "role": "admin", "username": "alice"},
         {"user_id": BOB, "role": "write", "username": "bob"},
     ]
+
+
+class _ListTeams(_FakeTeams):
+    def list(self, **_kwargs):
+        return [Team.model_validate(self.team)]
+
+
+def test_list_teams_rows_carry_the_team_url(monkeypatch):
+    monkeypatch.delenv(ENV_OURO_FRONTEND_URL, raising=False)
+    mcp = _CaptureMCP()
+    register(mcp)
+
+    text = mcp.tools["list_teams"](_ctx(_ListTeams(_sample_team())))
+
+    assert "https://ouro.foundation/teams/matsci" in text
+    assert f"`{TEAM_ID}`" in text
