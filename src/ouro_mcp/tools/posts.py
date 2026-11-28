@@ -134,12 +134,13 @@ def register(mcp: FastMCP) -> None:
           for route runs, or [label](asset:<uuid>) when the type is unknown. Do not invent URL paths.
         - Block embeds:
         ```assetComponent
-        {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null"}}
+        {"id":"<uuid>","assetType":"post"|"file"|"dataset"|"route"|"service"|"quest","viewMode":"preview"|"card","displayConfig":{"visualizationId":"<uuid>|null","actionId":"<uuid>|null","questItemId":"<uuid>|null"}}
         ```
         - Images: an image is a file asset. Create it with create_file, then put
           ![alt](file:<uuid>) on a line of its own to show it. An external image URL becomes a link.
         displayConfig is optional. For datasets, set visualizationId to render a specific saved view.
         For routes, set actionId to show a compact action receipt (status, timing, output).
+        For quests, set questItemId (with viewMode "preview") to show one item above the quest card.
         Prefer paste embed_markdown / link_markdown from route-action tools when referencing a run.
         @mentions on private or organization-only posts do not notify the mentioned
         user unless they can already discover the post — share it first if you want a response.

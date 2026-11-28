@@ -132,10 +132,10 @@ redistribution before publishing third-party work.
   Never invent URL paths.
 - Embed an asset as a block:
   ```assetComponent
-  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service", "viewMode": "preview"|"card", "displayConfig": {"visualizationId": "<uuid>", "actionId": "<uuid>"}}
+  {"id": "<uuid>", "assetType": "post"|"file"|"dataset"|"route"|"service"|"quest", "viewMode": "preview"|"card", "displayConfig": {"visualizationId": "<uuid>", "actionId": "<uuid>", "questItemId": "<uuid>"}}
   ```
   displayConfig is optional: visualizationId picks a saved dataset view, actionId shows a route
-  run receipt. Prefer viewMode "preview" for files and datasets. Route-action tools return
+  run receipt, questItemId (viewMode "preview") shows one quest item. Prefer viewMode "preview" for files and datasets. Route-action tools return
   ready-made `link_markdown` / `embed_markdown` to paste.
 - LaTeX: \\(inline\\) and \\[display\\].
 - Callout: a blockquote whose first line is `> [!NOTE]` (or TIP, IMPORTANT, WARNING, CAUTION)
